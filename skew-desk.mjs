@@ -734,6 +734,10 @@ export async function runSingleScan() {
 
     // Execute top actionable opportunity if LIVE=1 and wallet is configured
     const top = allRows.find((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd);
+    const bestRow = allRows[0];
+    console.log(
+      `[SCAN #${STATE.scanCount}] USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) edge=$${bestRow.edgeUsd.toFixed(4)} [${bestRow.status}]` : 'none'}`
+    );
     if (top && CONFIG.liveTrading && wallet) {
       try {
         const execRec = await executeOpportunity(top);
