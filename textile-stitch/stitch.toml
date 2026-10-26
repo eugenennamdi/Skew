@@ -1,0 +1,50 @@
+# Textile Stitch — Skew Adaptive Market Maker
+# Corridor: cNGN/USDT on Celo Mainnet (Chain 42220)
+# Capital Guard: Total on-chain inventory strictly budgeted under $5.00
+# Runtime setting: export SKEW_GAMMA_BPS=30
+
+chain_id           = 42220                                # Celo mainnet
+rpc_url            = "https://forno.celo.org"             # Public Celo RPC
+indexer_url        = "https://api.textilecredit.com"
+permit2            = "0x000000000022D473030F116dDEE9F6B43aC78BA3"  # Canonical Permit2
+reactor            = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3"  # Textile Settlement Reactor (Celo)
+tick_interval_secs = 5
+book_enabled       = false
+
+[feed]
+url                = "https://api.textilecredit.com/price?chainId=42220&pair=cngn-usdt"
+staleness_secs     = 900
+rfq_staleness_secs = 240
+
+[[pools]]
+# cNGN (Compliant Naira, 6 decimals)
+collateral          = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"
+collateral_decimals = 6
+
+# USDT (Tether on Celo, 6 decimals)
+debt                = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt_decimals       = 6
+
+# Buy side: Pays USDT to buy cNGN (bid below mid)
+# Base spread: 25 bps. Dynamically leans tighter or wider based on inventory skew.
+buy_offset_bps                  = 25
+buy_total_liquidity_debt        = "4000000"    # Max 4.00 USDT total committed (under $5 budget)
+buy_min_slice_debt              = "500000"     # CRITICAL: 0.50 USDT minimum slice so quotes fit < $5 capital
+buy_max_orders                  = 5
+
+# Sell side: Sells cNGN to receive USDT (ask above mid)
+# Base spread: 25 bps. Dynamically leans tighter or wider based on inventory skew.
+sell_offset_bps                 = 25
+sell_total_liquidity_collateral = "5500000000" # Max 5,500 cNGN committed (~$4.00 equivalent)
+sell_min_slice_debt             = "500000"     # CRITICAL: 0.50 USDT equivalent slice so quotes fit < $5 capital
+sell_max_orders                 = 5
+
+ttl_secs                        = 120
+refresh_threshold_bps           = 10
+rfq_corridor = "cngn-usdt-celo"
+
+[rfq]
+enabled = true
+url = "wss://api.textilecredit.com/v2/maker/stream"
+maker_id = "cmv75ay6h00bq339u3x6gdicy"
+validation_contract = "0x10B9EbA3a175Df418a35CB8329a527691EE258C5"

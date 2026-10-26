@@ -1,0 +1,234 @@
+name: macOS app bundle
+
+# Build a prebuilt Stitch.app, wrap it in a drag-to-Applications Stitch.dmg, and
+# attach the image to the release. Shipping a DMG (not a bare zip) gives the
+# native install experience and nudges operators to run Stitch from /Applications
+# — see packaging/macos/make-dmg.sh for why that matters (App Translocation).
+# Kept separate from the cargo-dist-generated release.yml so `dist generate`
+# never clobbers it.
+#
+# Signing is automatic based on which repo secrets are set:
+#   - No secrets        -> ad-hoc signed (make-app.sh). A downloaded copy still
+#                          needs right-click -> Open / "Open Anyway" the first time.
+#   - Developer ID set  -> app and .dmg signed with your Developer ID identity.
+#   - Notary creds set  -> the .dmg is additionally notarized + stapled, so it
+#                          opens with no Gatekeeper prompt (requires Developer ID).
+# Secrets (all optional): MACOS_CERT_P12 (base64 .p12), MACOS_CERT_PASSWORD,
+# MACOS_NOTARY_API_KEY (base64 App Store Connect .p8), MACOS_NOTARY_API_KEY_ID,
+# MACOS_NOTARY_API_ISSUER.
+#
+# Signing secrets are scoped to the import/notarize steps only — never exposed to
+# `cargo build`, so a compromised dependency build script can't read them.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach Stitch.dmg to (blank = upload a workflow artifact only)"
+        required: false
+        default: ""
+      promote:
+        description: "Set 'true' to clear the pre-release flag and mark the release latest once the DMG is attached"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+jobs:
+  build-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          # When attaching to a release tag, build from that tag's source. A
+          # manual dispatch with `tag` set but the ref left on the default
+          # branch would otherwise build from current main and clobber the
+          # release's Stitch.dmg. Empty tag (or `release:`) falls back to
+          # the dispatch/release ref.
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4  # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      # Expose only booleans (not the secret values) for later `if:` gates, so the
+      # secrets themselves never sit in env for the build step.
+      - name: Detect signing configuration
+        id: signing
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_NOTARY_API_KEY: ${{ secrets.MACOS_NOTARY_API_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${MACOS_CERT_P12:-}" ] && echo "have_cert=true" >> "$GITHUB_OUTPUT" || echo "have_cert=false" >> "$GITHUB_OUTPUT"
+          [ -n "${MACOS_NOTARY_API_KEY:-}" ] && echo "have_notary=true" >> "$GITHUB_OUTPUT" || echo "have_notary=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build panel frontend
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Build universal binaries
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --features panel,desktop \
+              --bin stitch --bin stitch-panel --bin stitch-desktop --target "$target"
+          done
+          mkdir -p target/universal
+          for bin in stitch stitch-panel stitch-desktop; do
+            lipo -create -output "target/universal/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" \
+              "target/x86_64-apple-darwin/release/$bin"
+          done
+
+      - name: Import Developer ID signing certificate
+        if: ${{ steps.signing.outputs.have_cert == 'true' }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/stitch-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          # Put our keychain first in the search list so codesign finds the identity.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::MACOS_CERT_P12 imported but no 'Developer ID Application' identity was found in it."
+            exit 1
+          fi
+          echo "STITCH_CODESIGN_ID=$IDENTITY" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Assemble Stitch.app
+        # make-app.sh signs with $STITCH_CODESIGN_ID when set (Developer ID),
+        # otherwise ad-hoc ("-").
+        # Use a `|` block — a plain YAML scalar with `\` turns `\ ` into an
+        # escaped space, so arg3 became " target/universal/stitch" (leading
+        # space), stitch was omitted from the .app, and macOS launches exited
+        # immediately with nothing in the Dock / Activity Monitor.
+        run: |
+          set -euo pipefail
+          packaging/macos/make-app.sh \
+            target/universal/stitch-desktop \
+            dist \
+            target/universal/stitch \
+            target/universal/stitch-panel
+          test -f dist/Stitch.app/Contents/MacOS/stitch
+          test -f dist/Stitch.app/Contents/MacOS/stitch-panel
+          test -f dist/Stitch.app/Contents/MacOS/stitch-desktop
+
+      - name: Build Stitch.dmg
+        # Wrap the (signed) app in a drag-to-Applications image. make-dmg.sh uses
+        # dmgbuild (no Finder AppleScript) so the background ships on CI, and signs
+        # the .dmg with $STITCH_CODESIGN_ID when it's a real Developer ID.
+        run: packaging/macos/make-dmg.sh dist/Stitch.app dist
+
+      - name: Notarize and staple
+        if: ${{ steps.signing.outputs.have_notary == 'true' }}
+        env:
+          MACOS_NOTARY_API_KEY: ${{ secrets.MACOS_NOTARY_API_KEY }}
+          MACOS_NOTARY_API_KEY_ID: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
+          MACOS_NOTARY_API_ISSUER: ${{ secrets.MACOS_NOTARY_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          # Apple only notarizes Developer ID-signed software. If notary creds are
+          # set but signing fell back to ad-hoc, fail loudly instead of submitting
+          # an ad-hoc image that Apple will reject.
+          if [ -z "${STITCH_CODESIGN_ID:-}" ] || [ "${STITCH_CODESIGN_ID}" = "-" ]; then
+            echo "::error::MACOS_NOTARY_* is set but no Developer ID Application identity is available. Set MACOS_CERT_P12/MACOS_CERT_PASSWORD; Apple only notarizes Developer ID-signed apps."
+            exit 1
+          fi
+          echo "$MACOS_NOTARY_API_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          # Notarizing the .dmg also notarizes the app inside it (Apple records the
+          # app's cdhash), so one submission covers both. Staple the ticket to the
+          # image so it verifies offline on first open.
+          xcrun notarytool submit dist/Stitch.dmg \
+            --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$MACOS_NOTARY_API_KEY_ID" \
+            --issuer "$MACOS_NOTARY_API_ISSUER" \
+            --wait
+          xcrun stapler staple dist/Stitch.dmg
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+      # The release workflow creates the GitHub Release with GITHUB_TOKEN, which
+      # does NOT fire `release: published`, so release.yml dispatches this
+      # workflow with the tag instead. Attach to that tag when we have one;
+      # otherwise (a bare manual run) just publish a workflow artifact.
+      - name: Upload Stitch.dmg to the release
+        if: ${{ github.event_name == 'release' || inputs.tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd dist && shasum -a 256 Stitch.dmg > Stitch.dmg.sha256)
+          gh release upload "$TAG" dist/Stitch.dmg dist/Stitch.dmg.sha256 --clobber
+
+      # cargo-dist builds the release body's download table before this workflow
+      # uploads Stitch.dmg, so add a row for it. Idempotent (skips if present).
+      - name: Add Stitch.dmg to the release download table
+        if: ${{ github.event_name == 'release' || inputs.tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${{ github.repository }}/releases/download/$TAG"
+          row="| [Stitch.dmg]($base/Stitch.dmg) | Universal macOS app | [checksum]($base/Stitch.dmg.sha256) |"
+          body="$(gh release view "$TAG" --json body --jq .body)"
+          if printf '%s' "$body" | grep -qF "Stitch.dmg"; then
+            echo "Release notes already list Stitch.dmg; nothing to do."
+            exit 0
+          fi
+          # Insert the row right after the download table header separator
+          # (|----|----|----|) so it becomes the first row of that table; if no
+          # table is found, append a small section instead.
+          updated="$(printf '%s\n' "$body" | awk -v row="$row" '
+            !inserted && /^\|[-: ]+\|[-: ]+\|[-: ]+\|[[:space:]]*$/ { print; print row; inserted=1; next }
+            { print }
+            END { if (!inserted) { print ""; print "### Desktop app (macOS)"; print ""; print row } }
+          ')"
+          printf '%s' "$updated" > "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+      # release.yml creates the release flagged as a pre-release and dispatches
+      # this build with promote=true, so /releases/latest keeps resolving to the
+      # previous release (no 404 on latest/download/Stitch.dmg) until the DMG is
+      # attached just above. Now that it is, clear the pre-release flag and mark
+      # this the latest release — atomically, with the asset already in place.
+      # Only reached on success (a failed build/notarize/upload short-circuits the
+      # job earlier), so a broken build leaves the release a pre-release rather
+      # than a `latest` without its DMG. Skipped for genuine pre-releases
+      # (promote=false) and for bare manual runs (no tag).
+      - name: Promote the release to latest
+        if: ${{ inputs.promote == 'true' && (github.event_name == 'release' || inputs.tag != '') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --prerelease=false --latest=true
+          echo "Promoted $TAG to the latest release with Stitch.dmg attached."
+
+      - name: Upload Stitch.dmg as a workflow artifact
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag == '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: Stitch-dmg
+          path: dist/Stitch.dmg
+          retention-days: 1

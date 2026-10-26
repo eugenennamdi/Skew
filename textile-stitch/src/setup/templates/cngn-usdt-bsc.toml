@@ -1,0 +1,55 @@
+# Textile Stitch — cNGN/USDT on BSC (production).
+# The wallet key is NOT here; export STITCH_PRIVATE_KEY (or STITCH_PRIVATE_KEY_FILE).
+
+chain_id        = 56                                    # BNB Smart Chain mainnet
+rpc_url         = "https://bsc-dataseed.binance.org"    # free public BSC RPC; swap for your own if you have one
+indexer_url     = "https://api.textilecredit.com"
+permit2         = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+reactor         = "0xe03261c0436DB575F92F09EdDF3591E2566B7D97"  # SETTLEMENT_V3_FILLER_REACTOR (BSC)
+tick_interval_secs = 5
+
+# Swap is RFQ. This bot does not rest a public ladder. Connect in the
+# Stitch panel writes [rfq] (maker id, stream URL, credential).
+book_enabled = false
+
+# Textile's own price endpoint. Returns { price, timestamp } where price is
+# debt-per-collateral (USDT per cNGN, e.g. ~0.000728).
+[feed]
+url            = "https://api.textilecredit.com/price?chainId=56&pair=cngn-usdt"
+staleness_secs = 900
+# cNGN prices off Textile's cron sampler (`/price` restamps once a minute), so
+# a mark is routinely tens of seconds old and a 60s RFQ window would leave the
+# corridor dark between samples. Four sample intervals, so two missed cron
+# ticks still quote. Live-fetched corridors (WETH, XAUT, ...) deliberately do
+# NOT set this and keep the tight default.
+rfq_staleness_secs = 240
+
+[[pools]]
+collateral = "0xa8AEA66B361a8d53e8865c62D142167Af28Af058"  # cNGN (soft asset, 6dp)
+collateral_decimals = 6
+debt = "0x55d398326f99059fF775485246999027B3197955"        # USDT on BSC (stable, 18dp)
+debt_decimals = 18
+
+# Buy low: bid below the mid, paying USDT for cNGN. Funds USDT + Permit2 on USDT.
+buy_offset_bps = 1                              # 1 bps below mid
+buy_total_liquidity_debt = "max"                  # quote all funded USDT
+buy_min_slice_debt = "10000000000000000000"       # 10 USDT smallest slice (18dp)
+buy_max_orders = 40
+
+# Sell high: ask above the mid, selling cNGN for USDT. Funds cNGN + Permit2 on cNGN.
+sell_offset_bps = 1                             # 1 bps above mid
+sell_total_liquidity_collateral = "max"           # quote all funded cNGN
+sell_min_slice_debt = "10000000000000000000"      # 10 USDT-equivalent slice (18dp)
+sell_max_orders = 40
+
+ttl_secs = 120
+refresh_threshold_bps = 10                        # re-quote when price moves >0.10%
+
+# Swap quoting. Connect in the Stitch panel writes maker id, stream URL,
+# and rfq-api.key. Leave this block commented until then.
+# [rfq]
+# enabled = false
+# url = "wss://api.textilecredit.com/v2/maker/stream"
+# maker_id = "mk_your_maker_id"
+# api_key_env = "STITCH_RFQ_API_KEY"
+# validation_contract = "0x0000000000000000000000000000000000000000"

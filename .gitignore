@@ -1,0 +1,25 @@
+# Secrets & credentials (NEVER commit)
+*.key
+*.pem
+!textile-stitch/src/setup/testdata/*.pem
+*.env
+.env*
+**/rfq-api.key
+**/stitch.env
+**/rfq-instance-id
+**/chain-reads.json
+*.slot-nonces.json
+
+# Build artifacts & dependencies
+node_modules/
+**/node_modules/
+target/
+**/target/
+skew-stitch
+*.log
+trades.jsonl
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/

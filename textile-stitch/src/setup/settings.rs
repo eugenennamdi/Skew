@@ -1,0 +1,2359 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Textile, Inc.
+//! Read and edit the `stitch.toml` values the Settings surfaces expose: endpoints,
+//! per-pool spreads, ladder sizing, order lifetime, the tick cadence, and the
+//! experimental TWAP / inventory-lean knobs (optional).
+//!
+//! Shared by the desktop Settings screen and Stitch, so both edit
+//! configs through one implementation. Edits go through `toml_edit` so the
+//! template's comments and layout survive a save, and every edit is re-validated
+//! through `Config::from_toml` before it is handed back — a bad value fails here,
+//! so the caller never writes a broken file. Secrets are NOT here: the operator
+//! wallet lives in `stitch.key` (`writer::write_key`); the RFQ maker key lives
+//! in `rfq-api.key` (`writer::write_rfq_api_key`).
+//!
+//! Amounts stay strings end to end. They are atomic-unit `u128`/`U256` values, so
+//! parsing them into a float to render or edit would lose precision on large
+//! inventories; the view carries the token decimals instead and lets the caller
+//! format.
+
+use anyhow::{bail, Context, Result};
+use toml_edit::{DocumentMut, Item, Table, Value};
+
+use crate::config::{
+    assert_feed_url, assert_rfq_stream_url, parse_liquidity_amount, parse_min_slice_debt,
+    requested_rfq_staleness_secs, Config,
+};
+
+/// How a side's spread is expressed in the config. Editing preserves whichever
+/// form the operator's config already uses rather than switching representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpreadKind {
+    /// Basis points below/above the mid (`buy_offset_bps` / `sell_offset_bps`).
+    #[default]
+    Bps,
+    /// Absolute soft-per-stable offset (`buy_offset_abs` / `sell_offset_abs`).
+    Abs,
+}
+
+/// One side's spread as an editable value plus the representation it uses. `value`
+/// is the number rendered as text (empty when the side has no spread configured).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SpreadEdit {
+    pub kind: SpreadKind,
+    pub value: String,
+}
+
+/// How one side's ladder is sized. Every value is an atomic-unit integer rendered
+/// as text, empty when the config doesn't set it.
+///
+/// The bot picks the ladder (`total_liquidity` + `min_slice_debt`) over the flat
+/// `order_size` when both are present, so all three are surfaced rather than
+/// collapsed — an operator editing sizing needs to see which one is actually in
+/// effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SideSizing {
+    /// Total liquidity to quote as a balanced ladder. Accepts the literal `max`,
+    /// meaning "quote everything funded".
+    pub total_liquidity: String,
+    /// Smallest ladder slice, in atomic debt units on both sides.
+    pub min_slice_debt: String,
+    /// Flat size per order, used only when the ladder pair isn't set.
+    pub order_size: String,
+    /// Cap on live slices for this side. Empty means the bot's own default.
+    pub max_orders: String,
+}
+
+/// The token pair a pool trades, so a caller can format atomic amounts and label
+/// the sizing fields with the right asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolPair {
+    pub collateral: String,
+    pub collateral_decimals: u8,
+    pub debt: String,
+    pub debt_decimals: u8,
+}
+
+/// One `[[pools]]` entry, labelled for a picker. Catalog pairs get a name;
+/// anything else is a custom corridor and we show shortened addresses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolSummary {
+    pub index: usize,
+    pub pair: String,
+    pub corridor_id: Option<String>,
+    pub corridor_label: Option<String>,
+    /// The pool's tokens as written in the config. An index is not a stable
+    /// name for a pool — removing one renumbers the rest — so a client that
+    /// wants to act on *this* pool sends these back and the panel checks them.
+    pub collateral: String,
+    pub debt: String,
+}
+
+/// The current editable settings, read from a `stitch.toml` for form prefill.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsView {
+    pub rpc_url: String,
+    pub feed_url: String,
+    pub buy: SpreadEdit,
+    pub sell: SpreadEdit,
+    /// Whether the taker leg is on: fill users' resting limit orders when they
+    /// cross the bot's own quote. The raw configured flag, not the spread-gated
+    /// effective one, so a saved-but-spreadless value round-trips.
+    pub taker_enabled: bool,
+    /// Which pool the pool-scoped fields above were read from.
+    pub pool_index: usize,
+    /// How many pools the config has.
+    pub pool_count: usize,
+    /// Every pool on this bot, in file order. The form edits one at a time.
+    pub pools: Vec<PoolSummary>,
+    pub pair: PoolPair,
+    pub buy_sizing: SideSizing,
+    pub sell_sizing: SideSizing,
+    /// Order lifetime for this pool, in seconds. Must exceed the live-order
+    /// deadline margin (`LIVE_ORDER_DEADLINE_MARGIN_SECS`).
+    pub ttl_secs: u64,
+    /// Re-sign a side only when its price moves more than this (bps) since its
+    /// last order. 0 re-quotes every tick.
+    pub refresh_threshold_bps: u32,
+    /// How often the bot re-quotes, in seconds. Bot-wide, not per pool.
+    pub tick_interval_secs: u64,
+    // ----- Experimental (TWAP + inventory lean). Empty strings mean "unset" —
+    // omit the key so the bot uses its defaults / spot quoting. -----
+    /// Rolling TWAP window in seconds. Empty = quote off the instantaneous feed.
+    pub twap_window_secs: String,
+    /// Spot-deviation guard in bps while TWAP is on. Empty = bot default (50).
+    pub twap_max_deviation_bps: String,
+    /// Quote the live book off inventory-lean prices.
+    pub lean_enabled: bool,
+    /// Log lean quotes next to the live ones; no behavior change.
+    pub lean_shadow: bool,
+    /// Measured p95 feed error vs live Pyth, in bps. Required when lean is on.
+    pub lean_floor_bps: String,
+    /// Balanced-zone half-spread in bps. Empty = bot default (1.0).
+    pub lean_base_bps: String,
+    /// Extra widening at the heavy inventory edge, in bps. Empty = bot default (3.0).
+    pub lean_wide_bps: String,
+    // ----- RFQ (beta). Optional on the patch: a spread-only save must not
+    // touch them. The maker API key is not here — it lives in `rfq-api.key`.
+    /// Whether `[rfq].enabled` is set. Bot-wide.
+    pub rfq_enabled: bool,
+    /// The venue stream URL from `[rfq]`, empty when the block is absent.
+    pub rfq_url: String,
+    /// Venue maker id (`X-Textile-Maker-Id`). Empty when `[rfq]` is absent.
+    pub rfq_maker_id: String,
+    /// PreferredFillerValidation address. Empty when `[rfq]` is absent.
+    pub rfq_validation_contract: String,
+    /// Optional leftover `rfq_corridor` slug. Empty on new Connects.
+    pub rfq_corridor: String,
+    /// Whether the public ladder is on. Default true when the key is omitted.
+    pub book_enabled: bool,
+    /// `[experimental] rfq_default` matches the GA token on this file.
+    pub rfq_default_unlocked: bool,
+    /// The OperatorVault this bot trades from (`[vault].address`), empty when
+    /// it trades from its own wallet. Bot-wide: every corridor on the bot
+    /// shares the capital, so they share the vault.
+    pub vault_address: String,
+}
+
+impl SettingsView {
+    /// A patch that would write these values back unchanged. The starting point
+    /// for a form: mutate the fields the operator edited and leave the rest.
+    pub fn to_patch(&self) -> SettingsPatch {
+        SettingsPatch {
+            pool_index: self.pool_index,
+            rpc_url: self.rpc_url.clone(),
+            feed_url: self.feed_url.clone(),
+            buy: self.buy.clone(),
+            sell: self.sell.clone(),
+            taker_enabled: self.taker_enabled,
+            buy_sizing: Some(self.buy_sizing.clone()),
+            sell_sizing: Some(self.sell_sizing.clone()),
+            ttl_secs: Some(self.ttl_secs),
+            refresh_threshold_bps: Some(self.refresh_threshold_bps),
+            tick_interval_secs: Some(self.tick_interval_secs),
+            twap_window_secs: Some(self.twap_window_secs.clone()),
+            twap_max_deviation_bps: Some(self.twap_max_deviation_bps.clone()),
+            lean_enabled: Some(self.lean_enabled),
+            lean_shadow: Some(self.lean_shadow),
+            lean_floor_bps: Some(self.lean_floor_bps.clone()),
+            lean_base_bps: Some(self.lean_base_bps.clone()),
+            lean_wide_bps: Some(self.lean_wide_bps.clone()),
+            // RFQ is opt-in on the patch: a form that opened before the operator
+            // touched RFQ must not rewrite the [rfq] block on save.
+            rfq_enabled: None,
+            rfq_url: None,
+            rfq_maker_id: None,
+            rfq_validation_contract: None,
+            rfq_corridor: None,
+            book_enabled: None,
+            vault_address: None,
+        }
+    }
+}
+
+/// The desired new state of the editable fields, applied onto the existing TOML
+/// text. The wallet key is handled separately.
+///
+/// The optional fields distinguish "set this to that" from "don't touch it", so a
+/// caller that only edits spreads can leave sizing alone without having to know
+/// its current value.
+#[derive(Debug, Clone, Default)]
+pub struct SettingsPatch {
+    /// Which pool the pool-scoped fields apply to. Defaults to the first.
+    pub pool_index: usize,
+    pub rpc_url: String,
+    pub feed_url: String,
+    pub buy: SpreadEdit,
+    pub sell: SpreadEdit,
+    /// Whether the taker leg should be on for this pool.
+    pub taker_enabled: bool,
+    pub buy_sizing: Option<SideSizing>,
+    pub sell_sizing: Option<SideSizing>,
+    pub ttl_secs: Option<u64>,
+    pub refresh_threshold_bps: Option<u32>,
+    pub tick_interval_secs: Option<u64>,
+    pub twap_window_secs: Option<String>,
+    pub twap_max_deviation_bps: Option<String>,
+    pub lean_enabled: Option<bool>,
+    pub lean_shadow: Option<bool>,
+    pub lean_floor_bps: Option<String>,
+    pub lean_base_bps: Option<String>,
+    pub lean_wide_bps: Option<String>,
+    pub rfq_enabled: Option<bool>,
+    pub rfq_url: Option<String>,
+    pub rfq_maker_id: Option<String>,
+    pub rfq_validation_contract: Option<String>,
+    pub rfq_corridor: Option<String>,
+    /// `None` leaves the public ladder alone. `Some(false)` is RFQ-only.
+    pub book_enabled: Option<bool>,
+    /// `None` leaves `[vault]` alone; `Some("")` removes it (trade from the
+    /// bot's own wallet); an address sets it.
+    pub vault_address: Option<String>,
+}
+
+/// Read the first pool's editable values from a `stitch.toml` body.
+pub fn read_settings(toml_str: &str) -> Result<SettingsView> {
+    read_settings_at(toml_str, 0)
+}
+
+/// Read one pool's editable values from a `stitch.toml` body. Parses through the
+/// real `Config` so an unreadable file surfaces the same error the bot would hit.
+pub fn read_settings_at(toml_str: &str, pool_index: usize) -> Result<SettingsView> {
+    let cfg = Config::from_toml(toml_str)?;
+    let pool_count = cfg.pools.len();
+    let pool = cfg.pools.get(pool_index).with_context(|| {
+        if pool_count == 0 {
+            "config has no [[pools]] entry".to_string()
+        } else {
+            format!("config has {pool_count} pools, so there is no pool {pool_index}")
+        }
+    })?;
+    Ok(SettingsView {
+        rpc_url: cfg.rpc_url.clone(),
+        // The bot prefers a pool's feed_url override over [feed].url (see
+        // main.rs), so surface the endpoint that's actually effective.
+        feed_url: pool
+            .feed_url
+            .clone()
+            .unwrap_or_else(|| cfg.feed.url.clone()),
+        buy: spread_edit(pool.buy_offset_bps, pool.buy_offset_abs),
+        sell: spread_edit(pool.sell_offset_bps, pool.sell_offset_abs),
+        taker_enabled: pool.limit_taker_enabled.unwrap_or(false),
+        pool_index,
+        pool_count,
+        pools: summarize_pools(&cfg),
+        pair: PoolPair {
+            collateral: pool.collateral.clone(),
+            collateral_decimals: pool.collateral_decimals,
+            debt: pool.debt.clone(),
+            debt_decimals: pool.debt_decimals,
+        },
+        buy_sizing: SideSizing {
+            total_liquidity: opt_str(&pool.buy_total_liquidity_debt),
+            min_slice_debt: opt_str(&pool.buy_min_slice_debt),
+            order_size: opt_str(&pool.buy_order_size_debt),
+            max_orders: opt_num(pool.buy_max_orders),
+        },
+        sell_sizing: SideSizing {
+            total_liquidity: opt_str(&pool.sell_total_liquidity_collateral),
+            // The sell floor is expressed in debt units too — the bot converts
+            // each generated slice into collateral at the live ask price.
+            min_slice_debt: opt_str(&pool.sell_min_slice_debt),
+            order_size: opt_str(&pool.sell_order_size_collateral),
+            max_orders: opt_num(pool.sell_max_orders),
+        },
+        ttl_secs: pool.ttl_secs,
+        refresh_threshold_bps: pool.refresh_threshold_bps,
+        tick_interval_secs: cfg.tick_interval_secs,
+        twap_window_secs: opt_num_u64(pool.twap_window_secs),
+        twap_max_deviation_bps: opt_num(pool.twap_max_deviation_bps),
+        lean_enabled: pool.lean_enabled.unwrap_or(false),
+        lean_shadow: pool.lean_shadow.unwrap_or(false),
+        lean_floor_bps: opt_f64(pool.lean_floor_bps),
+        lean_base_bps: opt_f64(pool.lean_base_bps),
+        lean_wide_bps: opt_f64(pool.lean_wide_bps),
+        rfq_enabled: cfg.rfq.as_ref().is_some_and(|r| r.enabled),
+        rfq_url: cfg.rfq.as_ref().map(|r| r.url.clone()).unwrap_or_default(),
+        rfq_maker_id: cfg
+            .rfq
+            .as_ref()
+            .map(|r| r.maker_id.clone())
+            .unwrap_or_default(),
+        rfq_validation_contract: cfg
+            .rfq
+            .as_ref()
+            .map(|r| r.validation_contract.clone())
+            .unwrap_or_default(),
+        rfq_corridor: pool.rfq_corridor.clone().unwrap_or_default(),
+        book_enabled: cfg.book_enabled,
+        rfq_default_unlocked: cfg.rfq_default_unlocked(),
+        vault_address: cfg
+            .vault
+            .as_ref()
+            .map(|v| v.address.clone())
+            .unwrap_or_default(),
+    })
+}
+
+fn opt_str(v: &Option<String>) -> String {
+    v.clone().unwrap_or_default()
+}
+
+fn opt_num(v: Option<u32>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_default()
+}
+
+fn opt_num_u64(v: Option<u64>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_default()
+}
+
+fn opt_f64(v: Option<f64>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_default()
+}
+
+/// The current signer, read from a `stitch.toml` for form prefill. Only the
+/// non-secret fields — secrets live in the env/secret file and are re-entered
+/// when the operator changes the signer. No `[signer]` reads as the hot wallet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignerView {
+    Local,
+    Turnkey {
+        organization_id: String,
+        sign_with: String,
+        operator_address: String,
+        api_base_url: String,
+    },
+    Mpcvault {
+        vault_uuid: String,
+        client_signer_pubkey: String,
+        operator_address: String,
+        api_base_url: String,
+        callback_listen_addr: String,
+    },
+    Fireblocks {
+        vault_account_id: String,
+        operator_address: String,
+        asset_id: String,
+        api_base_url: String,
+        raw_signing: bool,
+    },
+}
+
+/// Read the current signer from a `stitch.toml` body.
+///
+/// Reads the `[signer]` table on its own, deliberately *not* through
+/// [`Config::from_toml`]. That validates every field, so keying the signer off it
+/// meant one bad `rpc_url` — or any unrelated typo anywhere in the file — reported a
+/// Turnkey bot as a hot wallet. Downstream that isn't cosmetic: the compose export
+/// would mount `stitch.key` and set `STITCH_PRIVATE_KEY_FILE` for a bot whose secret
+/// is `turnkey-api.key`, so an operator who restored that file and then fixed the
+/// TOML would still have a service that can't start.
+///
+/// `Ok(Local)` means the config really does select the hot wallet: no `[signer]`
+/// table, or `provider = "local"`. `Err` means the body isn't TOML at all, or its
+/// `[signer]` table is malformed — the signer is genuinely unknown, and a caller
+/// about to bake it into a file or a container has to say so rather than guess.
+pub fn try_read_signer(toml_str: &str) -> Result<SignerView> {
+    use crate::signer::SignerConfig;
+    let doc: toml::Value = toml::from_str(toml_str).context("parsing stitch.toml")?;
+    let Some(table) = doc.get("signer") else {
+        return Ok(SignerView::Local);
+    };
+    let signer: SignerConfig = table
+        .clone()
+        .try_into()
+        .context("parsing the [signer] table")?;
+    Ok(match signer {
+        SignerConfig::Turnkey(c) => SignerView::Turnkey {
+            organization_id: c.organization_id,
+            sign_with: c.sign_with,
+            operator_address: c.operator_address,
+            api_base_url: c.api_base_url,
+        },
+        SignerConfig::Mpcvault(c) => SignerView::Mpcvault {
+            vault_uuid: c.vault_uuid,
+            client_signer_pubkey: c.client_signer_pubkey,
+            operator_address: c.operator_address,
+            api_base_url: c.api_base_url,
+            callback_listen_addr: c.callback_listen_addr,
+        },
+        SignerConfig::Fireblocks(c) => SignerView::Fireblocks {
+            vault_account_id: c.vault_account_id,
+            operator_address: c.operator_address,
+            asset_id: c.asset_id,
+            api_base_url: c.api_base_url,
+            raw_signing: c.raw_signing,
+        },
+        SignerConfig::Local => SignerView::Local,
+    })
+}
+
+/// As [`try_read_signer`], reading an unparseable config as the hot wallet.
+///
+/// Only for showing an operator a form they are about to correct — the desktop app
+/// loads whatever is on disk, however broken, so the signer picker has to render
+/// something. Anything that writes the answer somewhere durable uses
+/// [`try_read_signer`] and fails loudly instead.
+pub fn read_signer(toml_str: &str) -> SignerView {
+    try_read_signer(toml_str).unwrap_or(SignerView::Local)
+}
+
+/// Apply the patch onto `toml_str` and return the new TOML text. Preserves
+/// comments/formatting, and re-validates the result before returning so a bad
+/// edit fails here instead of on the next bot start.
+pub fn apply_settings(toml_str: &str, patch: &SettingsPatch) -> Result<String> {
+    // An empty endpoint still parses as a valid `Config` (both are plain
+    // `String`s), so guard here or a cleared field would silently restart the bot
+    // into a config that can't reach its RPC or feed.
+    require_url(&patch.rpc_url, "RPC URL")?;
+    require_url(&patch.feed_url, "price feed URL")?;
+    assert_feed_url(&patch.feed_url, "price feed URL")?;
+
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+
+    set_value(
+        doc.as_table_mut(),
+        "rpc_url",
+        Value::from(patch.rpc_url.trim()),
+    );
+
+    if let Some(secs) = patch.tick_interval_secs {
+        anyhow::ensure!(secs > 0, "the tick interval must be at least 1 second");
+        set_value(
+            doc.as_table_mut(),
+            "tick_interval_secs",
+            Value::from(i64::try_from(secs).context("tick interval is too large")?),
+        );
+    }
+
+    let index = patch.pool_index;
+
+    write_feed_url(&mut doc, index, patch.feed_url.trim())?;
+
+    let pool = pool_mut(&mut doc, index)?;
+    apply_spread(pool, "buy", &patch.buy)?;
+    apply_spread(pool, "sell", &patch.sell)?;
+    apply_taker(pool, patch.taker_enabled);
+    if let Some(sizing) = &patch.buy_sizing {
+        apply_sizing(pool, Side::Buy, sizing)?;
+    }
+    if let Some(sizing) = &patch.sell_sizing {
+        apply_sizing(pool, Side::Sell, sizing)?;
+    }
+    if let Some(secs) = patch.ttl_secs {
+        // Restate the loader rule so a bad TTL fails with an operator-facing
+        // message before we rewrite the file and hit Config::from_toml.
+        anyhow::ensure!(
+            secs > crate::config::LIVE_ORDER_DEADLINE_MARGIN_SECS,
+            "order lifetime (ttl_secs) must be greater than {} seconds — shorter \
+             orders are accepted on-chain but never served as fillable depth",
+            crate::config::LIVE_ORDER_DEADLINE_MARGIN_SECS
+        );
+        set_value(
+            pool,
+            "ttl_secs",
+            Value::from(i64::try_from(secs).context("order lifetime is too large")?),
+        );
+    }
+    if let Some(bps) = patch.refresh_threshold_bps {
+        set_value(pool, "refresh_threshold_bps", Value::from(i64::from(bps)));
+    }
+    if let Some(raw) = &patch.twap_window_secs {
+        apply_optional_u64(pool, "twap_window_secs", raw, "TWAP window")?;
+    }
+    if let Some(raw) = &patch.twap_max_deviation_bps {
+        apply_optional_u32(pool, "twap_max_deviation_bps", raw, "TWAP max deviation")?;
+    }
+    if let Some(enabled) = patch.lean_enabled {
+        apply_bool_flag(pool, "lean_enabled", enabled);
+    }
+    if let Some(shadow) = patch.lean_shadow {
+        apply_bool_flag(pool, "lean_shadow", shadow);
+    }
+    if let Some(raw) = &patch.lean_floor_bps {
+        apply_optional_f64(pool, "lean_floor_bps", raw, "lean floor")?;
+    }
+    if let Some(raw) = &patch.lean_base_bps {
+        apply_optional_f64(pool, "lean_base_bps", raw, "lean base")?;
+    }
+    if let Some(raw) = &patch.lean_wide_bps {
+        apply_optional_f64(pool, "lean_wide_bps", raw, "lean wide")?;
+    }
+    apply_rfq(&mut doc, patch)?;
+    apply_book_enabled(doc.as_table_mut(), patch.book_enabled);
+    apply_vault(&mut doc, patch.vault_address.as_deref())?;
+
+    let edited = doc.to_string();
+    // Guard: never hand back something the bot can't load. This is also what
+    // enforces the cross-field rules — TTL above the live-order deadline margin,
+    // ladder caps, positive slices, TWAP/lean constraints — so they don't need
+    // restating here.
+    Config::from_toml(&edited).context("the edited config is not valid")?;
+    Ok(edited)
+}
+
+/// Append one catalog corridor as a new `[[pools]]` entry on an existing bot.
+///
+/// One bot is one chain, one RPC, one reactor, one wallet. Adding a second
+/// corridor is how you quote two pairs without a second process (and a second
+/// nonce ledger) on that wallet. The incoming template must be the same
+/// `chain_id` and must carry exactly one pool. The new pool always gets its
+/// own `feed_url` so it does not inherit the bot-level `[feed]` (which prices
+/// the first corridor).
+pub fn add_pool_from_template(toml_str: &str, template: &str) -> Result<String> {
+    let current = Config::from_toml(toml_str).context("current stitch.toml is not valid")?;
+    let incoming = Config::from_toml(template).context("corridor template is not valid")?;
+
+    anyhow::ensure!(
+        current.chain_id != 0 && incoming.chain_id != 0,
+        "a corridor needs a real chain id — 0 is not a network"
+    );
+    anyhow::ensure!(
+        incoming.chain_id == current.chain_id,
+        "that corridor is on chain {}, this bot is on chain {}. One bot quotes one chain, so set \
+         up a second bot for the other network.",
+        incoming.chain_id,
+        current.chain_id
+    );
+    anyhow::ensure!(
+        incoming.pools.len() == 1,
+        "the corridor template must have exactly one [[pools]] entry"
+    );
+    let incoming_pool = &incoming.pools[0];
+    let already = current.pools.iter().any(|p| {
+        same_token_pair(
+            &p.collateral,
+            &p.debt,
+            &incoming_pool.collateral,
+            &incoming_pool.debt,
+        )
+    });
+    anyhow::ensure!(!already, "this bot already quotes that pair");
+
+    let feed_url = incoming_pool
+        .feed_url
+        .clone()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| incoming.feed.url.clone());
+    anyhow::ensure!(!feed_url.is_empty(), "corridor template has no price feed");
+    assert_feed_url(&feed_url, "price feed URL")?;
+
+    let incoming_doc = template
+        .parse::<DocumentMut>()
+        .context("parsing corridor template")?;
+    let incoming_tables = incoming_doc
+        .get("pools")
+        .and_then(Item::as_array_of_tables)
+        .context("corridor template has no [[pools]]")?;
+    let mut new_table = incoming_tables
+        .get(0)
+        .context("corridor template has no [[pools]]")?
+        .clone();
+    set_value(&mut new_table, "feed_url", Value::from(feed_url.as_str()));
+
+    // A pool that overrides the feed needs its own RFQ window too, or it
+    // inherits the bot-level `[feed].rfq_staleness_secs` (cNGN's 240s) even
+    // when the URL is a live-fetched pair. Copy the incoming feed's setting
+    // when the pool doesn't already name one.
+    if new_table.get("rfq_staleness_secs").is_none() {
+        if let Some(secs) = incoming.feed.rfq_staleness_secs {
+            set_value(
+                &mut new_table,
+                "rfq_staleness_secs",
+                Value::from(i64::try_from(secs).context("rfq_staleness_secs is too large")?),
+            );
+        }
+    }
+
+    // The taker leg is a per-pool flag the panel stamps on at create (see
+    // `apply_rfq_default_preset`). A corridor added later follows the bot's
+    // existing pools, so one bot does not end up half on and half off.
+    let taker_on = current.pools.iter().all(|p| p.limit_taker_enabled());
+    apply_taker(&mut new_table, taker_on);
+
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+    let pools = doc
+        .get_mut("pools")
+        .and_then(Item::as_array_of_tables_mut)
+        .context("config has no [[pools]]")?;
+    pools.push(new_table);
+
+    let edited = doc.to_string();
+    let validated = Config::from_toml(&edited).context("the edited config is not valid")?;
+
+    // `[feed].staleness_secs` is bot-wide: the ladder tick reads it for every
+    // pool, and `rfq_staleness_secs_for_pool` takes the minimum with it. A
+    // corridor that needs a wider window than this bot allows would be written
+    // and then sit dark between marks, so refuse instead of quoting nothing.
+    let added = validated
+        .pools
+        .last()
+        .context("the edited config lost the new pool")?;
+    let requested = requested_rfq_staleness_secs(&validated.feed, added);
+    anyhow::ensure!(
+        validated.feed.staleness_secs >= requested,
+        "that corridor prices off a feed that can be up to {requested}s old, but this bot treats \
+         a mark older than {}s as stale, so the new pair would never quote. Widen \
+         [feed].staleness_secs to at least {requested} — it applies to every pool on this bot — \
+         or run that corridor on its own bot.",
+        validated.feed.staleness_secs
+    );
+
+    Ok(edited)
+}
+
+/// RFQ matching is order-insensitive (`pair_matches`). A custom pool that
+/// lists the catalog tokens swapped is the same venue book.
+fn same_token_pair(a_coll: &str, a_debt: &str, b_coll: &str, b_debt: &str) -> bool {
+    (a_coll.eq_ignore_ascii_case(b_coll) && a_debt.eq_ignore_ascii_case(b_debt))
+        || (a_coll.eq_ignore_ascii_case(b_debt) && a_debt.eq_ignore_ascii_case(b_coll))
+}
+
+/// Drop one `[[pools]]` entry. A bot must keep at least one.
+pub fn remove_pool(toml_str: &str, index: usize) -> Result<String> {
+    let current = Config::from_toml(toml_str).context("current stitch.toml is not valid")?;
+    anyhow::ensure!(
+        current.pools.len() > 1,
+        "a bot needs at least one [[pools]] entry"
+    );
+    anyhow::ensure!(
+        index < current.pools.len(),
+        "config has {} pools, so there is no pool {index}",
+        current.pools.len()
+    );
+
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+    let pools = doc
+        .get_mut("pools")
+        .and_then(Item::as_array_of_tables_mut)
+        .context("config has no [[pools]]")?;
+    pools.remove(index);
+
+    let edited = doc.to_string();
+    Config::from_toml(&edited).context("the edited config is not valid")?;
+    Ok(edited)
+}
+
+fn summarize_pools(cfg: &Config) -> Vec<PoolSummary> {
+    cfg.pools
+        .iter()
+        .enumerate()
+        .map(|(index, p)| {
+            // Prefers the identity stamped into the pool, so a corridor listed
+            // after this release still names itself instead of degrading to a
+            // pair of raw addresses.
+            let identified = super::catalog::pool_identity(cfg.chain_id, p);
+            PoolSummary {
+                index,
+                pair: identified
+                    .as_ref()
+                    .map(|c| c.display_name.clone())
+                    .unwrap_or_else(|| {
+                        format!("{} / {}", short_addr(&p.collateral), short_addr(&p.debt))
+                    }),
+                corridor_id: identified.as_ref().map(|c| c.id.clone()),
+                corridor_label: identified
+                    .as_ref()
+                    .map(|c| format!("{} — {}", c.display_name, c.network_label)),
+                collateral: p.collateral.clone(),
+                debt: p.debt.clone(),
+            }
+        })
+        .collect()
+}
+
+/// `0x1234…abcd`, for a token the catalog does not know.
+pub fn short_addr(addr: &str) -> String {
+    // Character indices, not bytes: `Config::from_toml` accepts a custom
+    // token string that is not an ASCII address, and Settings still has to
+    // render a label instead of panicking mid-codepoint.
+    let chars: Vec<char> = addr.chars().collect();
+    if chars.len() > 10 {
+        format!(
+            "{}…{}",
+            chars[..6].iter().collect::<String>(),
+            chars[chars.len() - 4..].iter().collect::<String>()
+        )
+    } else {
+        addr.to_string()
+    }
+}
+
+/// Write the feed URL where the bot will actually read it for *this* pool, and
+/// nowhere else.
+///
+/// The bot resolves a pool's feed as `pool.feed_url.unwrap_or(feed.url)`, so
+/// there are three cases:
+///
+/// - The pool already overrides it: write the override. Touching `[feed].url`
+///   would look effective and be ignored on restart.
+/// - One pool, no override: write `[feed].url`. That's the shared value and the
+///   only pool reading it, so an override would be noise.
+/// - Several pools, no override: give this pool its own override. The settings
+///   page is pool-scoped, and writing `[feed].url` would silently repoint every
+///   other pool without an override — pools that can be quoting different pairs
+///   entirely.
+///
+/// The last case only kicks in when the value actually changes. Every save sends
+/// the whole form, so writing unconditionally would sprinkle overrides onto pools
+/// the operator never edited and quietly cut them off from the shared fallback.
+fn write_feed_url(doc: &mut DocumentMut, index: usize, url: &str) -> Result<()> {
+    let pools = doc.get("pools").and_then(Item::as_array_of_tables);
+    let overrides_feed = pools
+        .and_then(|arr| arr.get(index))
+        .is_some_and(|p| p.contains_key("feed_url"));
+    let several_pools = pools.is_some_and(|arr| arr.len() > 1);
+    let shared = doc
+        .get("feed")
+        .and_then(|f| f.get("url"))
+        .and_then(Item::as_str)
+        .unwrap_or_default();
+
+    if overrides_feed || (several_pools && url != shared) {
+        let pool = pool_mut(doc, index)?;
+        set_value(pool, "feed_url", Value::from(url));
+        return Ok(());
+    }
+
+    let feed = doc
+        .get_mut("feed")
+        .and_then(Item::as_table_mut)
+        .context("config has no [feed] table")?;
+    set_value(feed, "url", Value::from(url));
+    Ok(())
+}
+
+/// Which side of the book a sizing edit applies to. The two sides use different
+/// key names for the same concept, so this carries the mapping in one place.
+#[derive(Debug, Clone, Copy)]
+enum Side {
+    Buy,
+    Sell,
+}
+
+impl Side {
+    /// Key holding total ladder liquidity. Sized in debt on the buy side and in
+    /// collateral on the sell side, hence the differing suffixes.
+    fn total_liquidity_key(self) -> &'static str {
+        match self {
+            Side::Buy => "buy_total_liquidity_debt",
+            Side::Sell => "sell_total_liquidity_collateral",
+        }
+    }
+
+    /// Key holding the flat per-order size.
+    fn order_size_key(self) -> &'static str {
+        match self {
+            Side::Buy => "buy_order_size_debt",
+            Side::Sell => "sell_order_size_collateral",
+        }
+    }
+
+    /// Key holding the smallest slice. Both sides express this in debt units.
+    fn min_slice_key(self) -> &'static str {
+        match self {
+            Side::Buy => "buy_min_slice_debt",
+            Side::Sell => "sell_min_slice_debt",
+        }
+    }
+
+    fn max_orders_key(self) -> &'static str {
+        match self {
+            Side::Buy => "buy_max_orders",
+            Side::Sell => "sell_max_orders",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Side::Buy => "buy",
+            Side::Sell => "sell",
+        }
+    }
+}
+
+/// Write one side's sizing back onto the pool. Amounts stay strings in the TOML —
+/// they're atomic `U256`/`u128` values that would lose precision as TOML integers
+/// beyond 2^63, and the shipped templates already quote them.
+///
+/// Each field is validated with the same parser the bot loads it through, so an
+/// operator gets the failure at save time and not on the next start.
+fn apply_sizing(pool: &mut Table, side: Side, sizing: &SideSizing) -> Result<()> {
+    let total = sizing.total_liquidity.trim();
+    if total.is_empty() {
+        pool.remove(side.total_liquidity_key());
+    } else {
+        parse_liquidity_amount(total, side.total_liquidity_key())?;
+        set_value(pool, side.total_liquidity_key(), Value::from(total));
+    }
+
+    let min_slice = sizing.min_slice_debt.trim();
+    if min_slice.is_empty() {
+        pool.remove(side.min_slice_key());
+    } else {
+        parse_min_slice_debt(min_slice, side.min_slice_key())?;
+        set_value(pool, side.min_slice_key(), Value::from(min_slice));
+    }
+
+    let order_size = sizing.order_size.trim();
+    if order_size.is_empty() {
+        pool.remove(side.order_size_key());
+    } else {
+        order_size
+            .parse::<alloy_primitives::U256>()
+            .with_context(|| {
+                format!(
+                    "{} order size must be a whole number of atomic units",
+                    side.label()
+                )
+            })?;
+        set_value(pool, side.order_size_key(), Value::from(order_size));
+    }
+
+    let max_orders = sizing.max_orders.trim();
+    if max_orders.is_empty() {
+        // Removing it falls back to the bot's own ladder cap rather than pinning
+        // an explicit number the operator didn't choose.
+        pool.remove(side.max_orders_key());
+    } else {
+        let n: u32 = max_orders
+            .parse()
+            .with_context(|| format!("{} max orders must be a whole number", side.label()))?;
+        // 0 is a valid cap (post no slices). The loader only rejects values
+        // above MAX_SUPPORTED_LADDER_ORDERS — reconnect / RFQ must not invent
+        // a "at least 1" rule the bot itself does not have.
+        anyhow::ensure!(
+            n <= crate::config::MAX_SUPPORTED_LADDER_ORDERS,
+            "{} max orders cannot exceed {}",
+            side.label(),
+            crate::config::MAX_SUPPORTED_LADDER_ORDERS
+        );
+        set_value(pool, side.max_orders_key(), Value::from(i64::from(n)));
+    }
+    Ok(())
+}
+
+/// One `[[pools]]` table, mutably. Errors if the index is out of range, naming the
+/// count so the caller can say something useful.
+fn pool_mut(doc: &mut DocumentMut, index: usize) -> Result<&mut Table> {
+    let pools = doc
+        .get_mut("pools")
+        .and_then(Item::as_array_of_tables_mut)
+        .context("config has no [[pools]] entry")?;
+    let count = pools.len();
+    pools
+        .get_mut(index)
+        .with_context(|| format!("config has {count} pools, so there is no pool {index}"))
+}
+
+/// Reject an endpoint that would leave the bot unable to reach its RPC or feed.
+/// Both are used through reqwest's HTTP client, so fully parse the value and
+/// require an http(s) scheme with a host — a bare `https://`, a `ws://`, or other
+/// non-URL text would otherwise pass and fail every request after restart.
+/// Write the `[rfq]` block and this pool's `rfq_corridor` when the patch names
+/// them. A spread-only save leaves both alone — same rule as TWAP / lean.
+fn apply_rfq(doc: &mut DocumentMut, patch: &SettingsPatch) -> Result<()> {
+    let touching_block = patch.rfq_enabled.is_some()
+        || patch.rfq_url.is_some()
+        || patch.rfq_maker_id.is_some()
+        || patch.rfq_validation_contract.is_some();
+    if touching_block {
+        let has_table = doc.get("rfq").and_then(Item::as_table).is_some();
+        let only_disable = patch.rfq_enabled == Some(false)
+            && patch.rfq_url.is_none()
+            && patch.rfq_maker_id.is_none()
+            && patch.rfq_validation_contract.is_none();
+        if !(only_disable && !has_table) {
+            let table = rfq_table_mut(doc);
+            if let Some(enabled) = patch.rfq_enabled {
+                set_value(table, "enabled", Value::from(enabled));
+            }
+            if let Some(url) = &patch.rfq_url {
+                require_ws_url(url, "RFQ stream URL")?;
+                set_value(table, "url", Value::from(url.trim()));
+            }
+            if let Some(maker_id) = &patch.rfq_maker_id {
+                set_value(table, "maker_id", Value::from(maker_id.trim()));
+            }
+            if let Some(addr) = &patch.rfq_validation_contract {
+                let addr = addr.trim();
+                if !addr.is_empty() {
+                    addr.parse::<alloy_primitives::Address>()
+                        .context("RFQ validation contract is not a valid address")?;
+                }
+                set_value(table, "validation_contract", Value::from(addr));
+            }
+        }
+    }
+    if let Some(slug) = &patch.rfq_corridor {
+        let pool = pool_mut(doc, patch.pool_index)?;
+        let slug = slug.trim();
+        if slug.is_empty() {
+            pool.remove("rfq_corridor");
+        } else {
+            set_value(pool, "rfq_corridor", Value::from(slug));
+        }
+    }
+    Ok(())
+}
+
+/// Write the flag explicitly in both directions.
+///
+/// This used to remove the key for "on" and rely on the loader defaulting to
+/// true. That default is now false, so absence means off — removing the key
+/// would turn the Legacy switch into a no-op that silently leaves the ladder
+/// down. Pin whichever value the operator picked; the round-trip is no longer
+/// byte-identical on a pre-RFQ template, which is the correct trade for a
+/// toggle that has to actually work.
+fn apply_book_enabled(table: &mut Table, enabled: Option<bool>) {
+    let Some(enabled) = enabled else {
+        return;
+    };
+    set_value(table, "book_enabled", Value::from(enabled));
+}
+
+/// Set or clear `[vault]`. An address makes the bot trade from that
+/// OperatorVault (its orders name the vault as swapper and recipient); empty
+/// removes the table so the bot trades from its own wallet again. Only the
+/// address is managed here: `order_executor`, when ops publish one, is kept
+/// as written.
+fn apply_vault(doc: &mut DocumentMut, address: Option<&str>) -> Result<()> {
+    let Some(raw) = address else {
+        return Ok(());
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        doc.as_table_mut().remove("vault");
+        return Ok(());
+    }
+    let parsed: alloy_primitives::Address = raw
+        .parse()
+        .with_context(|| format!("vault address {raw:?} is not an address"))?;
+    if parsed.is_zero() {
+        bail!("vault address can't be the zero address");
+    }
+    set_value(
+        vault_table_mut(doc),
+        "address",
+        Value::from(format!("{parsed:?}")),
+    );
+    Ok(())
+}
+
+fn vault_table_mut(doc: &mut DocumentMut) -> &mut Table {
+    if doc.get("vault").and_then(Item::as_table).is_none() {
+        let mut table = Table::new();
+        table.set_implicit(false);
+        doc.insert("vault", Item::Table(table));
+    }
+    doc.get_mut("vault")
+        .and_then(Item::as_table_mut)
+        .expect("just inserted [vault]")
+}
+
+/// The config for a bot that trades from `vault`: everything the panel's
+/// "Trade from a vault" flow rewrites before it re-enrolls.
+///
+/// - `[vault].address` is the vault, checksummed.
+/// - `[vault].order_executor` is `order_executor`, or removed when `None`. It
+///   comes from the venue's vault check, which names the chain's executor only
+///   for a vault that stakes idle settlement; a value left over from another
+///   vault would be wrong for this one.
+/// - The public ladder is off. `Config` refuses `[vault]` with it on.
+/// - The taker leg is off on every pool. It fills from the signer wallet's own
+///   funds and approvals, not the vault's, so leaving it on would trade money
+///   the operator just moved out of the picture.
+///
+/// Validated through `Config::from_toml`, so a caller never holds a candidate
+/// the bot would refuse to load.
+pub fn link_vault(
+    toml_str: &str,
+    vault: alloy_primitives::Address,
+    order_executor: Option<alloy_primitives::Address>,
+) -> Result<String> {
+    anyhow::ensure!(!vault.is_zero(), "vault address can't be the zero address");
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+    let table = vault_table_mut(&mut doc);
+    set_value(table, "address", Value::from(vault.to_checksum(None)));
+    match order_executor {
+        Some(executor) => set_value(
+            table,
+            "order_executor",
+            Value::from(executor.to_checksum(None)),
+        ),
+        None => {
+            table.remove("order_executor");
+        }
+    }
+    apply_book_enabled(doc.as_table_mut(), Some(false));
+    let pools = doc
+        .get("pools")
+        .and_then(Item::as_array_of_tables)
+        .map_or(0, |a| a.len());
+    for index in 0..pools {
+        apply_taker(pool_mut(&mut doc, index)?, false);
+    }
+    let edited = doc.to_string();
+    Config::from_toml(&edited).context("the config with this vault is not valid")?;
+    Ok(edited)
+}
+
+/// The config for a bot that trades from its own wallet again: `[vault]`
+/// removed, nothing else touched. The taker leg stays as it is (off, after
+/// [`link_vault`]); turning it back on is the operator's call.
+pub fn unlink_vault(toml_str: &str) -> Result<String> {
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+    doc.as_table_mut().remove("vault");
+    let edited = doc.to_string();
+    Config::from_toml(&edited).context("the config without its vault is not valid")?;
+    Ok(edited)
+}
+
+/// The patch Connect/Reconnect should apply: RFQ fields only. Never rewriting
+/// ladder sizing — that is what produced "buy max orders must be at least 1"
+/// on a reconnect that had no business touching the book.
+pub fn rfq_connect_patch(
+    current: &SettingsView,
+    url: String,
+    maker_id: String,
+    validation_contract: String,
+    corridor: String,
+    book_off: bool,
+    go_live: bool,
+) -> SettingsPatch {
+    SettingsPatch {
+        pool_index: current.pool_index,
+        rpc_url: current.rpc_url.clone(),
+        feed_url: current.feed_url.clone(),
+        buy: current.buy.clone(),
+        sell: current.sell.clone(),
+        taker_enabled: current.taker_enabled,
+        rfq_enabled: Some(go_live),
+        rfq_url: Some(url),
+        rfq_maker_id: Some(maker_id),
+        rfq_validation_contract: Some(validation_contract),
+        rfq_corridor: Some(corridor),
+        // RFQ-only: turn the book off when RFQ can quote. Waiting keeps the
+        // current book flag (new bots are already off) and does not start RFQ.
+        book_enabled: (book_off && go_live).then_some(false),
+        ..SettingsPatch::default()
+    }
+}
+
+/// Stamp a freshly written corridor template with the panel's defaults:
+/// public ladder off (RFQ-only), taker leg on for every pool. Spreads and
+/// liquidity stay — RFQ uses them. The taker leg is on because a resting
+/// order priced better than our own quote is free money, and a bot that
+/// ignores it leaves it to whoever doesn't; the binary's own default stays
+/// off for hand-written configs, so this is a panel decision, written down
+/// in the file where the operator can see and undo it.
+pub fn apply_rfq_default_preset(toml_str: &str) -> Result<String> {
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .context("parsing stitch.toml")?;
+    apply_book_enabled(doc.as_table_mut(), Some(false));
+    // The taker settles on chain, so it is only a sensible default for a signer
+    // that can sign a transaction. Turning it on regardless would make the
+    // preset emit a config its own validation rejects — which is not a
+    // theoretical shape: it is every bot the wizard creates on a Fireblocks
+    // signer without raw signing, failing with a 400 immediately after a
+    // successful Verify. The preset picks what is *available* to this bot.
+    let taker = taker_is_available(toml_str);
+    let pools = doc
+        .get("pools")
+        .and_then(Item::as_array_of_tables)
+        .map_or(0, |a| a.len());
+    for index in 0..pools {
+        apply_taker(pool_mut(&mut doc, index)?, taker);
+    }
+    let edited = doc.to_string();
+    Config::from_toml(&edited).context("the RFQ-default preset is not a valid config")?;
+    Ok(edited)
+}
+
+/// Whether this config's signer could run the taker leg at all.
+///
+/// Reads the `[signer]` table the writer has already put in the document. A
+/// missing or unreadable section means the hot wallet, which signs everything —
+/// the same default `try_read_signer` takes, and the safe one here: the preset
+/// validates its own output, so a wrong `true` fails loudly rather than
+/// producing a bot that can't sign its fills.
+fn taker_is_available(toml_str: &str) -> bool {
+    use crate::signer::SignerConfig;
+    let Ok(doc) = toml::from_str::<toml::Value>(toml_str) else {
+        return true;
+    };
+    let Some(table) = doc.get("signer") else {
+        return true;
+    };
+    table
+        .clone()
+        .try_into::<SignerConfig>()
+        .map_or(true, |signer| signer.can_sign_raw_digests())
+}
+
+fn rfq_table_mut(doc: &mut DocumentMut) -> &mut Table {
+    if doc.get("rfq").and_then(Item::as_table).is_none() {
+        let mut table = Table::new();
+        table.set_implicit(false);
+        doc.insert("rfq", Item::Table(table));
+    }
+    doc.get_mut("rfq")
+        .and_then(Item::as_table_mut)
+        .expect("just inserted [rfq]")
+}
+
+/// The venue stream is a WebSocket, not HTTP — `require_url` would reject it.
+fn require_ws_url(value: &str, field: &str) -> Result<()> {
+    let v = value.trim();
+    anyhow::ensure!(!v.is_empty(), "{field} can't be empty");
+    let parsed = url::Url::parse(v)
+        .with_context(|| format!("{field} must be a valid WebSocket URL (like wss://…)"))?;
+    anyhow::ensure!(
+        matches!(parsed.scheme(), "ws" | "wss"),
+        "{field} must be a ws(s):// URL (like wss://api.textilecredit.com/v2/maker/stream)"
+    );
+    anyhow::ensure!(
+        parsed.host_str().is_some_and(|h| !h.is_empty()),
+        "{field} must include a host"
+    );
+    assert_rfq_stream_url(v).with_context(|| format!("{field} rejected"))?;
+    Ok(())
+}
+
+fn require_url(value: &str, field: &str) -> Result<()> {
+    let v = value.trim();
+    anyhow::ensure!(!v.is_empty(), "{field} can't be empty");
+    let parsed = url::Url::parse(v)
+        .with_context(|| format!("{field} must be a valid URL (like https://…)"))?;
+    anyhow::ensure!(
+        matches!(parsed.scheme(), "http" | "https"),
+        "{field} must be an http(s) URL (like https://…)"
+    );
+    anyhow::ensure!(
+        parsed.host_str().is_some_and(|h| !h.is_empty()),
+        "{field} must include a host (like https://api.example.com)"
+    );
+    Ok(())
+}
+
+/// Turn the two optional spread fields into an editable value + its kind.
+fn spread_edit(bps: Option<u32>, abs: Option<f64>) -> SpreadEdit {
+    match (bps, abs) {
+        (Some(b), _) => SpreadEdit {
+            kind: SpreadKind::Bps,
+            value: b.to_string(),
+        },
+        (None, Some(a)) => SpreadEdit {
+            kind: SpreadKind::Abs,
+            value: a.to_string(),
+        },
+        (None, None) => SpreadEdit::default(),
+    }
+}
+
+/// Write one side's spread back into the pool table, keeping the config's chosen
+/// representation and removing the other form so the two can't disagree. An empty
+/// value removes both offset keys, disabling that side (so the file always matches
+/// what the field shows).
+fn apply_spread(pool: &mut Table, side: &str, edit: &SpreadEdit) -> Result<()> {
+    let raw = edit.value.trim();
+    let bps_key = format!("{side}_offset_bps");
+    let abs_key = format!("{side}_offset_abs");
+    if raw.is_empty() {
+        // Clearing a prefilled field disables the side: remove both offset forms
+        // so the file matches the UI, rather than leaving the old spread in place
+        // and reporting a save that didn't change anything.
+        pool.remove(&bps_key);
+        pool.remove(&abs_key);
+        return Ok(());
+    }
+    match edit.kind {
+        SpreadKind::Bps => {
+            let n: u32 = raw
+                .parse()
+                .with_context(|| format!("{side} spread must be a whole number of basis points"))?;
+            set_value(pool, &bps_key, Value::from(i64::from(n)));
+            pool.remove(&abs_key);
+        }
+        SpreadKind::Abs => {
+            let n: f64 = raw
+                .parse()
+                .with_context(|| format!("{side} spread must be a number"))?;
+            // A negative (or non-finite) absolute offset crosses the book: the
+            // bid would price above mid and the ask below it.
+            anyhow::ensure!(
+                n.is_finite() && n >= 0.0,
+                "{side} spread must be a non-negative number"
+            );
+            set_value(pool, &abs_key, Value::from(n));
+            pool.remove(&bps_key);
+        }
+    }
+    Ok(())
+}
+
+/// Write the taker leg's on/off flag onto the pool. Mirrors the spread logic:
+/// enabling sets `limit_taker_enabled = true`; disabling removes the key so the
+/// file falls back to the opt-in default (off) rather than carrying an explicit
+/// `false`, keeping a taker-off config byte-identical to a template that never
+/// mentioned the leg.
+fn apply_taker(pool: &mut Table, enabled: bool) {
+    apply_bool_flag(pool, "limit_taker_enabled", enabled);
+}
+
+/// Opt-in boolean flag: write `true`, or remove the key when off so a template
+/// that never mentioned the flag stays byte-identical after a round-trip.
+fn apply_bool_flag(pool: &mut Table, key: &str, enabled: bool) {
+    if enabled {
+        set_value(pool, key, Value::from(true));
+    } else {
+        pool.remove(key);
+    }
+}
+
+/// Optional integer key. Empty clears it (bot default / unset); non-empty must
+/// parse as a positive whole number — the real loader re-checks cross-field rules.
+fn apply_optional_u64(pool: &mut Table, key: &str, raw: &str, label: &str) -> Result<()> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        pool.remove(key);
+        return Ok(());
+    }
+    let n: u64 = raw
+        .parse()
+        .with_context(|| format!("{label} must be a whole number of seconds"))?;
+    anyhow::ensure!(n > 0, "{label} must be positive");
+    set_value(
+        pool,
+        key,
+        Value::from(i64::try_from(n).context(format!("{label} is too large"))?),
+    );
+    Ok(())
+}
+
+fn apply_optional_u32(pool: &mut Table, key: &str, raw: &str, label: &str) -> Result<()> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        pool.remove(key);
+        return Ok(());
+    }
+    let n: u32 = raw
+        .parse()
+        .with_context(|| format!("{label} must be a whole number of basis points"))?;
+    anyhow::ensure!(n > 0, "{label} must be positive");
+    set_value(pool, key, Value::from(i64::from(n)));
+    Ok(())
+}
+
+/// Optional floating bps value. Empty clears the key; non-empty must be finite
+/// and non-negative. Cross-field rules (lean needs a positive floor, etc.) stay
+/// with `Config::from_toml`.
+fn apply_optional_f64(pool: &mut Table, key: &str, raw: &str, label: &str) -> Result<()> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        pool.remove(key);
+        return Ok(());
+    }
+    let n: f64 = raw
+        .parse()
+        .with_context(|| format!("{label} must be a number of basis points"))?;
+    anyhow::ensure!(
+        n.is_finite() && n >= 0.0,
+        "{label} must be a non-negative number of basis points"
+    );
+    set_value(pool, key, Value::from(n));
+    Ok(())
+}
+
+/// Set a key's value while preserving its existing decor (the surrounding
+/// whitespace and any inline `# comment`). Inserts a fresh key when it's absent.
+fn set_value(table: &mut Table, key: &str, new: Value) {
+    if let Some(existing) = table.get_mut(key).and_then(Item::as_value_mut) {
+        let mut next = new;
+        *next.decor_mut() = existing.decor().clone();
+        *existing = next;
+    } else {
+        table.insert(key, Item::Value(new));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEMPLATE: &str = include_str!("templates/cngn-usdt-bsc.toml");
+
+    fn patch_from(view: &SettingsView) -> SettingsPatch {
+        view.to_patch()
+    }
+
+    const FIREBLOCKS_SIGNER: &str = "\n[signer]\nprovider = \"fireblocks\"\n\
+         vault_account_id = \"7\"\n\
+         operator_address = \"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\"\n";
+
+    /// A Fireblocks bot must never read back as a hot wallet: downstream that
+    /// mounts `stitch.key` for a bot whose secret is `fireblocks-api.key`.
+    /// The wizard writes the signer, then stamps the RFQ default. A preset that
+    /// turned the taker on regardless would emit a config its own validation
+    /// rejects, and `create` deletes the bot directory and 400s — so every
+    /// Fireblocks bot would die immediately after a successful Verify.
+    #[test]
+    fn the_rfq_default_preset_leaves_the_taker_off_for_a_typed_only_signer() {
+        let src = format!("{CELO}{FIREBLOCKS_SIGNER}");
+        let stamped = apply_rfq_default_preset(&src).expect("the preset must stay valid");
+        assert!(
+            !stamped.contains("limit_taker_enabled"),
+            "a signer that can't sign transactions must not be given the taker:\n{stamped}"
+        );
+        // And the config it produced actually parses, which is the failure the
+        // wizard hit.
+        crate::config::Config::from_toml(&stamped).expect("preset output must be a valid config");
+    }
+
+    /// The same preset on a signer that *can* broadcast still turns the taker
+    /// on — this is a capability gate, not a blanket retreat.
+    #[test]
+    fn the_rfq_default_preset_still_enables_the_taker_for_a_hot_wallet() {
+        let stamped = apply_rfq_default_preset(CELO).unwrap();
+        assert!(stamped.contains("limit_taker_enabled"), "{stamped}");
+    }
+
+    #[test]
+    fn a_fireblocks_config_reads_back_as_fireblocks_with_its_defaults() {
+        let view = try_read_signer(FIREBLOCKS_SIGNER).expect("fireblocks config parses");
+        match view {
+            SignerView::Fireblocks {
+                vault_account_id,
+                asset_id,
+                api_base_url,
+                raw_signing,
+                ..
+            } => {
+                assert_eq!(vault_account_id, "7");
+                // Defaults come from the config layer, not the file.
+                assert_eq!(asset_id, "ETH");
+                assert_eq!(api_base_url, "https://api.fireblocks.io");
+                assert!(!raw_signing, "raw signing is off unless asked for");
+            }
+            other => panic!("expected Fireblocks, got {other:?}"),
+        }
+    }
+
+    const TURNKEY_SIGNER: &str = "\n[signer]\nprovider = \"turnkey\"\n\
+         organization_id = \"org-1\"\n\
+         sign_with = \"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\"\n\
+         operator_address = \"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\"\n";
+
+    #[test]
+    fn the_signer_survives_an_invalid_field_elsewhere_in_the_config() {
+        // Reading it through `Config::from_toml` meant any unrelated typo reported a
+        // Turnkey bot as a hot wallet, and callers then mounted `stitch.key` and set
+        // STITCH_PRIVATE_KEY_FILE for a bot whose secret is `turnkey-api.key`. The
+        // signer table stands alone, so it's read alone.
+        let broken = format!(
+            "{}{TURNKEY_SIGNER}",
+            TEMPLATE.replace("tick_interval_secs = 5", "tick_interval_secs = \"soon\"")
+        );
+        assert!(
+            Config::from_toml(&broken).is_err(),
+            "the premise: the loader rejects this config"
+        );
+        assert!(matches!(
+            try_read_signer(&broken).unwrap(),
+            SignerView::Turnkey { .. }
+        ));
+    }
+
+    #[test]
+    fn a_config_with_no_signer_table_really_is_the_hot_wallet() {
+        // The legitimate Local case, which has to stay distinguishable from "couldn't
+        // tell" now that the latter is an error.
+        assert!(matches!(
+            try_read_signer(TEMPLATE).unwrap(),
+            SignerView::Local
+        ));
+        assert!(matches!(
+            try_read_signer("[signer]\nprovider = \"local\"\n").unwrap(),
+            SignerView::Local
+        ));
+    }
+
+    #[test]
+    fn an_unreadable_signer_is_an_error_not_a_guess() {
+        // Unparseable TOML, and a signer table that names a provider without its
+        // required fields. Both mean "unknown", and a caller about to write mounts and
+        // env into a file has to be told rather than handed the hot wallet.
+        assert!(try_read_signer("this is not [ toml").is_err());
+        assert!(try_read_signer("[signer]\nprovider = \"turnkey\"\n").is_err());
+        // Fireblocks needs both required fields too.
+        assert!(try_read_signer("[signer]\nprovider = \"fireblocks\"\n").is_err());
+        // The lenient wrapper is still lenient, for the desktop form.
+        assert!(matches!(
+            read_signer("this is not [ toml"),
+            SignerView::Local
+        ));
+    }
+
+    /// A config with two pools, for the pool-indexing tests.
+    fn two_pool_config() -> String {
+        let pool_start = TEMPLATE.find("[[pools]]").unwrap();
+        // The second pool differs so the tests can tell them apart.
+        let second = TEMPLATE[pool_start..].replace("buy_offset_bps = 1", "buy_offset_bps = 25");
+        format!("{TEMPLATE}\n{second}")
+    }
+
+    #[test]
+    fn reads_current_values_from_a_template() {
+        let v = read_settings(TEMPLATE).unwrap();
+        assert!(v.rpc_url.starts_with("https://bsc-dataseed.binance.org"));
+        assert_eq!(
+            v.feed_url,
+            "https://api.textilecredit.com/price?chainId=56&pair=cngn-usdt"
+        );
+        assert_eq!(
+            v.buy,
+            SpreadEdit {
+                kind: SpreadKind::Bps,
+                value: "1".into()
+            }
+        );
+        assert_eq!(
+            v.sell,
+            SpreadEdit {
+                kind: SpreadKind::Bps,
+                value: "1".into()
+            }
+        );
+        assert_eq!(v.pool_count, 1);
+    }
+
+    #[test]
+    fn an_unset_optional_field_leaves_the_file_alone() {
+        // The contract the desktop Settings screen relies on: a caller that only edits
+        // spreads leaves sizing, lifetime and cadence unset, and those keep whatever is
+        // in the file. Building the patch from a view captured when a screen *opened*
+        // instead writes stale values back over anything that changed since — which,
+        // now that Stitch edits the same stitch.toml, is a live concern.
+        let before = read_settings(TEMPLATE).unwrap();
+        // Something else edits the file: a longer order lifetime and a slower tick.
+        let externally_changed = TEMPLATE
+            .replace("ttl_secs = 120", "ttl_secs = 600")
+            .replace("tick_interval_secs = 5", "tick_interval_secs = 30");
+
+        // A spread-only save, with the optional fields left unset.
+        let patch = SettingsPatch {
+            pool_index: 0,
+            rpc_url: before.rpc_url.clone(),
+            feed_url: before.feed_url.clone(),
+            buy: before.buy.clone(),
+            sell: before.sell.clone(),
+            taker_enabled: true,
+            ..SettingsPatch::default()
+        };
+        let after = read_settings(&apply_settings(&externally_changed, &patch).unwrap()).unwrap();
+        assert_eq!(after.ttl_secs, 600, "the external lifetime must survive");
+        assert_eq!(
+            after.tick_interval_secs, 30,
+            "the external cadence must survive"
+        );
+        assert!(after.taker_enabled, "and the edit still lands");
+
+        // For contrast: the same save built from the stale view reverts both, which is
+        // the bug this guards.
+        let stale = before.to_patch();
+        let reverted =
+            read_settings(&apply_settings(&externally_changed, &stale).unwrap()).unwrap();
+        assert_eq!(reverted.ttl_secs, 120);
+        assert_eq!(reverted.tick_interval_secs, 5);
+    }
+
+    #[test]
+    fn a_noop_patch_keeps_the_file_byte_identical() {
+        let view = read_settings(TEMPLATE).unwrap();
+        let out = apply_settings(TEMPLATE, &patch_from(&view)).unwrap();
+        assert_eq!(
+            out, TEMPLATE,
+            "re-writing current values must not perturb the file"
+        );
+    }
+
+    #[test]
+    fn edits_all_four_fields_and_preserves_comments() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.rpc_url = "https://rpc.example.com/key".into();
+        view.feed_url = "https://feed.example.com/price".into();
+        view.buy.value = "7".into();
+        view.sell.value = "9".into();
+        let out = apply_settings(TEMPLATE, &patch_from(&view)).unwrap();
+
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.rpc_url, "https://rpc.example.com/key");
+        assert_eq!(back.feed_url, "https://feed.example.com/price");
+        assert_eq!(back.buy.value, "7");
+        assert_eq!(back.sell.value, "9");
+
+        // A block comment far from any edited line survives.
+        assert!(out.contains("# Textile's own price endpoint."));
+        // The inline comment on the edited spread line survives too.
+        assert!(out.contains("# 1 bps below mid"));
+        // Untouched keys are still there.
+        assert!(out.contains("permit2"));
+        assert!(out.contains("refresh_threshold_bps"));
+    }
+
+    #[test]
+    fn writes_a_side_back_as_abs_when_the_source_used_abs() {
+        // Start from a config whose buy side uses the absolute form.
+        let src = TEMPLATE.replace(
+            "buy_offset_bps = 1                              # 1 bps below mid",
+            "buy_offset_abs = 0.0000015",
+        );
+        let mut view = read_settings(&src).unwrap();
+        assert_eq!(view.buy.kind, SpreadKind::Abs);
+        view.buy.value = "0.0000025".into();
+        let out = apply_settings(&src, &patch_from(&view)).unwrap();
+        assert!(out.contains("buy_offset_abs = 0.0000025"));
+        assert!(!out.contains("buy_offset_bps"));
+    }
+
+    #[test]
+    fn a_blank_or_non_http_endpoint_is_rejected() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.rpc_url = "   ".into();
+        let err = apply_settings(TEMPLATE, &patch_from(&view)).unwrap_err();
+        assert!(err.to_string().contains("RPC URL"));
+
+        // A non-http scheme parses but is rejected by the scheme check.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.rpc_url = "ws://node.example.com".into();
+        let err = apply_settings(TEMPLATE, &patch_from(&view)).unwrap_err();
+        assert!(err.to_string().contains("http(s)"));
+
+        // A scheme with no host (a common typo) is rejected too.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.rpc_url = "https://".into();
+        assert!(apply_settings(TEMPLATE, &patch_from(&view)).is_err());
+
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.feed_url = "not-a-url".into();
+        let err = apply_settings(TEMPLATE, &patch_from(&view)).unwrap_err();
+        assert!(err.to_string().contains("feed"));
+
+        // Remote cleartext is a MITM'd mid (M-05). Loopback http stays legal.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.feed_url = "http://8.8.8.8/feed".into();
+        let err = apply_settings(TEMPLATE, &patch_from(&view)).unwrap_err();
+        assert!(
+            err.to_string().contains("localhost"),
+            "remote http:// feed must be rejected, got {err}"
+        );
+    }
+
+    #[test]
+    fn feed_edit_follows_the_first_pools_override_when_present() {
+        // A custom config where the first pool overrides the feed; the bot reads
+        // this, not [feed].url.
+        let src = TEMPLATE.replace(
+            "collateral_decimals = 6",
+            "collateral_decimals = 6\nfeed_url = \"https://pool-feed.example.com/old\"",
+        );
+        // read_settings surfaces the effective (override) endpoint.
+        let mut view = read_settings(&src).unwrap();
+        assert_eq!(view.feed_url, "https://pool-feed.example.com/old");
+
+        // Saving writes back to the override, leaving [feed].url untouched.
+        view.feed_url = "https://pool-feed.example.com/new".into();
+        let out = apply_settings(&src, &patch_from(&view)).unwrap();
+        assert!(out.contains("feed_url = \"https://pool-feed.example.com/new\""));
+        assert!(out.contains(
+            "url            = \"https://api.textilecredit.com/price?chainId=56&pair=cngn-usdt\""
+        ));
+    }
+
+    #[test]
+    fn a_feed_edit_on_one_pool_leaves_the_others_on_the_old_feed() {
+        // The settings page is pool-scoped. Writing the shared [feed].url would
+        // repoint every other pool without an override — and a second pool can be
+        // quoting a different pair entirely, so it would start pricing off the
+        // wrong feed without anyone touching it.
+        let src = two_pool_config();
+        let mut view = read_settings_at(&src, 1).unwrap();
+        view.feed_url = "https://feed.example.com/second".into();
+        let out = apply_settings(&src, &patch_from(&view)).unwrap();
+
+        assert_eq!(
+            read_settings_at(&out, 1).unwrap().feed_url,
+            "https://feed.example.com/second"
+        );
+        assert_eq!(
+            read_settings_at(&out, 0).unwrap().feed_url,
+            read_settings_at(&src, 0).unwrap().feed_url,
+            "the untouched pool must keep the feed it had"
+        );
+    }
+
+    #[test]
+    fn saving_a_pool_without_touching_the_feed_adds_no_override() {
+        // Every save sends the whole form. Writing an override each time would
+        // sprinkle them onto pools nobody edited and cut them off from the shared
+        // [feed].url for good.
+        let src = two_pool_config();
+        let mut view = read_settings_at(&src, 1).unwrap();
+        view.buy.value = "7".into();
+        let out = apply_settings(&src, &patch_from(&view)).unwrap();
+        assert!(!out.contains("feed_url"), "{out}");
+
+        // A single-pool config keeps writing the shared value: it's the only
+        // reader, so an override would be noise.
+        let mut only = read_settings(TEMPLATE).unwrap();
+        only.feed_url = "https://feed.example.com/solo".into();
+        let out = apply_settings(TEMPLATE, &patch_from(&only)).unwrap();
+        assert!(!out.contains("feed_url"), "{out}");
+        assert_eq!(
+            read_settings(&out).unwrap().feed_url,
+            "https://feed.example.com/solo"
+        );
+    }
+
+    #[test]
+    fn clearing_a_prefilled_spread_removes_it_rather_than_leaving_it_stale() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        assert_eq!(view.buy.value, "1"); // template preloads a buy spread
+        view.buy.value = "   ".into(); // operator clears it
+        let out = apply_settings(TEMPLATE, &patch_from(&view)).unwrap();
+        assert!(!out.contains("buy_offset_bps"));
+        assert!(!out.contains("buy_offset_abs"));
+        // The sell side and the rest of the config are untouched and still valid.
+        assert!(out.contains("sell_offset_bps"));
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.buy, SpreadEdit::default());
+    }
+
+    #[test]
+    fn a_negative_absolute_spread_is_rejected() {
+        // Start from a config whose sell side uses the absolute form.
+        let src = TEMPLATE.replace(
+            "sell_offset_bps = 1                             # 1 bps above mid",
+            "sell_offset_abs = 0.0000015",
+        );
+        let mut view = read_settings(&src).unwrap();
+        assert_eq!(view.sell.kind, SpreadKind::Abs);
+        view.sell.value = "-0.0000015".into();
+        let err = apply_settings(&src, &patch_from(&view)).unwrap_err();
+        assert!(err.to_string().contains("non-negative"));
+    }
+
+    #[test]
+    fn the_vault_address_is_set_normalised_and_cleared() {
+        let view = read_settings(TEMPLATE).unwrap();
+        assert_eq!(view.vault_address, "");
+
+        let mut patch = view.to_patch();
+        patch.vault_address = Some("0x70997970C51812dc3A010C7d01b50e0d17dc79C8".into());
+        let on = apply_settings(TEMPLATE, &patch).unwrap();
+        assert!(on.contains("[vault]"), "{on}");
+        assert_eq!(
+            read_settings(&on).unwrap().vault_address,
+            "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+            "one spelling whatever casing was typed"
+        );
+
+        // Empty removes the table; the file is back to the template.
+        let mut clear = read_settings(&on).unwrap().to_patch();
+        clear.vault_address = Some("".into());
+        let off = apply_settings(&on, &clear).unwrap();
+        assert!(!off.contains("[vault]"), "{off}");
+        assert_eq!(read_settings(&off).unwrap().vault_address, "");
+
+        // Garbage and the zero address are refused before anything is written.
+        let mut bad = view.to_patch();
+        bad.vault_address = Some("not-an-address".into());
+        assert!(apply_settings(TEMPLATE, &bad).is_err());
+        bad.vault_address = Some("0x0000000000000000000000000000000000000000".into());
+        assert!(apply_settings(TEMPLATE, &bad)
+            .unwrap_err()
+            .to_string()
+            .contains("zero address"));
+    }
+
+    #[test]
+    fn linking_a_vault_writes_the_whole_vault_setup() {
+        let vault: alloy_primitives::Address = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+            .parse()
+            .unwrap();
+        let executor: alloy_primitives::Address = "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+            .parse()
+            .unwrap();
+        // A panel bot: ladder on and the taker on, both of which a vault rules out.
+        let busy = apply_rfq_default_preset(TEMPLATE)
+            .unwrap()
+            .replace("book_enabled = false", "book_enabled = true");
+        assert!(Config::from_toml(&busy).unwrap().pools[0].limit_taker_enabled());
+
+        let linked = link_vault(&busy, vault, Some(executor)).unwrap();
+        let cfg = Config::from_toml(&linked).unwrap();
+        let written = cfg.vault.as_ref().unwrap();
+        assert_eq!(
+            written.address, "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "checksummed"
+        );
+        assert_eq!(
+            written.order_executor.as_deref(),
+            Some("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC")
+        );
+        assert!(!cfg.book_enabled);
+        assert!(cfg.pools.iter().all(|p| !p.limit_taker_enabled()));
+
+        // Relinking to a vault the venue routes direct drops the executor the
+        // previous vault had, rather than carrying it over.
+        let relinked = link_vault(&linked, vault, None).unwrap();
+        let cfg = Config::from_toml(&relinked).unwrap();
+        assert!(cfg.vault.unwrap().order_executor.is_none(), "{relinked}");
+    }
+
+    #[test]
+    fn linking_refuses_an_executor_that_is_the_vault() {
+        let vault: alloy_primitives::Address = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+            .parse()
+            .unwrap();
+        let err = link_vault(TEMPLATE, vault, Some(vault)).unwrap_err();
+        assert!(format!("{err:#}").contains("vault itself"), "{err:#}");
+        assert!(link_vault(TEMPLATE, alloy_primitives::Address::ZERO, None).is_err());
+    }
+
+    #[test]
+    fn unlinking_removes_only_the_vault() {
+        let vault: alloy_primitives::Address = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+            .parse()
+            .unwrap();
+        let linked = link_vault(TEMPLATE, vault, None).unwrap();
+        let back = unlink_vault(&linked).unwrap();
+        assert!(!back.contains("[vault]"), "{back}");
+        let cfg = Config::from_toml(&back).unwrap();
+        assert!(cfg.vault.is_none());
+        assert!(!cfg.book_enabled, "the ladder stays off");
+    }
+
+    #[test]
+    fn taker_defaults_off_and_toggling_it_round_trips() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        // The shipped template doesn't opt into the taker leg.
+        assert!(!view.taker_enabled);
+
+        // Enabling writes the flag onto the first pool.
+        view.taker_enabled = true;
+        let on = apply_settings(TEMPLATE, &patch_from(&view)).unwrap();
+        assert!(on.contains("limit_taker_enabled = true"));
+        assert!(read_settings(&on).unwrap().taker_enabled);
+
+        // Disabling again removes the key rather than writing `false`, so the file
+        // returns byte-for-byte to the taker-off template.
+        let mut back = read_settings(&on).unwrap();
+        back.taker_enabled = false;
+        let off = apply_settings(&on, &patch_from(&back)).unwrap();
+        assert!(!off.contains("limit_taker_enabled"));
+        assert_eq!(off, TEMPLATE, "toggling off restores the original file");
+    }
+
+    #[test]
+    fn a_non_numeric_spread_is_rejected_before_returning() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.buy.value = "wide".into();
+        let err = apply_settings(TEMPLATE, &patch_from(&view)).unwrap_err();
+        assert!(err.to_string().contains("basis points"));
+    }
+
+    #[test]
+    fn an_edit_that_would_break_the_config_errors_and_returns_nothing_usable() {
+        // An empty RPC URL still parses as a string, so force an invalid value a
+        // different way: a spread that overflows u32 fails to parse as bps.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.buy.value = "99999999999".into();
+        assert!(apply_settings(TEMPLATE, &patch_from(&view)).is_err());
+    }
+
+    #[test]
+    fn a_view_round_trips_the_pair_lifetime_and_cadence() {
+        let v = read_settings(TEMPLATE).unwrap();
+        assert_eq!(v.pool_index, 0);
+        assert_eq!(v.pair.debt_decimals, 18, "USDT on BSC is 18 decimals");
+        assert!(v.ttl_secs > 0);
+        assert!(v.tick_interval_secs > 0);
+        // A no-op save of everything, sizing included, still leaves the file alone.
+        let out = apply_settings(TEMPLATE, &v.to_patch()).unwrap();
+        assert_eq!(
+            out, TEMPLATE,
+            "a full no-op patch must not perturb the file"
+        );
+    }
+
+    #[test]
+    fn ladder_sizing_round_trips_as_quoted_atomic_strings() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        let mut sizing = view.buy_sizing.clone();
+        // A value well past 2^63, which would be corrupted if written as a TOML
+        // integer instead of a string.
+        sizing.total_liquidity = "123456789012345678901234567890".into();
+        sizing.min_slice_debt = "10000000".into();
+        sizing.max_orders = "12".into();
+        view.buy_sizing = sizing;
+
+        let out = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(
+            back.buy_sizing.total_liquidity, "123456789012345678901234567890",
+            "a large atomic amount must survive verbatim"
+        );
+        assert_eq!(back.buy_sizing.min_slice_debt, "10000000");
+        assert_eq!(back.buy_sizing.max_orders, "12");
+    }
+
+    #[test]
+    fn the_max_liquidity_sentinel_is_accepted() {
+        // "max" means quote everything funded; it must not be rejected as
+        // non-numeric.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.buy_sizing.total_liquidity = "max".into();
+        view.buy_sizing.min_slice_debt = "10000000".into();
+        let out = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        assert_eq!(
+            read_settings(&out).unwrap().buy_sizing.total_liquidity,
+            "max"
+        );
+    }
+
+    #[test]
+    fn bad_sizing_values_are_rejected_with_the_field_named() {
+        let base = read_settings(TEMPLATE).unwrap();
+
+        let mut view = base.clone();
+        view.buy_sizing.total_liquidity = "lots".into();
+        let err = apply_settings(TEMPLATE, &view.to_patch()).unwrap_err();
+        assert!(err.to_string().contains("buy_total_liquidity_debt"));
+
+        // A zero floor would silently disable the side mid-flight.
+        let mut view = base.clone();
+        view.buy_sizing.min_slice_debt = "0".into();
+        let err = apply_settings(TEMPLATE, &view.to_patch()).unwrap_err();
+        assert!(err.to_string().contains("greater than zero"));
+
+        let mut view = base.clone();
+        view.sell_sizing.max_orders = "0".into();
+        let out = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        assert_eq!(
+            read_settings(&out).unwrap().sell_sizing.max_orders,
+            "0",
+            "zero max orders is a valid 'post no slices' cap"
+        );
+
+        let mut view = base;
+        view.buy_sizing.order_size = "1.5".into();
+        let err = apply_settings(TEMPLATE, &view.to_patch()).unwrap_err();
+        assert!(err.to_string().contains("atomic units"));
+    }
+
+    #[test]
+    fn clearing_a_sizing_field_removes_it_rather_than_zeroing_it() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.buy_sizing.max_orders = "9".into();
+        let with = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        assert!(with.contains("buy_max_orders"));
+
+        let mut back = read_settings(&with).unwrap();
+        back.buy_sizing.max_orders = "  ".into();
+        let without = apply_settings(&with, &back.to_patch()).unwrap();
+        assert!(
+            !without.contains("buy_max_orders"),
+            "clearing must fall back to the bot default, not pin an explicit value"
+        );
+    }
+
+    #[test]
+    fn a_ttl_below_the_deadline_margin_is_rejected() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.ttl_secs = 1;
+        let err = apply_settings(TEMPLATE, &view.to_patch()).unwrap_err();
+        assert!(
+            err.to_string().contains("ttl_secs") || err.to_string().contains("order lifetime"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn refresh_threshold_bps_round_trips() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.refresh_threshold_bps = 25;
+        let out = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.refresh_threshold_bps, 25);
+
+        // 0 is valid: re-quote every tick (and what TWAP corridors usually want).
+        view.refresh_threshold_bps = 0;
+        let out = apply_settings(&out, &view.to_patch()).unwrap();
+        assert_eq!(read_settings(&out).unwrap().refresh_threshold_bps, 0);
+    }
+
+    #[test]
+    fn a_zero_tick_interval_is_rejected() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.tick_interval_secs = 0;
+        let err = apply_settings(TEMPLATE, &view.to_patch()).unwrap_err();
+        assert!(err.to_string().contains("at least 1 second"));
+    }
+
+    #[test]
+    fn a_patch_with_no_sizing_leaves_the_existing_sizing_alone() {
+        // This is what lets the desktop screen save spreads without knowing the
+        // sizing values, and the panel send a partial edit.
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.buy_sizing.min_slice_debt = "5000000".into();
+        let seeded = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+
+        let mut patch = read_settings(&seeded).unwrap().to_patch();
+        patch.buy_sizing = None;
+        patch.sell_sizing = None;
+        patch.ttl_secs = None;
+        patch.refresh_threshold_bps = None;
+        patch.tick_interval_secs = None;
+        patch.buy.value = "44".into();
+
+        let out = apply_settings(&seeded, &patch).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.buy.value, "44", "the edited field changed");
+        assert_eq!(
+            back.buy_sizing.min_slice_debt, "5000000",
+            "an unsent field must be left as it was"
+        );
+    }
+
+    #[test]
+    fn pool_indexing_reads_and_writes_the_right_pool() {
+        let src = two_pool_config();
+        let first = read_settings_at(&src, 0).unwrap();
+        let second = read_settings_at(&src, 1).unwrap();
+        assert_eq!(first.pool_count, 2);
+        assert_eq!(first.buy.value, "1");
+        assert_eq!(second.buy.value, "25");
+
+        // Editing pool 1 must not touch pool 0.
+        let mut patch = second.to_patch();
+        patch.buy.value = "77".into();
+        let out = apply_settings(&src, &patch).unwrap();
+        assert_eq!(read_settings_at(&out, 0).unwrap().buy.value, "1");
+        assert_eq!(read_settings_at(&out, 1).unwrap().buy.value, "77");
+    }
+
+    #[test]
+    fn an_out_of_range_pool_says_how_many_there_are() {
+        let src = two_pool_config();
+        let err = read_settings_at(&src, 5).unwrap_err();
+        assert!(err.to_string().contains("2 pools"));
+
+        let mut patch = read_settings(&src).unwrap().to_patch();
+        patch.pool_index = 5;
+        let err = apply_settings(&src, &patch).unwrap_err();
+        assert!(err.to_string().contains("2 pools"));
+    }
+
+    #[test]
+    fn twap_and_lean_round_trip_through_the_settings_view() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        assert!(view.twap_window_secs.is_empty());
+        assert!(!view.lean_enabled);
+
+        view.twap_window_secs = "60".into();
+        view.twap_max_deviation_bps = "50".into();
+        view.lean_shadow = true;
+        view.lean_floor_bps = "3.0".into();
+        view.lean_base_bps = "1.0".into();
+        view.lean_wide_bps = "3.0".into();
+
+        let out = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.twap_window_secs, "60");
+        assert_eq!(back.twap_max_deviation_bps, "50");
+        assert!(back.lean_shadow);
+        assert!(!back.lean_enabled);
+        assert_eq!(back.lean_floor_bps, "3");
+        assert_eq!(back.lean_base_bps, "1");
+        assert_eq!(back.lean_wide_bps, "3");
+
+        // Enabling lean without a floor is refused by the real loader.
+        let mut bad = back.clone();
+        bad.lean_enabled = true;
+        bad.lean_floor_bps.clear();
+        assert!(apply_settings(&out, &bad.to_patch()).is_err());
+
+        // Clearing TWAP while leaving the deviation set is refused — the guard
+        // only applies with a window. Also clear the deviation to actually drop
+        // TWAP; a partial clear must not leave a half-configured pool.
+        let mut cleared = back;
+        cleared.twap_window_secs.clear();
+        let err = apply_settings(&out, &cleared.to_patch()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("twap_max_deviation_bps"),
+            "expected deviation-without-window refusal, got: {msg}"
+        );
+        cleared.twap_max_deviation_bps.clear();
+        let dropped = apply_settings(&out, &cleared.to_patch()).unwrap();
+        assert!(!dropped.contains("twap_window_secs"));
+        assert!(!dropped.contains("twap_max_deviation_bps"));
+    }
+
+    #[test]
+    fn clearing_experimental_fields_removes_them() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.twap_window_secs = "60".into();
+        view.lean_shadow = true;
+        view.lean_floor_bps = "3".into();
+        let with = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+        assert!(with.contains("twap_window_secs"));
+        assert!(with.contains("lean_shadow"));
+
+        let mut back = read_settings(&with).unwrap();
+        back.twap_window_secs.clear();
+        back.lean_shadow = false;
+        back.lean_floor_bps.clear();
+        let without = apply_settings(&with, &back.to_patch()).unwrap();
+        assert!(!without.contains("twap_window_secs"), "{without}");
+        assert!(!without.contains("lean_shadow"), "{without}");
+        assert!(!without.contains("lean_floor_bps"), "{without}");
+    }
+
+    #[test]
+    fn a_spread_save_leaves_an_existing_rfq_block_untouched() {
+        let src = format!(
+            "{}\nrfq_corridor = \"cngn-usdt\"\n\n[rfq]\nenabled = true\nurl = \"wss://api.textilecredit.com/v2/maker/stream\"\nmaker_id = \"mk_x\"\nvalidation_contract = \"0x00000000000000000000000000000000000000aa\"\n",
+            TEMPLATE.trim_end()
+        );
+        let v = read_settings(&src).unwrap();
+        assert!(v.rfq_enabled);
+        assert_eq!(v.rfq_url, "wss://api.textilecredit.com/v2/maker/stream");
+        assert_eq!(v.rfq_maker_id, "mk_x");
+        assert_eq!(
+            v.rfq_validation_contract,
+            "0x00000000000000000000000000000000000000aa"
+        );
+        assert_eq!(v.rfq_corridor, "cngn-usdt");
+
+        // to_patch() is what a form sends when RFQ wasn't edited.
+        let out = apply_settings(&src, &v.to_patch()).unwrap();
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn rfq_fields_round_trip_through_the_patch() {
+        let mut patch = read_settings(TEMPLATE).unwrap().to_patch();
+        patch.rfq_enabled = Some(true);
+        patch.rfq_url = Some("wss://api.textilecredit.com/v2/maker/stream".into());
+        patch.rfq_maker_id = Some("clmaker123".into());
+        patch.rfq_validation_contract = Some("0x00000000000000000000000000000000000000aa".into());
+        patch.rfq_corridor = Some("cngn-usdt-bsc".into());
+
+        let out = apply_settings(TEMPLATE, &patch).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert!(back.rfq_enabled);
+        assert_eq!(back.rfq_url, "wss://api.textilecredit.com/v2/maker/stream");
+        assert_eq!(back.rfq_maker_id, "clmaker123");
+        assert_eq!(
+            back.rfq_validation_contract,
+            "0x00000000000000000000000000000000000000aa"
+        );
+        assert_eq!(back.rfq_corridor, "cngn-usdt-bsc");
+
+        // Clearing the corridor removes the key; disabling keeps the block.
+        patch.rfq_enabled = Some(false);
+        patch.rfq_corridor = Some(String::new());
+        let off = apply_settings(&out, &patch).unwrap();
+        let back = read_settings(&off).unwrap();
+        assert!(!back.rfq_enabled);
+        assert!(back.rfq_corridor.is_empty());
+        assert!(off.contains("[rfq]"), "disable must not delete the block");
+    }
+
+    #[test]
+    fn rfq_rejects_a_non_websocket_url() {
+        let mut patch = read_settings(TEMPLATE).unwrap().to_patch();
+        patch.rfq_url = Some("https://api.textilecredit.com/v2/maker/stream".into());
+        let err = apply_settings(TEMPLATE, &patch).unwrap_err();
+        assert!(err.to_string().contains("ws"), "got {err:#}");
+    }
+
+    #[test]
+    fn rfq_rejects_a_remote_cleartext_websocket() {
+        let mut patch = read_settings(TEMPLATE).unwrap().to_patch();
+        patch.rfq_url = Some("ws://api.textilecredit.com/v2/maker/stream".into());
+        let err = apply_settings(TEMPLATE, &patch).unwrap_err();
+        let full = format!("{err:#}");
+        assert!(
+            full.contains("localhost"),
+            "remote ws:// must be rejected, got {full}"
+        );
+    }
+
+    #[test]
+    fn connecting_rfq_does_not_rewrite_ladder_sizing() {
+        // The reconnect bug: to_patch() re-applied buy_max_orders = 0 and the
+        // writer refused it, even though Connect never asked to touch the book.
+        let src = TEMPLATE.replace("buy_max_orders = 40", "buy_max_orders = 0");
+        let current = read_settings(&src).unwrap();
+        assert_eq!(current.buy_sizing.max_orders, "0");
+        let patch = rfq_connect_patch(
+            &current,
+            "wss://api.textilecredit.com/v2/maker/stream".into(),
+            "clmaker123".into(),
+            "0x00000000000000000000000000000000000000aa".into(),
+            "cngn-usdt-bsc".into(),
+            true,
+            true,
+        );
+        assert!(patch.buy_sizing.is_none());
+        assert!(patch.sell_sizing.is_none());
+        let out = apply_settings(&src, &patch).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.buy_sizing.max_orders, "0");
+        assert!(back.rfq_enabled);
+        assert!(!back.book_enabled);
+    }
+
+    #[test]
+    fn waiting_rfq_default_connect_keeps_the_book_off() {
+        let src = apply_rfq_default_preset(TEMPLATE).unwrap();
+        let current = read_settings(&src).unwrap();
+        assert!(!current.book_enabled);
+        let patch = rfq_connect_patch(
+            &current,
+            "wss://api.textilecredit.com/v2/maker/stream".into(),
+            "clmaker123".into(),
+            "0x00000000000000000000000000000000000000aa".into(),
+            String::new(),
+            true,
+            false,
+        );
+        assert_eq!(patch.book_enabled, None);
+        let out = apply_settings(&src, &patch).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert!(!back.book_enabled);
+        assert!(!back.rfq_enabled);
+    }
+
+    #[test]
+    fn the_rfq_default_preset_turns_the_book_off() {
+        let out = apply_rfq_default_preset(TEMPLATE).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert!(!back.book_enabled);
+        assert!(back.rfq_default_unlocked);
+        assert!(!out.contains("rfq_panel"));
+        assert!(!out.contains(crate::config::RFQ_DEFAULT_GATE));
+        // Spreads and liquidity stay — RFQ quotes off them.
+        assert_eq!(back.buy.value, "1");
+        assert_eq!(back.buy_sizing.total_liquidity, "max");
+    }
+
+    #[test]
+    fn book_enabled_round_trips_explicitly_in_both_directions() {
+        let mut patch = read_settings(TEMPLATE).unwrap().to_patch();
+        patch.book_enabled = Some(false);
+        let off = apply_settings(TEMPLATE, &patch).unwrap();
+        assert!(off.contains("book_enabled = false"));
+        assert!(!read_settings(&off).unwrap().book_enabled);
+
+        // The loader default is off, so "on" has to be written down — dropping
+        // the key here would leave the Legacy switch flipped and the bot silent.
+        patch.book_enabled = Some(true);
+        let on = apply_settings(&off, &patch).unwrap();
+        assert!(
+            on.contains("book_enabled = true"),
+            "turning the ladder on must pin an explicit true: {on}"
+        );
+        assert!(read_settings(&on).unwrap().book_enabled);
+    }
+
+    #[test]
+    fn a_spread_only_patch_leaves_experimental_fields_alone() {
+        let mut view = read_settings(TEMPLATE).unwrap();
+        view.twap_window_secs = "120".into();
+        let seeded = apply_settings(TEMPLATE, &view.to_patch()).unwrap();
+
+        let mut patch = read_settings(&seeded).unwrap().to_patch();
+        patch.twap_window_secs = None;
+        patch.twap_max_deviation_bps = None;
+        patch.lean_enabled = None;
+        patch.lean_shadow = None;
+        patch.lean_floor_bps = None;
+        patch.lean_base_bps = None;
+        patch.lean_wide_bps = None;
+        patch.buy.value = "11".into();
+
+        let out = apply_settings(&seeded, &patch).unwrap();
+        let back = read_settings(&out).unwrap();
+        assert_eq!(back.buy.value, "11");
+        assert_eq!(back.twap_window_secs, "120");
+    }
+
+    const CELO: &str = include_str!("templates/cngn-usdt-celo.toml");
+    const WBRL: &str = include_str!("templates/wbrl-usdt-celo.toml");
+
+    #[test]
+    fn adding_wbrl_to_a_celo_bot_stamps_its_own_feed() {
+        let out = add_pool_from_template(CELO, WBRL).unwrap();
+        let cfg = Config::from_toml(&out).unwrap();
+        assert_eq!(cfg.pools.len(), 2);
+        assert_eq!(cfg.chain_id, 42220);
+        assert!(
+            cfg.pools[1]
+                .feed_url
+                .as_deref()
+                .is_some_and(|u| u.contains("wbrl-usdt")),
+            "the new pool must not inherit the bot-level cNGN feed: {out}"
+        );
+        assert!(
+            !cfg.pools[0]
+                .feed_url
+                .as_deref()
+                .is_some_and(|u| u.contains("wbrl")),
+            "the first pool must keep pricing cNGN: {out}"
+        );
+        let view = read_settings_at(&out, 1).unwrap();
+        assert_eq!(view.pool_count, 2);
+        assert_eq!(view.pools[1].corridor_id.as_deref(), Some("wbrl-usdt-celo"));
+        assert_eq!(view.pools[0].corridor_id.as_deref(), Some("cngn-usdt-celo"));
+    }
+
+    #[test]
+    fn an_added_corridor_follows_the_bots_taker_flag() {
+        // Panel bots have the taker leg on from create; a corridor added later
+        // gets the same, so one bot is not half on and half off. A bot that
+        // runs without it stays that way.
+        let stamped = apply_rfq_default_preset(CELO).unwrap();
+        let out = add_pool_from_template(&stamped, WBRL).unwrap();
+        let cfg = Config::from_toml(&out).unwrap();
+        assert!(cfg.pools.iter().all(|p| p.limit_taker_enabled()), "{out}");
+
+        let out = add_pool_from_template(CELO, WBRL).unwrap();
+        let cfg = Config::from_toml(&out).unwrap();
+        assert!(cfg.pools.iter().all(|p| !p.limit_taker_enabled()), "{out}");
+    }
+
+    #[test]
+    fn adding_a_corridor_on_another_chain_is_refused() {
+        let err = add_pool_from_template(TEMPLATE, WBRL).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("chain"), "{msg}");
+        assert!(msg.contains("56"), "{msg}");
+        assert!(msg.contains("42220"), "{msg}");
+    }
+
+    #[test]
+    fn adding_a_pair_the_bot_already_quotes_is_refused() {
+        let err = add_pool_from_template(CELO, CELO).unwrap_err();
+        assert!(err.to_string().contains("already quotes"));
+    }
+
+    /// `[feed].staleness_secs` is bot-wide, so a corridor whose feed is sampled
+    /// less often than that window would be written and never quote. Adding it
+    /// has to fail loudly instead.
+    #[test]
+    fn adding_a_corridor_wider_than_the_bots_staleness_window_is_refused() {
+        // A custom Celo bot on a 30s window. cNGN's sampler asks for 240s.
+        let tight = WBRL.replace("staleness_secs = 900", "staleness_secs = 30");
+        assert!(tight.contains("staleness_secs = 30"), "fixture");
+
+        let err = add_pool_from_template(&tight, CELO).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("240s"), "{msg}");
+        assert!(msg.contains("30s"), "{msg}");
+        assert!(msg.contains("staleness_secs"), "{msg}");
+
+        // The same bot on the shipped 900s window takes it.
+        assert!(add_pool_from_template(WBRL, CELO).is_ok());
+    }
+
+    #[test]
+    fn adding_the_same_pair_in_reverse_token_order_is_refused() {
+        let swapped = CELO
+            .replace(
+                "collateral = \"0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f\"",
+                "collateral = \"0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e\"",
+            )
+            .replace(
+                "debt = \"0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e\"",
+                "debt = \"0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f\"",
+            );
+        let err = add_pool_from_template(&swapped, CELO).unwrap_err();
+        assert!(err.to_string().contains("already quotes"), "{}", err);
+    }
+
+    #[test]
+    fn removing_the_last_pool_is_refused() {
+        let err = remove_pool(CELO, 0).unwrap_err();
+        assert!(err.to_string().contains("at least one"));
+    }
+
+    #[test]
+    fn custom_token_labels_do_not_panic_on_multibyte_strings() {
+        assert_eq!(short_addr("0x1234"), "0x1234");
+        assert_eq!(
+            short_addr("0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"),
+            "0x4806…3D5e"
+        );
+        let weird = "トークンアドレスが十文字を超える値です";
+        let labelled = short_addr(weird);
+        assert!(labelled.contains('…'), "{labelled}");
+        assert!(labelled.starts_with("トークン"), "{labelled}");
+
+        let custom = TEMPLATE.replace("0xa8AEA66B361a8d53e8865c62D142167Af28Af058", weird);
+        let view = read_settings(&custom).unwrap();
+        assert!(
+            view.pools[0].pair.contains('…'),
+            "unidentified custom tokens must still render a shortened label: {}",
+            view.pools[0].pair
+        );
+    }
+
+    #[test]
+    fn remove_drops_the_chosen_pool() {
+        let two = add_pool_from_template(CELO, WBRL).unwrap();
+        let after = remove_pool(&two, 1).unwrap();
+        let cfg = Config::from_toml(&after).unwrap();
+        assert_eq!(cfg.pools.len(), 1);
+        assert_eq!(
+            read_settings(&after).unwrap().pools[0]
+                .corridor_id
+                .as_deref(),
+            Some("cngn-usdt-celo")
+        );
+    }
+}

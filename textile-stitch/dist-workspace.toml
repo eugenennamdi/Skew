@@ -1,0 +1,52 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+# `upload` rebuilds every platform on PRs and parks ~50MB zips for 90 days.
+# That is what filled the org Actions storage quota. `plan` still gates the
+# release config; binaries come from main/tag Release runs.
+pr-run-mode = "plan"
+installers = ["shell", "powershell"]
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+]
+install-path = "CARGO_HOME"
+hosting = "github"
+install-updater = false
+# Build web/dist before `dist build` so stitch-panel embeds the real SPA
+# (path is relative to .github/workflows/).
+github-build-setup = "../build-setup.yml"
+# Desktop tray (stitch-desktop) + local panel (stitch-panel, process runtime) +
+# bot (stitch).
+features = ["panel", "desktop"]
+# Linux double-click launcher goes in the archive. The macOS app ships prebuilt
+# as Stitch.dmg via the macos-app.yml workflow.
+include = [
+  "packaging/linux/stitch.desktop",
+  "packaging/linux/stitch.png",
+]
+
+# cargo-dist packages every [[bin]] by default. Allowlist the three we ship.
+[dist.binaries]
+"*" = ["stitch", "stitch-panel", "stitch-desktop"]
+
+[dist.dependencies.apt]
+libgtk-3-dev = '*'
+libxcb-render0-dev = '*'
+libxcb-shape0-dev = '*'
+libxcb-xfixes0-dev = '*'
+libxkbcommon-dev = '*'
+libssl-dev = '*'
+libayatana-appindicator3-dev = '*'
+# tray-icon / muda link against libxdo for predefined menu accelerators on Linux.
+libxdo-dev = '*'
+# wry control window (WebKitGTK 4.1). Quote the key — bare TOML keys treat
+# dots as table nesting, so libwebkit2gtk-4.1-dev becomes package
+# "libwebkit2gtk-4" and Release CI fails with "Unable to locate package".
+"libwebkit2gtk-4.1-dev" = '*'

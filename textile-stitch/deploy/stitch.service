@@ -1,0 +1,86 @@
+# systemd unit for the Textile Stitch.
+#
+# This template is only for a root-managed Linux systemd service. Foreground
+# operator runs use ~/Stitch/stitch.toml and ~/Stitch/stitch.env instead.
+#
+# Install:
+#   sudo cp stitch /usr/local/bin/
+#   sudo mkdir -p /etc/stitch-bot
+#   sudo cp stitch.toml /etc/stitch-bot/stitch.toml
+#   sudo cp stitch.key  /etc/stitch-bot/stitch.key   # holds the private key, chmod 600
+#   sudo mkdir -p /etc/credstore && sudo chmod 700 /etc/credstore
+#   sudo cp rfq-api.key /etc/credstore/rfq-api.key   # maker credential from `stitch connect`, chmod 600
+#                                                    # (optional: without it the bot runs, minus RFQ)
+#   sudo cp stitch.env  /etc/stitch-bot/stitch.env   # non-secret env, e.g. RUST_LOG
+#   sudo chmod 600 /etc/stitch-bot/stitch.key /etc/credstore/rfq-api.key
+#   sudo cp stitch.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stitch
+#
+# Logs:    journalctl -u stitch -f
+# Restart: sudo systemctl restart stitch   (re-reads stitch.toml on start)
+#
+# MPC wallet (Turnkey / MPCVault) instead of the local key:
+#   - Put `[signer]` in stitch.toml (provider = "turnkey" | "mpcvault").
+#   - Load the MPC secret file the same way as stitch.key below, via
+#     LoadCredential + %d. This is required, not optional: with DynamicUser=yes the
+#     service runs as a transient UID that CANNOT read root-owned 0600 files under
+#     /etc, so pointing *_FILE at /etc/stitch-bot/... would fail to load. systemd
+#     stages a credential into %d (the $CREDENTIALS_DIRECTORY) readable by that
+#     user. So drop the stitch.key LoadCredential and STITCH_PRIVATE_KEY_FILE lines
+#     and use, for Turnkey:
+#       LoadCredential=turnkey.key:/etc/stitch-bot/turnkey.key
+#       Environment=TURNKEY_API_PRIVATE_KEY_FILE=%d/turnkey.key
+#     with the non-secret TURNKEY_API_PUBLIC_KEY in stitch.env. For MPCVault:
+#       LoadCredential=mpcvault.token:/etc/stitch-bot/mpcvault.token
+#       Environment=MPCVAULT_API_TOKEN_FILE=%d/mpcvault.token
+#     The source files under /etc stay root-owned 0600; systemd copies them into %d.
+#   - MPCVault also needs the client-signer sidecar container running on the same
+#     host with its callback-url pointed at the bot's callback_listen_addr. See
+#     docs/ADVANCED.md ("MPCVault sidecar").
+
+[Unit]
+Description=Textile filler network operator bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# stitch.env is for non-secret settings only. The wallet key is loaded as a
+# systemd credential and read from STITCH_PRIVATE_KEY_FILE.
+EnvironmentFile=/etc/stitch-bot/stitch.env
+LoadCredential=stitch.key:/etc/stitch-bot/stitch.key
+Environment=STITCH_PRIVATE_KEY_FILE=%d/stitch.key
+# The maker credential `stitch connect` writes. A new bot quotes Swap over RFQ
+# and rests no public ladder, so without this it starts and serves nothing.
+# It has to come through LoadCredential for the same reason the wallet key does:
+# DynamicUser=yes runs as a transient UID that cannot read a root-owned 0600 file
+# under /etc, so the bot's "rfq-api.key next to stitch.toml" fallback never
+# resolves here.
+#
+# ImportCredential=, not LoadCredential=, because this one is optional. A
+# LoadCredential= source that does not exist fails the unit before ExecStart,
+# which would strand every bot that legitimately has no maker key: one still
+# waiting on `stitch connect`, or a limit-taker-only bot that never needs one.
+# ImportCredential= simply stages nothing when there is no match, and the bot
+# then logs that the maker key is missing, skips the responder, and runs its
+# other legs. (An empty `SetCredential=rfq-api.key:` is NOT the way to do this —
+# systemd rejects an empty value outright: "Invalid syntax, ignoring".)
+#
+# ImportCredential= reads the credential store, so this key lives in
+# /etc/credstore rather than beside the config.
+ImportCredential=rfq-api.key
+Environment=STITCH_RFQ_API_KEY_FILE=%d/rfq-api.key
+ExecStart=/usr/local/bin/stitch --config /etc/stitch-bot/stitch.toml
+# The bot traps SIGTERM and exits cleanly after the current tick.
+Restart=always
+RestartSec=5
+# Optional hardening.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/stitch-bot
+
+[Install]
+WantedBy=multi-user.target

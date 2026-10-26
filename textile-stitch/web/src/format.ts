@@ -1,0 +1,185 @@
+// Formatting helpers.
+//
+// Everything here goes through `Intl` with no explicit locale, so the operator's
+// own locale decides separators and date order. Amounts are atomic-unit integers
+// arriving as strings; they are formatted with BigInt arithmetic rather than
+// `Number`, because a large inventory would lose its low digits to a float.
+
+/** The literal the config accepts for "quote everything funded". */
+export const MAX_LIQUIDITY = 'max'
+
+/**
+ * Render an atomic-unit integer string as a decimal amount.
+ *
+ * Returns the input unchanged for the `max` sentinel and for anything that isn't
+ * a plain integer, so a hand-edited config renders as what it actually says
+ * instead of as `NaN`.
+ */
+export function formatAtomic(raw: string, decimals: number): string {
+  const value = raw.trim()
+  if (value === '' || value === MAX_LIQUIDITY) return value
+  if (!/^\d+$/.test(value)) return value
+
+  const big = BigInt(value)
+  const scale = 10n ** BigInt(decimals)
+  const whole = big / scale
+  const frac = big % scale
+
+  const wholeText = new Intl.NumberFormat().format(whole)
+  if (frac === 0n) return wholeText
+
+  // Keep at most 6 fractional digits, trimmed: a wei-exact tail is noise in a UI.
+  const fracText = frac.toString().padStart(decimals, '0').slice(0, 6).replace(/0+$/, '')
+  if (fracText === '') return wholeText
+  const separator = decimalSeparator()
+  return `${wholeText}${separator}${fracText}`
+}
+
+function decimalSeparator(): string {
+  return (
+    new Intl.NumberFormat()
+      .formatToParts(1.1)
+      .find((p) => p.type === 'decimal')?.value ?? '.'
+  )
+}
+
+/**
+ * An RFC 3339 timestamp as a locale date, or a dash.
+ *
+ * The source is a registry / commit record as a string, and an unparseable
+ * value has to read as "unknown" rather than as `Invalid Date`.
+ */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(at)
+}
+
+/** A duration in seconds, as the shortest sensible unit. */
+export function formatSeconds(secs: number): string {
+  if (secs < 60) return `${secs}s`
+  if (secs < 3600) return `${Math.round(secs / 60)}m`
+  return `${Math.round(secs / 360) / 10}h`
+}
+
+/** `0x1234…abcd`, for addresses that don't need to be read in full. */
+export function shortAddress(address: string): string {
+  return address.length > 12
+    ? `${address.slice(0, 6)}…${address.slice(-4)}`
+    : address
+}
+
+/**
+ * A full address in 4-character groups, for reading aloud or checking against
+ * a wallet screen. Returned as pieces, not one spaced string: the caller puts
+ * visual gaps between the spans with CSS, so a select-and-copy of the rendered
+ * text still yields the exact address.
+ */
+export function groupAddress(address: string): string[] {
+  const hex = address.startsWith('0x') ? address.slice(2) : address
+  const groups: string[] = []
+  for (let i = 0; i < hex.length; i += 4) groups.push(hex.slice(i, i + 4))
+  if (groups.length === 0) return [address]
+  if (address.startsWith('0x')) groups[0] = `0x${groups[0] ?? ''}`
+  return groups
+}
+
+/** A dollar amount, or a dash when there isn't one. */
+export function formatUsd(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—'
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(n)
+}
+
+/**
+ * A rate for a headline: enough digits to tell 1,368.73 from 1,368.61, no wei
+ * tail. Six significant digits also keeps a sub-cent rate like 0.000730533
+ * readable.
+ */
+export function formatRate(n: number): string {
+  if (!Number.isFinite(n)) return String(n)
+  return new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(n)
+}
+
+/**
+ * A decimal string from the API (`1368.726683`) as a locale number with at
+ * most `maxSig` significant digits. Returns the text unchanged when it isn't
+ * a number, so an odd server value shows as what it is.
+ */
+export function formatAmount(text: string, maxSig = 6): string {
+  const n = Number(text)
+  if (text.trim() === '' || !Number.isFinite(n)) return text
+  return new Intl.NumberFormat(undefined, { maximumSignificantDigits: maxSig }).format(n)
+}
+
+/** A wall-clock time such as `14:02:11`, for "last checked" lines. */
+export function formatClock(ms: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(ms))
+}
+
+/**
+ * An image reference short enough for a fleet row or detail cell.
+ *
+ * Drops the registry path, then centre-truncates a content digest so a bare
+ * `sha256:…` (or `name@sha256:…`) does not shove the rest of the layout off
+ * screen. Tagged refs like `textile-stitch:latest` stay as-is.
+ */
+export function shortImage(image: string | null): string {
+  if (!image) return '—'
+  const lastSlash = image.lastIndexOf('/')
+  const name = lastSlash === -1 ? image : image.slice(lastSlash + 1)
+  return shortenDigest(name)
+}
+
+/**
+ * What to show for a bot image: the release (`v0.1.226`) when we have one,
+ * otherwise the shortened Docker ref.
+ */
+export function imageLabel(
+  image: string | null | undefined,
+  version?: string | null,
+): string {
+  if (version) return version
+  return shortImage(image ?? null)
+}
+
+/** `sha256:ce1d74…2fef60` — keeps the prefix and enough hex to tell digests apart. */
+function shortenDigest(ref: string): string {
+  const at = ref.lastIndexOf('@')
+  if (at !== -1) {
+    const name = ref.slice(0, at)
+    const digest = ref.slice(at + 1)
+    return `${name}@${shortenSha256(digest)}`
+  }
+  return shortenSha256(ref)
+}
+
+function shortenSha256(value: string): string {
+  const hex = value.startsWith('sha256:') ? value.slice('sha256:'.length) : null
+  if (hex === null || hex.length <= 12) return value
+  return `sha256:${hex.slice(0, 6)}…${hex.slice(-6)}`
+}
+
+/** A full `0x…` address, the only shape the panel sends to the chain. */
+export function isAddress(s: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(s.trim())
+}
+
+/** `celoscan.io` out of an explorer URL, for a link's own label. Null when
+ * there is no URL or it does not parse. */
+export function hostOf(url: string | null | undefined): string | null {
+  if (!url) return null
+  try {
+    return new URL(url).host.replace(/^www\./, '')
+  } catch {
+    return null
+  }
+}

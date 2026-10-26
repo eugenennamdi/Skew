@@ -1,0 +1,10 @@
+# Fleet flags for the Stitch panel. Copy this file next to the per-bot
+# folders as `{bots_dir}/panel.toml` if you want a local override later.
+#
+# RFQ-as-default is hardcoded in the binary. Tokens here are leftover from
+# the beta and are ignored — new bots are RFQ-only, the Settings card is
+# always visible, and Connect writes Swap-only. Do not treat this file as
+# a kill switch.
+
+# [experimental]
+# rfq_default = "enable-rfq"

@@ -1,0 +1,248 @@
+# First-party FX modules (OperatorVault, one RFQ corridor). Defaults to off.
+# Enable this one root property to expose Modules; initial mode is shadow.
+# See docs/modules.md for strategies, simulation and the dealer API.
+modules_enabled = false
+
+# Textile Stitch — example config.
+# The wallet key is NOT here; export STITCH_PRIVATE_KEY in the environment.
+
+chain_id = 8453                     # Base
+rpc_url = "https://mainnet.base.org"
+indexer_url = "https://api.textilecredit.com"
+permit2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+reactor = "0xEb5A29F869FF084B3Fce18d3487a38A56feDC59E"  # SETTLEMENT_V3_FILLER_REACTOR (Base)
+tick_interval_secs = 5
+
+# Root-level. Must sit above [feed] / [[pools]] / [rfq] or TOML attaches it
+# to that table. New bots are Swap-only: no public ladder, quotes over RFQ.
+#
+# Turning it back on runs both channels on the same corridor, and each quotes
+# the whole wallet: the ladder is sized as if no firm quote existed, and a firm
+# quote is priced as if the book were empty. Nothing is split, so nothing is
+# halved — the cost is that a limit fill landing at the same moment as a
+# firm-quote fill can leave one of the two reverting. Want a hard split
+# instead? Give the sizes below exact amounts rather than "max".
+book_enabled = false
+
+# Default price feed: used by any pool that doesn't set its own `feed_url`.
+[feed]
+url = "https://your-feed.example/cngn-usdt"
+# The cNGN feed serves a Bybit-corrected center that re-samples every 3 min, and
+# its `timestamp` is the sample's observation time (not request time), so it ages
+# between ticks. Keep this above the sample cadence or the bot rejects fresh
+# quotes as stale. 900s matches the feed's own 15-min freshness bound (past which
+# /api/price falls back to a fresh Monierate mid), so the feed, not the bot,
+# enforces staleness.
+staleness_secs = 900
+
+# One block per corridor you serve. Add more [[pools]] for other pairs/chains.
+# Pairs with different prices (cNGN, COPM, …) MUST each set `feed_url` — one
+# shared feed can't price them all.
+[[pools]]
+collateral = "0xcngn0000000000000000000000000000000000c0"  # cNGN (soft asset)
+collateral_decimals = 6
+debt = "0xusdc0000000000000000000000000000000000d7"        # USDC on Base (stable)
+debt_decimals = 6
+# feed_url = "https://your-feed.example/cngn-usdc"  # per-pool price (optional)
+
+# Two-sided market making. Each side is independent — set a spread + a size to
+# run it; omit a side to skip it. Express the spread however you prefer:
+#   *_offset_bps  — relative, in basis points off the mid
+#   *_offset_abs  — absolute, in the soft-per-stable price (collateral per debt,
+#                   e.g. cNGN/USDT, COPM/USDT — currency-agnostic)
+# Set one per side; if both are set, bps wins.
+
+# Buy low: bid below the mid, paying USDC for cNGN.
+buy_offset_bps = 150                # 1.5% below the mid   (or: buy_offset_abs = 2.0)
+buy_total_liquidity_debt = "max"          # quote all currently funded USDC
+buy_min_slice_debt = "10000000"           # 10 USDC smallest slice (6dp)
+buy_max_orders = 40
+
+# Sell high: ask above the mid, selling cNGN for USDC. Needs cNGN inventory +
+# a Permit2 approval on cNGN.
+sell_offset_abs = 2.0                       # 2 soft/stable above the mid (or: sell_offset_bps = 150)
+sell_total_liquidity_collateral = "max"        # quote all currently funded cNGN
+sell_min_slice_debt = "10000000"                # 10 USDC-equivalent smallest slice
+sell_max_orders = 40
+
+ttl_secs = 120            # must be > 30 (the indexer's live-deadline margin);
+                          # shorter posts are accepted but never served as
+                          # fillable depth. Volatile pairs (WETH) use ~60.
+# repost_lead_secs = 60   # repost each side this many secs before its order
+                          # expires, so the new ladder overlaps the old one and
+                          # the book never blanks between reposts. Capped at
+                          # ttl/2, so keep ttl_secs >= 2 x this. Defaults to 60.
+refresh_threshold_bps = 10  # re-quote a side when its price moves >0.10%.
+                            # 0 (the default when omitted) re-posts every tick,
+                            # keeping the book pinned to the current price —
+                            # posting is off-chain and free. This example keeps
+                            # a deadband because the cNGN feed only re-samples
+                            # every ~3 min anyway; volatile pairs (WETH) should
+                            # use 0, especially with TWAP quoting below.
+
+# TWAP quoting (off by default): center the spread on a short rolling
+# time-weighted average of the feed instead of the instantaneous value. The
+# average moves slowly, so the book stops chasing every tick — a transient
+# spike leaves the quote near the settled mean (the ask sells into the spike
+# above the reverting average and keeps the spread when it snaps back), while
+# a persistent move flows into the average within one window. Wins on noise
+# (spikes that revert), pays a bounded lag on trend; worth it for volatile
+# pairs like WETH, pointless for feeds that are already smoothed (the cNGN
+# center re-samples every 3 min). Pair it with refresh_threshold_bps = 0 so
+# the quote stays pinned to the smoothed center. Tuning knobs: a longer window
+# filters more noise but lags real moves more; the side spreads set what each
+# fill earns around the center.
+# twap_window_secs = 60         # ~1 min for ETH; ~1-5 min is the usual range
+# twap_max_deviation_bps = 50   # never post a side more than this through the
+                                # instantaneous feed (ask below spot / bid
+                                # above it) while the center lags a move that
+                                # persists. Default 50.
+
+# Inventory-lean quoting (off by default): lean both spreads against the
+# wallet's own inventory so the book self-rebalances and never freezes
+# one-sided, while no quote ever crosses fair — every offset is clamped to
+# lean_floor_bps, the measured accuracy of your feed vs live Pyth. Balanced
+# inventory quotes ±lean_base_bps; a heavy book tightens its unloading side
+# toward the floor and widens the other side by up to lean_wide_bps; past 85%
+# in one asset the accumulating side stops quoting. Roll out with
+# lean_shadow = true first (logs the lean quotes next to the live ones, no
+# behavior change), then flip lean_enabled = true. Requires lean_floor_bps —
+# measure it, don't assume it.
+# lean_shadow = true      # step 1: log lean quotes next to the live ones
+# lean_enabled = false    # step 2: quote the live book off the lean prices
+# lean_floor_bps = 3.0    # REQUIRED with lean: p95 feed error vs live Pyth, bps
+# lean_base_bps = 1.0     # balanced-zone half-spread (default 1.0)
+# lean_wide_bps = 3.0     # extra widening at the heavy inventory edge (default 3.0)
+
+# Taker leg (off by default): fill users' RESTING LIMIT ORDERS when their
+# price crosses your own quote — a user selling the soft asset fills at or
+# below your bid, a user buying it at or above your ask. Priced by the side
+# spreads above (a side without a spread is never taken), plus the reactor's
+# native fee (read on-chain) and gas. Costs gas per fill; profit lands as
+# inventory. Uncomment to enable:
+# limit_taker_enabled = true
+# limit_taker_min_profit_debt = "50000"  # skip fills clearing < 0.05 USDC (6dp)
+# limit_taker_max_orders = 10            # per executeBatch
+
+# ----- Which corridor this pool is. Written by whatever generated the file
+# (the panel's Add-a-bot step, or the corridor admin) and read back for the
+# labels you see in the panel and for the corridor named on an access request.
+# The bot itself ignores them. Absent is fine — Stitch then recognises the pair
+# from the corridors shipped in its own release, which is all it could do before
+# these keys existed. Don't invent values: an id Textile doesn't know is worse
+# than none.
+# corridor_id = "cmb3k1x0000abcd"
+# corridor_name = "cNGN / USDT"
+# corridor_network = "Celo"
+
+# ----- Swap quoting (RFQ). Prefer the panel Settings form over editing this
+# by hand. Connect writes maker id, stream URL, and rfq-api.key. WARNING:
+# enabling it signs firm, taker-bound orders against your funded wallet.
+# The maker API key is never in this file. Pools are the corridors — no
+# extra slug. Liquidity may be `"max"` (live wallet) or an explicit atomic
+# cap. `rfq_corridor` is leftover from older files.
+# [rfq]
+# enabled = false                                        # master kill switch
+# url = "wss://api.textilecredit.com/v2/maker/stream"
+# maker_id = "mk_your_maker_id"
+# api_key_env = "STITCH_RFQ_API_KEY"                     # env var holding the maker API key
+# validation_contract = "0x0000000000000000000000000000000000000000"  # PreferredFillerValidation (per chain)
+
+# ----- OperatorVault maker. The bot key is the strategy signer; the vault is
+# the UniswapX swapper/recipient. Connect then registers fundingWallet = vault.
+# The vault approves Permit2 for both legs in its constructor, so there is no
+# approval step here — `stitch approve` is for an EOA maker and is a no-op for
+# a vault. The public ladder must stay off.
+#
+# Changing `address` is not enough to move to a different vault. The venue
+# attributes orders to the funding wallet on the maker id in [rfq], which is
+# fixed at Connect — so a bot pointed at a new vault without re-enrolling
+# quotes the new vault's inventory as the old vault's, and a
+# `restricted=<new vault>` swap sees no liquidity. Connect again in the panel
+# and use the maker id it issues. The bot refuses the session rather than
+# quote through the mismatch.
+#
+# In the panel, Corridors → Experimental → Trade from a vault does all of this
+# in one step: it checks the vault (same pair as the bot, strategy signer is
+# the bot's key, registered with Textile), writes this block with the
+# order_executor Textile names for it, turns the ladder and the taker leg off,
+# re-enrolls with the vault as funding wallet and restarts the bot. Disconnect
+# there to go back to the bot's own wallet. By hand, do the same: edit this
+# block, then Connect again.
+# [vault]
+# address = "0xYourOperatorVault"
+# order_executor = "0x0000000000000000000000000000000000000000"  # optional: the chain's VaultOrderExecutor, once the venue lists one.
+#                                                                   # Set it on a yield-enabled vault: it lets the bot quote the whole
+#                                                                   # settlement position (idle + staked in the adapter), not just idle.
+
+# ----- Gas ceilings. Stitch fills fees and gas from rpc_url's answers and
+# refuses to sign a transaction over either ceiling, so a bad RPC can't tip the
+# wallet's gas balance away. Built-in per chain (Base: 50 gwei, 0.01 ETH per
+# transaction); see docs/ADVANCED.md. Only set these if real fees on your chain
+# go higher.
+# [gas]
+# max_fee_per_gas_gwei = 50   # fee cap per gas, in gwei
+# max_tx_fee = 0.01           # most one transaction may cost, in the gas token
+# native_reserve = 5          # Celo only: CELO kept for gas when a corridor trades
+#                             # CELO itself (default 5). 0 quotes every coin.
+
+# ----- Leftover experimental tokens. Ignored. The Settings RFQ card and
+# RFQ-as-default path are always on. Old files may still carry these keys.
+# [experimental]
+# rfq_panel = "enable-rfq-beta"
+# rfq_default = "enable-rfq"
+
+# ----- Signer / wallet backend. Omit this whole section to use the local
+# hotwallet (the default, unchanged): the bot signs with STITCH_PRIVATE_KEY /
+# STITCH_PRIVATE_KEY_FILE from the environment. Set [signer] to use an MPC wallet
+# instead. All secrets stay in the environment, never in this file. Each side of
+# every signature (the EIP-712 limit orders and the on-chain fill/approve txs)
+# goes through whichever signer you pick here; you pick one backend for the whole
+# bot. See docs/ADVANCED.md for the MPC wallet details and the MPCVault sidecar setup.
+#
+# Local hotwallet (same as omitting [signer]):
+# [signer]
+# provider = "local"
+#
+# Turnkey (TEE-backed MPC, no extra infra, one synchronous API call per
+# signature, runs inside the bot binary). Secrets in the env:
+# TURNKEY_API_PUBLIC_KEY (plain), TURNKEY_API_PRIVATE_KEY /
+# TURNKEY_API_PRIVATE_KEY_FILE (secret).
+# [signer]
+# provider = "turnkey"
+# organization_id  = "<turnkey org id>"
+# sign_with        = "0x<wallet account address or private key id>"
+# operator_address = "0x<the EVM address sign_with resolves to>"
+# api_base_url     = "https://api.turnkey.com"   # optional, default (only official hosts allowed unless STITCH_ALLOW_CUSTOM_SIGNER_API=1)
+# max_concurrent_signs = 8                        # optional
+#
+# MPCVault (needs the client-signer sidecar, one per operator; see docs/ADVANCED.md).
+# Secret in the env: MPCVAULT_API_TOKEN / MPCVAULT_API_TOKEN_FILE.
+# [signer]
+# provider = "mpcvault"
+# api_base_url         = "https://api.mpcvault.com"   # optional, default (only official hosts allowed unless STITCH_ALLOW_CUSTOM_SIGNER_API=1)
+# vault_uuid           = "<mpcvault vault uuid>"
+# client_signer_pubkey = "ssh-ed25519 AAAA... "       # the sidecar's public key
+# operator_address     = "0x<the vault wallet EVM address>"
+# callback_listen_addr = "0.0.0.0:8088"   # optional, default; where the bot serves the approval callback
+# poll_timeout_secs    = 30                # optional
+# max_concurrent_signs = 4                 # optional
+#
+# Fireblocks (MPC custody, no sidecar — the API Co-Signer is part of your own
+# Fireblocks workspace). Signs EIP-712 typed messages, which needs only a Typed
+# Message policy rule you write yourself, not the Raw Signing entitlement
+# Fireblocks has to enable for you. That covers RFQ quoting and the ladder; the
+# on-chain legs (limit_taker, closer) need raw signing and are refused without
+# it. Secrets in the env: FIREBLOCKS_API_KEY (an identifier, plain),
+# FIREBLOCKS_API_PRIVATE_KEY / FIREBLOCKS_API_PRIVATE_KEY_FILE (the RSA PEM).
+# The panel discovers vault_account_id and operator_address for you.
+# [signer]
+# provider         = "fireblocks"
+# vault_account_id = "0"                   # the vault account holding the operator wallet
+# operator_address = "0x<the EVM address that vault account resolves to>"
+# asset_id         = "ETH"                 # optional, default; picks the key format, not a network
+# api_base_url     = "https://api.fireblocks.io"  # optional, default (only official hosts allowed unless STITCH_ALLOW_CUSTOM_SIGNER_API=1)
+# raw_signing      = false                 # optional, default; leave off — see docs/signer-fireblocks.md
+# poll_interval_ms = 50                    # optional; signing is create-then-poll, so this is latency
+# poll_timeout_secs    = 30                # optional
+# max_concurrent_signs = 4                 # optional
