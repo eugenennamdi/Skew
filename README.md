@@ -6,6 +6,7 @@ Skew is an autonomous FX liquidity, smart-pricing, and multi-currency treasury e
 
 | Property | Value |
 | :--- | :--- |
+| **Live Trading & Telemetry Terminal** | **[`https://eugenennamdi.github.io/Skew/`](https://eugenennamdi.github.io/Skew/)** (Real-time Celo RPC + Blockscout v2 + Avellaneda-Stoikov Simulator) |
 | **ERC-8004 Agent Identity** | **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) |
 | **Agent EOA Wallet** | [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324) |
 | **ERC-8021 Attribution Tag** | `celo_7935fb97e273` (`35-byte` suffix `0x63656c6f5f373933356662393765323733110080218021802180218021802180218021`) |
