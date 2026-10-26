@@ -1,4 +1,4 @@
-# Skew v2
+# <img src="docs/icons/skew-logo.svg" width="28" height="28" align="absmiddle" alt="Skew Logo" /> Skew v2
 
 **Dual-Engine FX Market Maker (Dual-Oracle Anti-Arb Shield + Inventory Skew) & Autonomous Multi-Currency Treasury / Cross-Venue Arbitrage Desk on Celo Mainnet**
 

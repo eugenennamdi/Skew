@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Skew — Autonomous FX Market Maker &amp; Treasury</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect width='32' height='32' rx='8' fill='%2309090B'/%3E%3Crect x='0.5' y='0.5' width='31' height='31' rx='7.5' stroke='%2327272A'/%3E%3Cpath d='M11.5 7H24.5L22.44 10.6H13.5L11.56 14H7.5L11.5 7Z' fill='%23FAFAFA'/%3E%3Cpath d='M9.5 14.4H23.4L21.57 17.6H7.67L9.5 14.4Z' fill='%2310B981'/%3E%3Cpath d='M20.5 25H7.5L9.56 21.4H18.5L20.44 18H24.5L20.5 25Z' fill='%23FAFAFA'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -128,16 +129,12 @@
     }
 
     .brand-mark {
-      width: 26px;
-      height: 26px;
+      width: 28px;
+      height: 28px;
       border-radius: 7px;
-      background: var(--foreground);
-      color: var(--background);
-      display: grid;
-      place-items: center;
-      font-weight: 600;
-      font-size: 13px;
-      letter-spacing: -0.03em;
+      display: block;
+      flex-shrink: 0;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
     }
 
     .brand-name {
@@ -709,7 +706,12 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <div class="brand-mark">S</div>
+        <svg class="brand-mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Skew logo">
+          <rect width="32" height="32" rx="8" fill="var(--foreground)"/>
+          <path d="M11.5 7H24.5L22.44 10.6H13.5L11.56 14H7.5L11.5 7Z" fill="var(--background)"/>
+          <path d="M9.5 14.4H23.4L21.57 17.6H7.67L9.5 14.4Z" fill="#10B981"/>
+          <path d="M20.5 25H7.5L9.56 21.4H18.5L20.44 18H24.5L20.5 25Z" fill="var(--background)"/>
+        </svg>
         <span class="brand-name">Skew</span>
         <span class="status-pill">
           <svg width="14" height="14" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex-shrink:0;">
