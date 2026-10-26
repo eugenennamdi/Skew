@@ -1,0 +1,29 @@
+name: Build Linux skew-stitch Binary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Build release stitch binary
+        working-directory: textile-stitch
+        run: |
+          cargo build --release --bin stitch
+          cp target/release/stitch ../skew-stitch-linux-amd64
+          strip ../skew-stitch-linux-amd64 || true
+      - name: Upload to GitHub Release v2.0.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete v2.0.0 -y --cleanup-tag || true
+          gh release create v2.0.0 ./skew-stitch-linux-amd64 --title "Skew v2 Linux Binary" --notes "Prebuilt Ubuntu x86_64 binary for Google Cloud VM"
