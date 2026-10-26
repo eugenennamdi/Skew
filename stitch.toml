@@ -1,47 +1,42 @@
-# Textile Stitch — Skew Adaptive Market Maker
-# Corridor: cNGN/USDT on Celo Mainnet (Chain 42220)
-# Capital Guard: Total on-chain inventory strictly budgeted under $5.00
-# Runtime setting: export SKEW_GAMMA_BPS=30
+# Textile Stitch — Skew v2 Dual-Oracle & Inventory-Skew Market Maker
+# Corridor: cNGN -> USDT on Celo Mainnet (Chain 42220)
 
-chain_id           = 42220                                # Celo mainnet
-rpc_url            = "https://forno.celo.org"             # Public Celo RPC
+chain_id           = 42220
+rpc_url            = "https://forno.celo.org"
 indexer_url        = "https://api.textilecredit.com"
-permit2            = "0x000000000022D473030F116dDEE9F6B43aC78BA3"  # Canonical Permit2
-reactor            = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3"  # Textile Settlement Reactor (Celo)
+permit2            = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+reactor            = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3"
 tick_interval_secs = 5
 book_enabled       = false
 
 [feed]
-url                = "https://api.textilecredit.com/price?chainId=42220&pair=cngn-usdt"
+url                = "https://api.textilecredit.com/price?chainId=42220&pair=cngn-usdt&corridor=cmtcq1gbl0003ykyl5n2laol9"
 staleness_secs     = 900
 rfq_staleness_secs = 240
 
 [[pools]]
-# cNGN (Compliant Naira, 6 decimals)
-collateral          = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"
+collateral          = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"  # cNGN (6dp)
 collateral_decimals = 6
-
-# USDT (Tether on Celo, 6 decimals)
-debt                = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt                = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"  # USDT (6dp)
 debt_decimals       = 6
+corridor_id         = "cmtcq1gbl0003ykyl5n2laol9"
+corridor_name       = "cNGN → USDT"
+corridor_network    = "Celo"
 
-# Buy side: Pays USDT to buy cNGN (bid below mid)
-# Base spread: 25 bps. Dynamically leans tighter or wider based on inventory skew.
+# Buy side: Pays USDT to buy cNGN (bid below Dual-Oracle mid)
 buy_offset_bps                  = 25
-buy_total_liquidity_debt        = "max"        # Track live on-chain USDT balance for Skew Engine
-buy_min_slice_debt              = "1000000"    # 1.00 USDT minimum slice (Textile RFQ minimum)
-buy_max_orders                  = 5
+buy_total_liquidity_debt        = "max"
+buy_min_slice_debt              = "1000000"
+buy_max_orders                  = 40
 
 # Sell side: Sells cNGN to receive USDT (ask above Dual-Oracle mid)
-# Base spread: 35 bps. Dynamically leans tighter or wider based on inventory skew.
 sell_offset_bps                 = 35
-sell_total_liquidity_collateral = "max"        # Track live on-chain cNGN balance for Skew Engine
-sell_min_slice_debt             = "1000000"    # 1.00 USDT minimum slice (Textile RFQ minimum)
-sell_max_orders                 = 5
+sell_total_liquidity_collateral = "max"
+sell_min_slice_debt             = "1000000"
+sell_max_orders                 = 40
 
-ttl_secs                        = 120
-refresh_threshold_bps           = 10
-rfq_corridor                    = "cngn-usdt-celo"
+ttl_secs                        = 60
+refresh_threshold_bps           = 0
 
 [rfq]
 enabled             = true
