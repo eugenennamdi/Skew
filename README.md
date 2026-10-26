@@ -1,32 +1,32 @@
 # Skew v2
 
-**Dual-Engine FX Market Maker (Dual-Oracle Anti-Arb Shield + Inventory Skew) & Autonomous Cross-Venue Arbitrage Desk on Celo Mainnet**
+**Dual-Engine FX Market Maker (Dual-Oracle Anti-Arb Shield + Inventory Skew) & Autonomous Multi-Currency Treasury / Cross-Venue Arbitrage Desk on Celo Mainnet**
 
-Skew is an autonomous FX liquidity and cross-venue execution system built for the **Textile FX** sub-track of the Celo *Agents on Open Rails* hackathon (`Chain ID: 42220`).
+Skew is an autonomous FX liquidity, smart-pricing, and multi-currency treasury exposure management system built for the **Textile FX** sub-track of the Celo *Agents on Open Rails* hackathon (`Chain ID: 42220`), covering all four official Textile FX corridors (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**).
 
 | Property | Value |
 | :--- | :--- |
-| **ERC-8004 Agent Identity** | **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB64A4C7f7324) |
+| **ERC-8004 Agent Identity** | **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) |
 | **Agent EOA Wallet** | [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324) |
 | **ERC-8021 Attribution Tag** | `celo_7935fb97e273` (`35-byte` suffix `0x63656c6f5f373933356662393765323733110080218021802180218021802180218021`) |
-| **Textile Maker ID** | `cmv75ay6h00bq339u3x6gdicy` (`cNGN ↔ USDT` seated maker on Celo) |
+| **Textile Maker ID** | `cmv75ay6h00bq339u3x6gdicy` (`stitch-42220-e5036100`, seated across `cngn-usdt-celo`, `wars-usdt-celo`, `wbrl-usdt-celo`, `usdc-usdt-celo`) |
 | **Canonical Contracts** | Textile Reactor [`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`](https://celoscan.io/address/0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3) · Permit2 [`0x000000000022D473030F116dDEE9F6B43aC78BA3`](https://celoscan.io/address/0x000000000022D473030F116dDEE9F6B43aC78BA3) |
 
 ---
 
-## 1. The Problem We Solved: Why Naive RFQ Makers Bleed on Emerging-Market FX
+## 1. Real-World Post-Mortem: Why Naive RFQ Makers Bleed on Emerging-Market FX (V1 → V2)
 
-In RFQ FX protocols like Textile on Celo, local stablecoins (`cNGN`, `wARS`, `wBRL`) trade simultaneously on:
+In on-chain FX marketplaces like Textile on Celo, local stablecoins (`cNGN`, `wARS`, `wBRL`, `USDC`) trade simultaneously on:
 1. **Textile RFQ** (priced relative to an off-chain FX oracle mid-price $P_{\text{textile}}$), and
-2. **Celo Uniswap v3** (`0.01%` fee pools such as `cNGN/USDT` at `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` with `~$175k` TVL, trading at on-chain mid-price $P_{\text{uni}}$).
+2. **Celo Uniswap v3** (`0.01%` fee pools: `cNGN/USDT` at `0x6519d56Eb0A69FC0338657784c783B169b8f7d32`, `wARS/USDT` at `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391`, `USDC/USDT` at `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846`, trading at live on-chain mid-price $P_{\text{uni}}$).
 
-Whenever the off-chain FX oracle lags the on-chain DEX market (for example, Textile's oracle pricing `1 USDT = 1,383.22 cNGN` while Celo Uniswap v3 trades at `1 USDT = 1,378.59 cNGN`—a `33.6 bps` structural divergence):
-* **Static RFQ Makers Get Picked Off:** A standard maker quoting tight offsets around $P_{\text{textile}}$ sells `cNGN` cheaper than Uniswap v3's spot bid and loses money every time it refills inventory on Uniswap.
-* **Fixed-Size Taker Scanners Miss Sub-\$100 Liquidity:** Existing taker bots only probe large fixed slices (`$467`, `$233`, `$116`) and discard `status: "no_quote"` responses even when Textile returns an explicit `availableSellAmount` field indicating profitable sub-`\$100` maker depth (such as `+195 bps` on `wARS/USDT`).
+During our initial live deployment (**V1**), we observed two critical failure modes of standard static RFQ bots:
+* **Adverse Selection from Oracle-vs-DEX Lag:** Whenever Textile's cron-sampled FX oracle lagged Celo Uniswap v3 (e.g., Textile's oracle pricing `1 USDT = 1,383.82 cNGN` or `1,671.06 wARS` while Uniswap v3 traded at `1,378.71 cNGN` and `1,641.81 wARS`), arbitrageurs swept static makers' local currency inventory on Textile and dumped it on Uniswap v3.
+* **Sub-\$100 Liquidity Blindness:** Fixed-size taker scanners only probe large slices (`$467`, `$233`, `$116`) and discard `status: "no_quote"` responses even when Textile returns an explicit `availableSellAmount` field indicating actionable sub-`\$100` maker depth (such as `+187.5 bps` on `wARS/USDT`).
 
-**Skew v2 solves both sides of the market** with a unified **Dual-Engine Architecture**:
-1. **Engine 1 (`./skew-stitch` in Rust):** An **Adaptive Inventory-Skew RFQ Maker** equipped with a **Dual-Oracle Anti-Arb Shield** that reads live Celo Uniswap v3 `slot0()` prices every 2 seconds and guarantees the maker never sells below Uniswap v3 or buys above Uniswap v3.
-2. **Engine 2 (`node skew-desk.mjs` in Node/Ethers):** An **Autonomous Multi-Corridor Cross-Venue Arbitrage, Auto-Refill & Telemetry Desk** with **Adaptive `availableSellAmount` Sizing** and a live web dashboard (`http://localhost:8080`).
+**Skew v2 solves both sides of the Textile FX market** with a unified **24/7 Dual-Engine Architecture**:
+1. **Engine 1 (`./skew-stitch` in Rust):** A **4-Corridor Adaptive Inventory-Skew RFQ Maker** (`cNGN/USDT`, `wARS/USDT`, `wBRL/USDT`, `USDC/USDT`) equipped with a **Dual-Oracle Anti-Arb Shield** that reads live Celo Uniswap v3 `slot0()` prices every 2 seconds so the maker never sells below Uniswap v3, while tightening `BUY` spreads down to `1 bps` when holding excess `USDT`.
+2. **Engine 2 (`node skew-desk.mjs` in Node/Ethers):** An **Autonomous Cross-Venue Arbitrage & Multi-Currency Treasury Exposure Manager** with **Adaptive `availableSellAmount` Sizing**, two-way Uniswap v3 `0.01%` auto-unwind/refill, EIP-712 `TakerControl` signing, and a live telemetry dashboard (`http://localhost:8080`, `/status`, `/trades`).
 
 ---
 
@@ -34,76 +34,77 @@ Whenever the off-chain FX oracle lags the on-chain DEX market (for example, Text
 
 ### A. Dual-Oracle Anti-Arb Shield (`src/pricing/skew.rs` & `src/rfq/mod.rs`)
 
-Every `2 seconds` inside Stitch's batched RPC loop (`refresh_celo_dex_reference`), Skew reads `slot0()` (`0x3850c7bd`) from Celo Uniswap v3's primary pools (`cNGN/USDT` and `wARS/USDT`) and computes the on-chain DEX mid-price $P_{\text{uni}}$ from `sqrtPriceX96`:
+Every `2 seconds` inside Stitch's batched Multicall3 RPC loop (`refresh_celo_dex_reference`), Skew reads `slot0()` (`0x3850c7bd`) from Celo Uniswap v3's primary pools (`cNGN/USDT`, `wARS/USDT`, and `USDC/USDT`) and computes the on-chain DEX mid-price $P_{\text{uni}}$ from `sqrtPriceX96`:
 
 $$P_{\text{uni}} = \left(\frac{\text{sqrtPriceX96}}{2^{96}}\right)^2 \cdot 10^{\text{dec}_{\text{token}} - \text{dec}_{\text{USDT}}}$$
 
-Before applying inventory-skew spreads, `effective_mid_for_side()` anchors each side of the book to the worst-case reference across both venues:
+Before applying inventory-skew spreads, `effective_mid_for_side()` anchors each side of the book to the protective reference across both venues:
 
-$$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, \; P_{\text{uni}}\right)$$
+$$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, \; P_{\text{uni}}\right), \qquad P_{\text{mid, eff}}(\text{BUY}) = \min\left(P_{\text{textile}}, \; P_{\text{uni}}\right)$$
 
-$$P_{\text{mid, eff}}(\text{BUY}) = \min\left(P_{\text{textile}}, \; P_{\text{uni}}\right)$$
-
-* **Guaranteed Positive-Edge Refills:** Because $P_{\text{mid, eff}}(\text{SELL}) \ge P_{\text{uni}}$, applying a dynamic sell spread $\text{spread}_{\text{sell}} \in [35, 65]\text{ bps}$ prices our `SELL cNGN` ask at **`~1,369.97 cNGN/USDT`** while Uniswap v3 refills at **`~1,378.74 cNGN/USDT`**. Every single maker fill locks in **`+64 bps` net profit** upon DEX replenishment.
+* **Guaranteed Positive-Edge Replenishment:** Because $P_{\text{mid, eff}}(\text{SELL}) \ge P_{\text{uni}}$, applying our dynamic ask spread prices our `SELL cNGN` ask at **`~1,370.63–1,372.81 cNGN/USDT`** while Uniswap v3 refills at **`~1,378.71 cNGN/USDT`**. Every single maker `SELL` fill locks in **`+42 to +59 bps` net profit** upon DEX replenishment.
 
 ### B. Multi-Decimal Inventory Skew ($s \in [-1, +1]$)
 
-At each RFQ evaluation and 1-second indicative level broadcast, the agent computes its normalized USD inventory imbalance across both 6-decimal (`cNGN`, `USDT`) and 18-decimal (`wARS`, `wBRL`) tokens:
+At each RFQ evaluation and 1-second indicative level broadcast across 6-decimal (`cNGN`, `USDC`, `USDT`) and 18-decimal (`wARS`, `wBRL`) tokens, Skew computes its normalized USD inventory imbalance:
 
 $$s = \frac{V_{\text{USDT}} - V_{\text{collateral}}}{V_{\text{USDT}} + V_{\text{collateral}}}, \qquad V_{\text{collateral}} = \text{Balance}_{\text{collateral}} \times P_{\text{mid, eff}}$$
 
-### C. Dynamic Spread Adjustment
+### C. Dynamic Spread Adjustment & Two-Way Treasury Recycling
 
-Given base spreads $\text{base}_{\text{buy}} = 25\text{ bps}$, $\text{base}_{\text{sell}} = 35\text{ bps}$, and sensitivity $\gamma = 30\text{ bps}$ (`SKEW_GAMMA_BPS`):
+Given per-corridor base spreads and sensitivity $\gamma = 30\text{ bps}$ (`SKEW_GAMMA_BPS`):
 
-$$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, \; 6\text{ bps}, \; 150\text{ bps}\right)$$
+$$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, \; 1\text{ bps}, \; 150\text{ bps}\right)$$
 
-$$\text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, \; 6\text{ bps}, \; 150\text{ bps}\right)$$
+$$\text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, \; 1\text{ bps}, \; 150\text{ bps}\right)$$
 
-```
-   [Excess USDT / Low cNGN (s > 0)]          [Excess cNGN / Low USDT (s < 0)]
-────────────────────────────────────────  ────────────────────────────────────────
-• BUY cNGN tightens (down to 6 bps)       • BUY cNGN widens (up to 55 bps)
-• SELL cNGN widens (+64 bps above UniV3)  • SELL cNGN tightens toward base (35 bps)
-• Auto-Refill swaps USDT→cNGN on UniV3    • Passively offloads cNGN for USDT
-```
+* **Top-of-Book `1 bps` `BUY` Capture + Uniswap Auto-Unwind:** When holding excess `USDT` ($s > +0.50$), `BUY` spreads tighten to **`1 bps`** across `cNGN`, `wARS`, `wBRL`, and `USDC`. Because Textile's oracle mid for `wARS` (`~1,671 wARS/USDT`) and `cNGN` (`~1,383 cNGN/USDT`) trades at a discount to Uniswap v3 (`1,641.8 wARS/USDT` and `1,378.8 cNGN/USDT`), Engine 2 (`skew-desk.mjs`) automatically unwinds incoming `wARS`, `USDC`, and excess `cNGN` fills on Uniswap v3 `0.01%` pools for **`+178 bps` (`wARS`), `+29 bps` (`cNGN`), and `+12 bps` (`USDC`) instant realized profit**.
 
 ### D. Adaptive `availableSellAmount` Cross-Venue Sizing (`skew-desk.mjs`)
 
-When scanning all 4 official Textile FX corridors (`cNGN`, `wARS`, `wBRL`, and `USDC` against `USDT`) across `textile -> uni` and `uni -> textile`:
-1. `skew-desk.mjs` probes `POST /v2/rfq/preview` at its target probe size (`$25 USDT`).
-2. If a maker's remaining depth is smaller than `$25` (`status: "no_quote", reason: "no_valid_quote"` with `availableSellAmount > 0`), `skew-desk.mjs` **automatically re-quotes at `95%` of `availableSellAmount`** and simulates the opposing leg on Uniswap v3 `QuoterV2` across all 4 fee tiers (`100`, `500`, `3000`, `10000`).
-3. This captures high-margin micro-opportunities (such as `+195.0 bps` / `+$0.0146` on `wARS/USDT`) that fixed-slice bots ignore.
+When scanning all 4 official Textile FX corridors (`cNGN`, `wARS`, `wBRL`, `USDC` against `USDT`) across `textile -> uni` and `uni -> textile`:
+1. `skew-desk.mjs` probes `POST /v2/rfq/preview` at `$25 USDT`.
+2. If a maker's remaining depth is smaller than `$25` (`status: "no_quote", reason: "no_valid_quote"` with `availableSellAmount >= 1000000`), `skew-desk.mjs` **automatically re-quotes at `95%` of `availableSellAmount`**, signs an EIP-712 `TakerControl` proof (`POST /v2/rfq/request`), executes Leg 1 on Textile's `LimitOrderReactor`, and unwinds Leg 2 on Uniswap v3 `SwapRouter02`.
 
 ---
 
-## 3. Codebase Structure
-
-* [`textile-stitch/src/pricing/skew.rs`](file:///Users/apple/Desktop/Skew/textile-stitch/src/pricing/skew.rs) — Core Dual-Oracle Anti-Arb Shield (`effective_mid_for_side`, `DEX_MID_CACHE`) + multi-decimal inventory skew engine (`calculate_inventory_skew_with_decimals`, `calculate_dynamic_spread_with_decimals`) and unit tests.
-* [`textile-stitch/src/rfq/responder.rs`](file:///Users/apple/Desktop/Skew/textile-stitch/src/rfq/responder.rs) — Firm RFQ quote pricing (`decide_quote`) and 1-second WebSocket orderbook streaming (`levels_for`) wired to the Dual-Oracle & Skew engine.
-* [`textile-stitch/src/rfq/mod.rs`](file:///Users/apple/Desktop/Skew/textile-stitch/src/rfq/mod.rs) — Batched Celo Uniswap v3 `slot0()` reader (`refresh_celo_dex_reference`) refreshing `cNGN/USDT` and `wARS/USDT` DEX mids every 2 seconds.
-* [`textile-stitch/src/attribution.rs`](file:///Users/apple/Desktop/Skew/textile-stitch/src/attribution.rs) & [`textile-stitch/src/chain/tx.rs`](file:///Users/apple/Desktop/Skew/textile-stitch/src/chain/tx.rs) — Deterministic 35-byte ERC-8021 calldata suffix (`celo_7935fb97e273`) injected into every signed Rust transaction.
-* [`skew-desk.mjs`](file:///Users/apple/Desktop/Skew/skew-desk.mjs) — Autonomous multi-corridor cross-venue arbitrage engine, Uniswap v3 `0.01%` inventory auto-refiller, ERC-8021 tagged transaction sender (`sendTagged`), and live telemetry web server (`http://localhost:8080`, `/status`, `/trades`).
-* [`stitch.toml`](file:///Users/apple/Desktop/Skew/stitch.toml) — Production Celo mainnet configuration synced for `cngn-usdt-celo` (`maker_id = "cmv75ay6h00bq339u3x6gdicy"`).
-
----
-
-## 4. On-Chain Verification & Attribution Proof
+## 3. On-Chain Verification & Live Profit Proof (`celo_7935fb97e273`)
 
 Every transaction sent by both `./skew-stitch` and `skew-desk.mjs` carries the 35-byte ERC-8021 attribution suffix `celo_7935fb97e273` (`63656c6f5f373933356662393765323733110080218021802180218021802180218021`):
 
-| Milestone | Status | On-Chain Transaction / Reference |
+| Milestone / Execution Type | Realized Edge | On-Chain Transaction Proof (Celoscan) |
 | :--- | :--- | :--- |
-| **ERC-8004 Identity (`Agent #9905`)** | Verified On-Chain | [`0x2a7659bf72cd2c68295c488f7937d9bd2e6126f4155972d6be86dbbe01338451`](https://celoscan.io/tx/0x2a7659bf72cd2c68295c488f7937d9bd2e6126f4155972d6be86dbbe01338451) |
-| **Permit2 Approvals (USDT & cNGN)** | Verified On-Chain | [`0x154d94603940534454a782f6aa66a0fb80025a34be3fa129086821662b19216d`](https://celoscan.io/tx/0x154d94603940534454a782f6aa66a0fb80025a34be3fa129086821662b19216d) |
-| **Textile Reactor Batch Settlements** | Verified On-Chain | [`0xa338a8305f74f8b3b67e0587d2a8a37d69c0a5273b93145b1c497d92f6c04088`](https://celoscan.io/tx/0xa338a8305f74f8b3b67e0587d2a8a37d69c0a5273b93145b1c497d92f6c04088) · [`0x5e650ec670999ef65c036ff7e0e0d1e57e19dbc0e78f6ab952eca0b824cd0708`](https://celoscan.io/tx/0x5e650ec670999ef65c036ff7e0e0d1e57e19dbc0e78f6ab952eca0b824cd0708) |
-| **Live RFQ Fills on Celo Mainnet** | Verified On-Chain | [`0xfbde3367dd38cab1bac3ddacb6e48b067004354d75c86f9e3984954eb06df732`](https://celoscan.io/tx/0xfbde3367dd38cab1bac3ddacb6e48b067004354d75c86f9e3984954eb06df732) |
+| **ERC-8004 Identity Registration (`Agent #9905`)** | Identity Mint | [`0x2a7659bf72cd2c68295c488f7937d9bd2e6126f4155972d6be86dbbe01338451`](https://celoscan.io/tx/0x2a7659bf72cd2c68295c488f7937d9bd2e6126f4155972d6be86dbbe01338451) |
+| **Multi-Corridor Permit2 Approvals (`wARS`, `USDC`, `wBRL`, `cNGN`, `USDT`)** | 4 Corridors Active | [`0xe01092757903a37e3fba521f0720ff48b600d10d02fdb15ac0d53d060d1cd639`](https://celoscan.io/tx/0xe01092757903a37e3fba521f0720ff48b600d10d02fdb15ac0d53d060d1cd639) · [`0x3a6cca0bf3d9e4c2a9025aeaa935137a58f31f871938cb84c0f0d75b95c1eb64`](https://celoscan.io/tx/0x3a6cca0bf3d9e4c2a9025aeaa935137a58f31f871938cb84c0f0d75b95c1eb64) · [`0xcb59bb0271eb39968440154cfb75df581468d0470494e4b247559fcba3f8f947`](https://celoscan.io/tx/0xcb59bb0271eb39968440154cfb75df581468d0470494e4b247559fcba3f8f947) |
+| **`wARS/USDT` Cross-Venue Arbitrage #1 (`Textile → UniV3`)** | **`+187.5 bps` (`+$0.1986` in 8s)** | **Leg 1 (`10.5942 USDT → 17,719.28 wARS`):** [`0xb202a9f1e159b37f6b8f662652141903b293246a8810ebe7ae8dfabb9b1cc995`](https://celoscan.io/tx/0xb202a9f1e159b37f6b8f662652141903b293246a8810ebe7ae8dfabb9b1cc995)<br>**Leg 2 (`17,719.28 wARS → 10.7928 USDT`):** [`0x20da628c6a545ea95a2e9268d587b1e63be758e4fd30f147ce668a628ced2cef`](https://celoscan.io/tx/0x20da628c6a545ea95a2e9268d587b1e63be758e4fd30f147ce668a628ced2cef) |
+| **`wARS/USDT` Cross-Venue Arbitrage #2 (`Textile → UniV3`)** | **`+171.7 bps` (`+$0.1951` in 15s)** | **Leg 1 (`11.3656 USDT → 18,980.05 wARS`):** [`0xca351a003354a2d5091f3af3ee5dd41ec938d743bdded128ef7192871316e87a`](https://celoscan.io/tx/0xca351a003354a2d5091f3af3ee5dd41ec938d743bdded128ef7192871316e87a)<br>**Leg 2 (`18,980.05 wARS → 11.5607 USDT`):** [`0x324c9f9b3a4339ba5fbba2b6b7050e7fedcc856a0dc774ffec70733b86b8bbed`](https://celoscan.io/tx/0x324c9f9b3a4339ba5fbba2b6b7050e7fedcc856a0dc774ffec70733b86b8bbed) |
+| **`USDC/USDT` Treasury Unwind (`UniV3 0.01%`)** | **`+12.1 bps` (`10.9812 USDC → 10.9945 USDT`)** | [`0x1e18cfab4af41bd9d88c41f4814efd8439ea62b271aa5964c139f3a3d18d11d0`](https://celoscan.io/tx/0x1e18cfab4af41bd9d88c41f4814efd8439ea62b271aa5964c139f3a3d18d11d0) |
+| **Autonomous `cNGN` Treasury Refill (`UniV3 0.01%`)** | **`+59 bps` Shielded Maker Margin** | [`0x46b24cd861f122b38adbd164da9adf30c898ea54046c7f1f994f2e43df9d2248`](https://celoscan.io/tx/0x46b24cd861f122b38adbd164da9adf30c898ea54046c7f1f994f2e43df9d2248) · [`0xe7491df51a13194630f96a9b3c66da99d17b3d1dca3462db67c771ef5791b558`](https://celoscan.io/tx/0xe7491df51a13194630f96a9b3c66da99d17b3d1dca3462db67c771ef5791b558) |
+
+---
+
+## 4. Codebase Structure
+
+* [`textile-stitch/src/pricing/skew.rs`](textile-stitch/src/pricing/skew.rs) — Core Dual-Oracle Anti-Arb Shield (`effective_mid_for_side`, `DEX_MID_CACHE`) + multi-decimal inventory skew engine (`calculate_inventory_skew_with_decimals`, `calculate_dynamic_spread_with_decimals`, `MIN_SPREAD_BPS = 1`) and unit tests.
+* [`textile-stitch/src/rfq/responder.rs`](textile-stitch/src/rfq/responder.rs) — Firm RFQ quote pricing (`decide_quote`) and 1-second WebSocket orderbook streaming (`levels_for`) wired to the Dual-Oracle & Skew engine.
+* [`textile-stitch/src/rfq/mod.rs`](textile-stitch/src/rfq/mod.rs) — Batched Celo Uniswap v3 `slot0()` reader (`refresh_celo_dex_reference`) refreshing `cNGN/USDT`, `wARS/USDT`, and `USDC/USDT` DEX mids every 2 seconds.
+* [`textile-stitch/src/attribution.rs`](textile-stitch/src/attribution.rs) & [`textile-stitch/src/chain/tx.rs`](textile-stitch/src/chain/tx.rs) — Deterministic 35-byte ERC-8021 calldata suffix (`celo_7935fb97e273`) injected into every signed Rust transaction.
+* [`skew-desk.mjs`](skew-desk.mjs) — Autonomous 4-corridor cross-venue arbitrage engine, two-way Uniswap v3 `0.01%` treasury auto-unwind/refill manager, EIP-712 `TakerControl` signer, ERC-8021 tagged transaction sender (`sendTagged`), and live telemetry web server (`http://localhost:8080`, `/status`, `/trades`).
+* [`stitch.toml`](stitch.toml) — Multi-corridor Celo mainnet configuration (`cngn-usdt-celo`, `wars-usdt-celo`, `wbrl-usdt-celo`, `usdc-usdt-celo`).
+* [`run-vm.sh`](run-vm.sh) — One-command 24/7 Google Cloud VM launcher with automatic maker enrollment (`./skew-stitch connect`), Permit2 approval verification (`./skew-stitch approve`), and `setsid` daemon detachment.
 
 ---
 
 ## 5. Quick Start & Verification
 
-### 1. Run Self-Checks & Unit Tests
+### 1. One-Command 24/7 Cloud VM Deployment
+```bash
+git clone https://github.com/eugenennamdi/Skew.git
+cd Skew
+./run-vm.sh
+```
+
+### 2. Run Self-Checks & Unit Tests
 ```bash
 # Verify Rust Dual-Oracle Anti-Arb Shield, Inventory Skew & ERC-8021 Attribution
 cd textile-stitch
@@ -112,27 +113,8 @@ cargo test --lib attribution
 cargo test --lib rfq::responder
 cd ..
 
-# Verify Live Celo RPC + Textile Multi-Corridor Scanner & Dual-Oracle Math
+# Verify Live Celo RPC + Textile 4-Corridor Scanner & Dual-Oracle Math
 node skew-desk.mjs --check
-```
-
-### 2. Run Engine 1: Adaptive Inventory-Skew Maker (`./skew-stitch`)
-```bash
-export STITCH_PRIVATE_KEY="0x..."
-export STITCH_RFQ_API_KEY_FILE="textile-stitch/rfq-api.key"
-export SKEW_GAMMA_BPS=30
-export RUST_LOG=info
-
-./skew-stitch --config stitch.toml
-```
-
-### 3. Run Engine 2: Cross-Venue Arbitrage, Auto-Refill & Live Dashboard (`skew-desk.mjs`)
-```bash
-# Watch + Telemetry Dashboard mode (serves UI on http://localhost:8080, /status, /trades)
-node skew-desk.mjs
-
-# Live On-Chain Arbitrage + Autonomous cNGN Inventory Refill mode (with ERC-8021 tagging)
-STITCH_PRIVATE_KEY="0x..." LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD=0.01 node skew-desk.mjs
 ```
 
 ---
