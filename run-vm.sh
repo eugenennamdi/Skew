@@ -58,14 +58,23 @@ fi
 echo "[+] Running Skew Desk self-check against Celo Mainnet & Textile RFQ..."
 node skew-desk.mjs --check
 
-# 4. Stop any previous skew-desk or skew-stitch processes
+# 4. Stop any previous skew-desk, skew-stitch, or stock Stitch containers/services
+echo "[+] Stopping any previous instances..."
 pkill -f "node skew-desk.mjs" 2>/dev/null || true
 pkill -f "skew-stitch" 2>/dev/null || true
+sudo systemctl stop stitch 2>/dev/null || true
+if command -v docker >/dev/null 2>&1; then
+  RUNNING_CONTAINERS=$(sudo docker ps -q 2>/dev/null || true)
+  if [ -n "$RUNNING_CONTAINERS" ]; then
+    sudo docker stop $RUNNING_CONTAINERS 2>/dev/null || true
+  fi
+fi
+sleep 2
 
 # 5. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Auto-Refill & Dashboard on :8080)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background (24/7 mode)..."
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
-  nohup node skew-desk.mjs > skew-desk.log 2>&1 &
+  setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"
 
 # 6. Download Pre-Compiled Linux Binary of Engine 1 (./skew-stitch) from GitHub Release (zero VM disk overhead!)
@@ -81,13 +90,18 @@ if [ ! -x "./skew-stitch" ]; then
   fi
 fi
 
-if [ -x "./skew-stitch" ] && [ -f "textile-stitch/rfq-api.key" ]; then
+if [ -x "./skew-stitch" ]; then
+  if [ ! -f "stitch.runtime.toml" ] || [ ! -f "rfq-api.key" ] || grep -q "unauthorized" skew-stitch.log 2>/dev/null; then
+    echo "[+] Enrolling maker wallet with Textile RFQ (./skew-stitch connect)..."
+    cp stitch.toml stitch.runtime.toml
+    STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" ./skew-stitch connect --config stitch.runtime.toml || true
+  fi
   echo "[+] Starting Engine 1 (./skew-stitch) in background (24/7 mode)..."
   STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
-  STITCH_RFQ_API_KEY_FILE="$(pwd)/textile-stitch/rfq-api.key" \
+  STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key" \
   SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-30}" \
   RUST_LOG=info \
-    nohup ./skew-stitch --config stitch.toml > skew-stitch.log 2>&1 &
+    setsid nohup ./skew-stitch --config stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
   echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
 

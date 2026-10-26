@@ -7,8 +7,10 @@
 **/rfq-api.key
 **/stitch.env
 **/rfq-instance-id
+**/rfq-reservations.json
 **/chain-reads.json
 *.slot-nonces.json
+stitch.runtime.toml
 
 # Build artifacts & dependencies
 node_modules/

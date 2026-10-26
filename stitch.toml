@@ -19,6 +19,7 @@ collateral          = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"  # cNGN (6dp)
 collateral_decimals = 6
 debt                = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"  # USDT (6dp)
 debt_decimals       = 6
+rfq_corridor        = "cmtcq1gbl0003ykyl5n2laol9"
 corridor_id         = "cmtcq1gbl0003ykyl5n2laol9"
 corridor_name       = "cNGN → USDT"
 corridor_network    = "Celo"
