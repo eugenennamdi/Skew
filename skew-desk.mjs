@@ -155,7 +155,7 @@ export async function sendTagged(txReq) {
 
 async function fetchJson(url, opts = {}) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 7000);
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 20000);
   try {
     const res = await fetch(url, { ...opts, signal: ctrl.signal });
     return await res.json();
@@ -719,10 +719,14 @@ export async function runSingleScan() {
       uniMid: uniCngnMid,
     });
 
-    const scanBatches = await Promise.all(
-      CONFIG.tokens.map((t) => scanCorridor(t, Math.min(25, Math.max(1, usdt * 0.9))))
-    );
-    const allRows = scanBatches.flat().sort((a, b) => b.edgeUsd - a.edgeUsd);
+    const scanBatches = [];
+    for (const t of CONFIG.tokens) {
+      scanBatches.push(await scanCorridor(t, Math.min(25, Math.max(1, usdt * 0.9))));
+    }
+    const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : 2);
+    const allRows = scanBatches
+      .flat()
+      .sort((a, b) => rank(a.status) - rank(b.status) || b.edgeUsd - a.edgeUsd);
     STATE.opportunities = allRows;
     STATE.lastScanAt = new Date().toISOString();
     STATE.scanCount += 1;
