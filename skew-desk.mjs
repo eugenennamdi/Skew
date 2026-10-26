@@ -180,24 +180,25 @@ async function readPoolMid(poolAddr, token0IsUsdt, tokenDecimals = 6) {
 }
 
 async function bestUniQuote(tokenIn, tokenOut, amountInRaw) {
-  // ponytail: parallel 4-fee-tier QuoterV2 probe; upgrade to multicall3 if scanning >20 tokens
-  const results = await Promise.all(
-    CONFIG.feeTiers.map(async (fee) => {
-      try {
-        const [amountOut] = await quoter.quoteExactInputSingle.staticCall({
-          tokenIn,
-          tokenOut,
-          amountIn: amountInRaw,
-          fee,
-          sqrtPriceLimitX96: 0n,
-        });
+  // All 4 Textile FX stablecoin pools on Celo (cNGN, wARS, wBRL, USDC vs USDT) live in the 100 (0.01%) or 500 (0.05%) fee tier.
+  // Probing 100 first avoids RPC rate-limiting (HTTP 429) on datacenter/GCP VMs.
+  for (const fee of [100, 500]) {
+    try {
+      const [amountOut] = await quoter.quoteExactInputSingle.staticCall({
+        tokenIn,
+        tokenOut,
+        amountIn: amountInRaw,
+        fee,
+        sqrtPriceLimitX96: 0n,
+      });
+      if (BigInt(amountOut) > 0n) {
         return { fee, amountOut: BigInt(amountOut) };
-      } catch {
-        return { fee, amountOut: 0n };
       }
-    })
-  );
-  return results.reduce((best, cur) => (cur.amountOut > best.amountOut ? cur : best), { fee: 100, amountOut: 0n });
+    } catch {
+      // try next tier
+    }
+  }
+  return { fee: 100, amountOut: 0n };
 }
 
 async function textilePreview(sellToken, buyToken, sellAmountRaw) {

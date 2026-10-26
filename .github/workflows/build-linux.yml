@@ -3,6 +3,8 @@ name: Build Linux skew-stitch Binary
 on:
   push:
     branches: [main]
+    paths:
+      - 'textile-stitch/**'
   workflow_dispatch:
 
 permissions:
