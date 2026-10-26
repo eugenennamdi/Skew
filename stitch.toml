@@ -28,15 +28,15 @@ debt_decimals       = 6
 # Buy side: Pays USDT to buy cNGN (bid below mid)
 # Base spread: 25 bps. Dynamically leans tighter or wider based on inventory skew.
 buy_offset_bps                  = 25
-buy_total_liquidity_debt        = "4000000"    # Max 4.00 USDT total committed (under $5 budget)
-buy_min_slice_debt              = "500000"     # CRITICAL: 0.50 USDT minimum slice so quotes fit < $5 capital
+buy_total_liquidity_debt        = "max"        # Track live on-chain USDT balance for Skew Engine
+buy_min_slice_debt              = "1000000"    # 1.00 USDT minimum slice (Textile RFQ minimum)
 buy_max_orders                  = 5
 
-# Sell side: Sells cNGN to receive USDT (ask above mid)
-# Base spread: 25 bps. Dynamically leans tighter or wider based on inventory skew.
-sell_offset_bps                 = 25
-sell_total_liquidity_collateral = "5500000000" # Max 5,500 cNGN committed (~$4.00 equivalent)
-sell_min_slice_debt             = "500000"     # CRITICAL: 0.50 USDT equivalent slice so quotes fit < $5 capital
+# Sell side: Sells cNGN to receive USDT (ask above Dual-Oracle mid)
+# Base spread: 35 bps. Dynamically leans tighter or wider based on inventory skew.
+sell_offset_bps                 = 35
+sell_total_liquidity_collateral = "max"        # Track live on-chain cNGN balance for Skew Engine
+sell_min_slice_debt             = "1000000"    # 1.00 USDT minimum slice (Textile RFQ minimum)
 sell_max_orders                 = 5
 
 ttl_secs                        = 120

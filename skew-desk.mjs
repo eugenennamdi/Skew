@@ -228,12 +228,12 @@ async function scanCorridor(token, maxUsdtBudget) {
     let preview = await textilePreview(CONFIG.contracts.usdt, token.address, usdtInRaw);
     let actualInRaw = usdtInRaw;
 
-    // Adaptive sizing: if maker liquidity is smaller than probeUsdt, re-quote at 95% of availableSellAmount!
-    if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) > 100000n) {
+    // Adaptive sizing: if maker liquidity is smaller than probeUsdt (and >= Textile's $1.00 / 1,000,000 atomic unit minimum), re-quote at 98% of availableSellAmount
+    if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) >= 1000000n) {
       const avail = BigInt(preview.availableSellAmount);
       if (preview.status !== 'preview' || avail < usdtInRaw) {
-        const resized = (avail * 95n) / 100n;
-        if (resized >= 100000n) {
+        const resized = (avail * 98n) / 100n;
+        if (resized >= 1000000n) {
           actualInRaw = resized;
           preview = await textilePreview(CONFIG.contracts.usdt, token.address, actualInRaw);
         }
@@ -302,8 +302,8 @@ async function scanCorridor(token, maxUsdtBudget) {
         const availToken = BigInt(preview.availableSellAmount);
         if (preview.status !== 'preview' || availToken < uniBuy.amountOut) {
           const ratio = Number(availToken) / Number(uniBuy.amountOut);
-          const resizedUsdt = BigInt(Math.floor(Number(usdtInRaw) * ratio * 0.95));
-          if (resizedUsdt >= 250000n) {
+          const resizedUsdt = BigInt(Math.floor(Number(usdtInRaw) * ratio * 0.98));
+          if (resizedUsdt >= 1000000n) {
             const reUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, resizedUsdt);
             if (reUni.amountOut > 0n) {
               actualUsdtInRaw = resizedUsdt;
