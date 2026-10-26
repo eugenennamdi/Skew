@@ -443,8 +443,8 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
 
 async function settlePendingHoldings() {
   if (!wallet) return;
-  // Settle any intermediate non-cNGN token holdings (wARS, wBRL, USDC, or legacy WETH) back to USDT on Textile
-  const checkList = [...CONFIG.tokens.filter((t) => t.symbol !== 'cNGN'), ...(CONFIG.legacyUnwindTokens || [])];
+  // Only unwind legacy non-corridor tokens (e.g. WETH)
+  const checkList = CONFIG.legacyUnwindTokens || [];
   for (const tok of checkList) {
     const c = new ethers.Contract(tok.address, ERC20_ABI, provider);
     const balRaw = BigInt(await c.balanceOf(wallet.address));
@@ -631,38 +631,32 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, usdc, uniCngnMid,
   const warsUsd = wars * uniWarsMid;
   const usdcUsd = usdc;
 
-  // 1. AUTO-UNWIND EXCESS MAKER FILLS BACK TO USDT ON UNISWAP V3 (Harvesting Maker BUY spreads!)
+  // 1. AUTO-UNWIND MAKER/TAKER FILLS TO USDT ON UNISWAP V3 (Harvesting +178 bps on wARS, +29 bps on cNGN, +12 bps on USDC)
+  if (warsUsd > 1.0) {
+    const warsContract = new ethers.Contract(warsAddr, ERC20_ABI, provider);
+    const fullWarsRaw = BigInt(await warsContract.balanceOf(wallet.address));
+    if (fullWarsRaw > 10n ** 18n) {
+      return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, fullWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', warsUsd, 178.0);
+    }
+  }
+  if (usdcUsd > 1.0) {
+    const usdcContract = new ethers.Contract(usdcAddr, ERC20_ABI, provider);
+    const fullUsdcRaw = BigInt(await usdcContract.balanceOf(wallet.address));
+    if (fullUsdcRaw > 1_000_000n) {
+      return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, fullUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', usdcUsd, 12.0);
+    }
+  }
   if (cngnUsd > 26.0) {
     const excessUsd = cngnUsd - 18.0;
     const sellCngnRaw = ethers.parseUnits(Math.floor(excessUsd / uniCngnMid).toString(), 6);
     return swapOnUniswap(cngnAddr, CONFIG.contracts.usdt, sellCngnRaw, 'AUTO_TREASURY_UNWIND', 'cNGN/USDT', excessUsd, 29.0);
   }
-  if (warsUsd > 17.0) {
-    const excessUsd = warsUsd - 11.0;
-    const sellWarsRaw = ethers.parseUnits(Math.floor(excessUsd / uniWarsMid).toString(), 18);
-    return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, sellWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', excessUsd, 178.0);
-  }
-  if (usdcUsd > 17.0) {
-    const excessUsd = usdcUsd - 11.0;
-    const sellUsdcRaw = ethers.parseUnits(excessUsd.toFixed(6), 6);
-    return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, sellUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', excessUsd, 5.0);
-  }
 
-  // 2. AUTO-REFILL DEPLETED CORRIDOR INVENTORY SO MAKER STAYS #1 ON ALL CORRIDORS
+  // 2. AUTO-REFILL DEPLETED cNGN INVENTORY SO MAKER STAYS #1 ON USDT -> cNGN
   if (cngnUsd < 10.0 && usdt >= 30.0) {
     const buyUsd = Math.min(18.0 - cngnUsd, 18.0);
     const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
     return swapOnUniswap(CONFIG.contracts.usdt, cngnAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'cNGN/USDT', buyUsd, 35.0);
-  }
-  if (warsUsd < 4.0 && usdt >= 30.0) {
-    const buyUsd = Math.min(11.0 - warsUsd, 11.0);
-    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
-    return swapOnUniswap(CONFIG.contracts.usdt, warsAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wARS/USDT', buyUsd, 55.0);
-  }
-  if (usdcUsd < 4.0 && usdt >= 30.0) {
-    const buyUsd = Math.min(11.0 - usdcUsd, 11.0);
-    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
-    return swapOnUniswap(CONFIG.contracts.usdt, usdcAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'USDC/USDT', buyUsd, 8.0);
   }
   return null;
 }
