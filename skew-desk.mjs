@@ -44,14 +44,15 @@ export const CONFIG = {
     cngnUsdtPool: addr('0x6519d56Eb0A69FC0338657784c783B169b8f7d32'),
     warsUsdtPool: addr('0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391'),
   },
+  // Strictly restricted to the 4 official Textile FX track currencies (cNGN, wARS, wBRL, USDC against USDT)
   tokens: [
     { symbol: 'cNGN', address: addr('0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f'), decimals: 6, probeUsdt: 25 },
     { symbol: 'wARS', address: addr('0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D'), decimals: 18, probeUsdt: 25 },
     { symbol: 'wBRL', address: addr('0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0'), decimals: 18, probeUsdt: 25 },
     { symbol: 'USDC', address: addr('0xcebA9300f2b948710d2653dD7B07f33A8B32118C'), decimals: 6, probeUsdt: 25 },
-    { symbol: 'CELO', address: addr('0x471EcE3750Da237f93B8E339c536989b8978a438'), decimals: 18, probeUsdt: 25 },
-    { symbol: 'USAT', address: addr('0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771'), decimals: 6, probeUsdt: 25 },
-    { symbol: 'WETH', address: addr('0xD221812de1BD094f35587EE8E174B07B6167D9Af'), decimals: 18, probeUsdt: 25 },
+  ],
+  legacyUnwindTokens: [
+    { symbol: 'WETH', address: addr('0xD221812de1BD094f35587EE8E174B07B6167D9Af'), decimals: 18 },
   ],
   feeTiers: [100, 500, 3000, 10000],
   minEdgeUsd: Number(process.env.MIN_EDGE_USD || '0.01'),
@@ -441,9 +442,9 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
 
 async function settlePendingHoldings() {
   if (!wallet) return;
-  // Settle any intermediate non-cNGN token holdings (e.g. WETH, wARS, wBRL, USDC, USAT) back to USDT on Textile
-  for (const tok of CONFIG.tokens) {
-    if (tok.symbol === 'cNGN' || tok.symbol === 'CELO') continue;
+  // Settle any intermediate non-cNGN token holdings (wARS, wBRL, USDC, or legacy WETH) back to USDT on Textile
+  const checkList = [...CONFIG.tokens.filter((t) => t.symbol !== 'cNGN'), ...(CONFIG.legacyUnwindTokens || [])];
+  for (const tok of checkList) {
     const c = new ethers.Contract(tok.address, ERC20_ABI, provider);
     const balRaw = BigInt(await c.balanceOf(wallet.address));
     const minUnit = tok.decimals === 18 ? 10n ** 14n : 500000n;

@@ -70,7 +70,7 @@ $$\text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \g
 
 ### D. Adaptive `availableSellAmount` Cross-Venue Sizing (`skew-desk.mjs`)
 
-When scanning all 7 Celo corridors (`cNGN`, `wARS`, `wBRL`, `USDC`, `CELO`, `USAT`, `WETH`) across `textile -> uni` and `uni -> textile`:
+When scanning all 4 official Textile FX corridors (`cNGN`, `wARS`, `wBRL`, and `USDC` against `USDT`) across `textile -> uni` and `uni -> textile`:
 1. `skew-desk.mjs` probes `POST /v2/rfq/preview` at its target probe size (`$25 USDT`).
 2. If a maker's remaining depth is smaller than `$25` (`status: "no_quote", reason: "no_valid_quote"` with `availableSellAmount > 0`), `skew-desk.mjs` **automatically re-quotes at `95%` of `availableSellAmount`** and simulates the opposing leg on Uniswap v3 `QuoterV2` across all 4 fee tiers (`100`, `500`, `3000`, `10000`).
 3. This captures high-margin micro-opportunities (such as `+195.0 bps` / `+$0.0146` on `wARS/USDT`) that fixed-slice bots ignore.
