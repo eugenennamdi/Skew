@@ -544,6 +544,41 @@
       color: var(--foreground);
     }
 
+    .pill-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .token-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      flex-shrink: 0;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .pair-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .pair-icons {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .pair-icons .token-icon:last-child {
+      margin-left: -6px;
+      box-shadow: 0 0 0 2px var(--card);
+    }
+
     input[type="range"] {
       -webkit-appearance: none;
       appearance: none;
@@ -782,7 +817,15 @@
             <tbody>
               <tr>
                 <td><span class="badge emerald">Cross-Venue Arb</span></td>
-                <td><b>wARS / USDT</b></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>wARS / USDT</b>
+                  </span>
+                </td>
                 <td class="text-muted">Textile Reactor → Uniswap v3 (8s)</td>
                 <td class="num-right mono">10.59 USDT → 17,719 wARS → 10.79 USDT</td>
                 <td class="num-right mono text-emerald">+187.5 bps (+$0.1986)</td>
@@ -793,7 +836,15 @@
               </tr>
               <tr>
                 <td><span class="badge emerald">Cross-Venue Arb</span></td>
-                <td><b>wARS / USDT</b></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>wARS / USDT</b>
+                  </span>
+                </td>
                 <td class="text-muted">Textile Reactor → Uniswap v3 (15s)</td>
                 <td class="num-right mono">11.37 USDT → 18,980 wARS → 11.56 USDT</td>
                 <td class="num-right mono text-emerald">+171.7 bps (+$0.1951)</td>
@@ -804,7 +855,15 @@
               </tr>
               <tr>
                 <td><span class="badge">Treasury Unwind</span></td>
-                <td><b>USDC / USDT</b></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdc.svg" alt="USDC" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>USDC / USDT</b>
+                  </span>
+                </td>
                 <td class="text-muted">Maker RFQ Fill → Uniswap v3 0.01%</td>
                 <td class="num-right mono">10.98 USDC → 10.99 USDT</td>
                 <td class="num-right mono text-emerald">+12.1 bps (+$0.0133)</td>
@@ -814,7 +873,15 @@
               </tr>
               <tr>
                 <td><span class="badge">Inventory Refill</span></td>
-                <td><b>cNGN / USDT</b></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>cNGN / USDT</b>
+                  </span>
+                </td>
                 <td class="text-muted">Uniswap v3 0.01% → Maker Reserve</td>
                 <td class="num-right mono">15.00 USDT → 20,679 cNGN</td>
                 <td class="num-right mono text-emerald">+59.0 bps vs Ask</td>
@@ -849,16 +916,32 @@
             </div>
             <div class="corridor-pills" id="corridorSelector">
               <button class="corridor-pill active" onclick="selectCorridor('cNGN')">
-                <span>cNGN</span><span class="mono text-subtle" style="font-size:11px;">NGN</span>
+                <span class="pill-left">
+                  <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
+                  <span>cNGN</span>
+                </span>
+                <span class="mono text-subtle" style="font-size:11px;">NGN</span>
               </button>
               <button class="corridor-pill" onclick="selectCorridor('wARS')">
-                <span>wARS</span><span class="mono text-subtle" style="font-size:11px;">ARS</span>
+                <span class="pill-left">
+                  <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
+                  <span>wARS</span>
+                </span>
+                <span class="mono text-subtle" style="font-size:11px;">ARS</span>
               </button>
               <button class="corridor-pill" onclick="selectCorridor('wBRL')">
-                <span>wBRL</span><span class="mono text-subtle" style="font-size:11px;">BRL</span>
+                <span class="pill-left">
+                  <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
+                  <span>wBRL</span>
+                </span>
+                <span class="mono text-subtle" style="font-size:11px;">BRL</span>
               </button>
               <button class="corridor-pill" onclick="selectCorridor('USDC')">
-                <span>USDC</span><span class="mono text-subtle" style="font-size:11px;">USD</span>
+                <span class="pill-left">
+                  <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdc.svg" alt="USDC" />
+                  <span>USDC</span>
+                </span>
+                <span class="mono text-subtle" style="font-size:11px;">USD</span>
               </button>
             </div>
           </div>
@@ -1002,12 +1085,21 @@
 
     // Exact canonical Celo Mainnet token addresses matching skew-desk.mjs & stitch.toml
     const TOKENS = {
-      USDT: { address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6 },
-      cNGN: { address: '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f', decimals: 6 },
-      wARS: { address: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D', decimals: 18 },
-      wBRL: { address: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0', decimals: 18 },
-      USDC: { address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6 },
+      USDT: { address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdt.svg' },
+      cNGN: { address: '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/cngn.png' },
+      wARS: { address: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wars-mark.svg' },
+      wBRL: { address: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg' },
+      USDC: { address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdc.svg' },
     };
+
+    function getTokenIcon(sym = '') {
+      const u = sym.toUpperCase();
+      if (u.includes('CNGN')) return TOKENS.cNGN.icon;
+      if (u.includes('WARS')) return TOKENS.wARS.icon;
+      if (u.includes('WBRL')) return TOKENS.wBRL.icon;
+      if (u.includes('USDC')) return TOKENS.USDC.icon;
+      return TOKENS.USDT.icon;
+    }
 
     const POOLS = {
       cNGN: '0x6519d56Eb0A69FC0338657784c783B169b8f7d32', // token0 = USDT(6), token1 = cNGN(6)
@@ -1236,7 +1328,12 @@
               <tr>
                 <td class="mono text-muted">${timeStr}</td>
                 <td>${isOut ? '<span class="badge">Maker Out</span>' : '<span class="badge emerald">Settle In</span>'}</td>
-                <td><b>${sym}</b></td>
+                <td>
+                  <span class="pill-left">
+                    <img class="token-icon" src="${getTokenIcon(sym)}" alt="${sym}" />
+                    <b>${sym}</b>
+                  </span>
+                </td>
                 <td class="num-right mono ${isOut ? 'text-muted' : 'text-emerald'}">${isOut ? '-' : '+'}${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td class="mono text-subtle">${peer.slice(0, 8)}...${peer.slice(-4)}</td>
                 <td class="num-right mono"><a class="link-subtle" href="https://celoscan.io/tx/${txHash}" target="_blank">${txHash.slice(0, 10)}... ↗</a></td>
@@ -1274,7 +1371,15 @@
         const gapText = q.hasDex ? `${q.gapBps >= 0 ? '+' : ''}${q.gapBps.toFixed(1)} bps` : 'Oracle only';
         return `
           <tr>
-            <td><b>${q.symbol}</b></td>
+            <td>
+              <span class="pair-cell">
+                <span class="pair-icons">
+                  <img class="token-icon" src="${TOKENS[k].icon}" alt="${k}" />
+                  <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
+                </span>
+                <b>${q.symbol}</b>
+              </span>
+            </td>
             <td class="num-right mono">${fmtRate(k, q.textileRate)}</td>
             <td class="num-right mono">${q.hasDex ? fmtRate(k, q.uniRate) : '<span class="text-subtle">—</span>'}</td>
             <td class="num-right mono text-muted">${gapText}</td>
