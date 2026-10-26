@@ -61,23 +61,28 @@ LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
   nohup node skew-desk.mjs > skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"
 
-# 6. Auto-install Rust/Cargo if missing, then Build & Start Engine 1 (Dual-Oracle Rust Maker)
+# 6. Free disk space from old stopped Docker images, then Build & Start Engine 1 (Dual-Oracle Rust Maker)
+echo "[+] Freeing disk space on VM (pruning old stopped Docker containers/images & APT cache)..."
+sudo docker system prune -af --volumes 2>/dev/null || true
+sudo apt-get clean 2>/dev/null || true
+
 if [ -f "$HOME/.cargo/env" ]; then
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "[+] Installing Rust toolchain (rustup) for Engine 1 (./skew-stitch)..."
+if ! command -v rustc >/dev/null 2>&1; then
+  echo "[+] Installing minimal Rust toolchain (rustup --profile minimal)..."
+  rm -rf "$HOME/.rustup" "$HOME/.cargo" 2>/dev/null || true
   sudo apt-get update -y && sudo apt-get install -y build-essential pkg-config libssl-dev
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
 
-if command -v cargo >/dev/null 2>&1; then
+if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
   if [ ! -x "./skew-stitch" ]; then
     echo "[+] Building Linux release binary ./skew-stitch (takes ~2 mins once)..."
-    (cd textile-stitch && cargo build --release && cp target/release/stitch ../skew-stitch)
+    (cd textile-stitch && cargo build --release --bin stitch && cp target/release/stitch ../skew-stitch && rm -rf target)
   fi
   if [ -f "textile-stitch/rfq-api.key" ]; then
     echo "[+] Starting Engine 1 (./skew-stitch) in background (24/7 mode)..."

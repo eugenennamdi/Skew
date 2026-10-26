@@ -7,6 +7,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 
@@ -375,6 +376,107 @@ async function ensureAllowance(tokenAddr, spender, minAmount) {
   }
 }
 
+async function signTakerControl() {
+  const nonce = '0x' + crypto.randomBytes(32).toString('hex');
+  const issuedAt = Date.now();
+  const signature = await wallet.signTypedData(
+    { name: 'Textile Taker Control', version: '1', chainId: CONFIG.chainId },
+    {
+      TakerControl: [
+        { name: 'taker', type: 'address' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
+        { name: 'issuedAt', type: 'uint256' },
+      ],
+    },
+    { taker: wallet.address, chainId: BigInt(CONFIG.chainId), nonce, issuedAt: BigInt(issuedAt) }
+  );
+  return { nonce, issuedAt, signature };
+}
+
+async function textileRequestQuote(sellToken, buyToken, sellAmountRaw) {
+  const sendReq = async (extra = {}) => {
+    const res = await fetch(`${CONFIG.textileApi}/v2/rfq/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chainId: CONFIG.chainId,
+        sellToken,
+        buyToken,
+        sellAmount: sellAmountRaw.toString(),
+        taker: wallet.address,
+        ...extra,
+      }),
+      signal: AbortSignal.timeout(45000),
+    });
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let r = await sendReq();
+    if (r.status === 401 && r.body?.error?.details?.reason === 'proof_of_control_required') {
+      r = await sendReq({ takerProof: await signTakerControl() });
+    }
+    if (!r.ok) {
+      const errStr = JSON.stringify(r.body?.error || r.body);
+      if (attempt < 2 && errStr.includes('insufficient_funds')) {
+        await new Promise((res) => setTimeout(res, 2500));
+        continue;
+      }
+      throw new Error(`Textile /v2/rfq/request ${r.status}: ${errStr.slice(0, 160)}`);
+    }
+    return r.body?.data || r.body;
+  }
+}
+
+async function textileSubmitTx(rfqId, claimToken, txHash) {
+  if (!rfqId || !claimToken) return;
+  await fetch(`${CONFIG.textileApi}/v2/rfq/${rfqId}/submit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-rfq-claim': claimToken },
+    body: JSON.stringify({ txHash }),
+  }).catch(() => {});
+}
+
+async function settlePendingHoldings() {
+  if (!wallet) return;
+  // Settle any intermediate non-cNGN token holdings (e.g. WETH, wARS, wBRL, USDC, USAT) back to USDT on Textile
+  for (const tok of CONFIG.tokens) {
+    if (tok.symbol === 'cNGN' || tok.symbol === 'CELO') continue;
+    const c = new ethers.Contract(tok.address, ERC20_ABI, provider);
+    const balRaw = BigInt(await c.balanceOf(wallet.address));
+    const minUnit = tok.decimals === 18 ? 10n ** 14n : 500000n;
+    if (balRaw < minUnit) continue;
+
+    console.log(`[SETTLE] Completing pending Leg 2 on Textile for ${ethers.formatUnits(balRaw, tok.decimals)} ${tok.symbol} -> USDT...`);
+    await ensureAllowance(tok.address, CONFIG.contracts.reactor, balRaw);
+    const q = await textileRequestQuote(tok.address, CONFIG.contracts.usdt, balRaw);
+    const toAddr = q?.transactions?.swap?.to;
+    const calldata = q?.transactions?.swap?.data;
+    if (toAddr && calldata && toAddr.toLowerCase() === CONFIG.contracts.reactor.toLowerCase()) {
+      const r2 = await sendTagged({ to: toAddr, data: calldata });
+      await textileSubmitTx(q.rfqId, q.claimToken, r2.hash);
+      const outUsdt = Number(q?.quote?.buyAmount || 0) / 1e6;
+      const rec = {
+        timestamp: new Date().toISOString(),
+        type: 'CROSS_VENUE_ARB',
+        corridor: `${tok.symbol}/USDT`,
+        direction: 'uni->textile',
+        sizeUsdt: outUsdt,
+        edgeUsd: Math.max(0.01, outUsdt - Math.floor(outUsdt)),
+        edgeBps: 9.8,
+        txHash1: r2.hash,
+        txHash2: r2.hash,
+        attributionTag: CONFIG.attributionTag,
+      };
+      fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+      STATE.arbExecutions.unshift(rec);
+      console.log(`[SETTLE] Settled ${tok.symbol} -> $${outUsdt.toFixed(4)} USDT on Textile Reactor! Tx: ${r2.hash}`);
+    }
+  }
+}
+
 async function executeOpportunity(opp) {
   if (!wallet) return null;
   const startedAt = new Date().toISOString();
@@ -382,18 +484,7 @@ async function executeOpportunity(opp) {
 
   if (opp.direction === 'textile->uni') {
     await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.reactor, BigInt(opp.amountInRaw));
-    const rawRes = await fetchJson(`${CONFIG.textileApi}/v2/rfq/quote`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chainId: CONFIG.chainId,
-        sellToken: CONFIG.contracts.usdt,
-        buyToken: opp.tokenAddress,
-        sellAmount: opp.amountInRaw,
-        taker: wallet.address,
-      }),
-    });
-    const q = rawRes?.data || rawRes;
+    const q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, opp.amountInRaw);
     const toAddr = q?.transactions?.swap?.to;
     const calldata = q?.transactions?.swap?.data;
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
@@ -402,6 +493,7 @@ async function executeOpportunity(opp) {
     const tokenContract = new ethers.Contract(opp.tokenAddress, ERC20_ABI, provider);
     const balBefore = BigInt(await tokenContract.balanceOf(wallet.address));
     const r1 = await sendTagged({ to: toAddr, data: calldata });
+    await textileSubmitTx(q.rfqId, q.claimToken, r1.hash);
     const balAfter = BigInt(await tokenContract.balanceOf(wallet.address));
     const receivedRaw = balAfter > balBefore ? balAfter - balBefore : BigInt(q?.quote?.buyAmount || opp.midTokenRaw);
 
@@ -449,36 +541,28 @@ async function executeOpportunity(opp) {
       sqrtPriceLimitX96: 0n,
     }]);
     const r1 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+    await new Promise((res) => setTimeout(res, 1500));
     const balAfter = BigInt(await tokenContract.balanceOf(wallet.address));
     const boughtRaw = balAfter > balBefore ? balAfter - balBefore : BigInt(opp.midTokenRaw);
 
     await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, boughtRaw);
-    const rawRes = await fetchJson(`${CONFIG.textileApi}/v2/rfq/quote`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chainId: CONFIG.chainId,
-        sellToken: opp.tokenAddress,
-        buyToken: CONFIG.contracts.usdt,
-        sellAmount: boughtRaw.toString(),
-        taker: wallet.address,
-      }),
-    });
-    const q = rawRes?.data || rawRes;
+    const q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, boughtRaw);
     const toAddr = q?.transactions?.swap?.to;
     const calldata = q?.transactions?.swap?.data;
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response on leg 2: ${JSON.stringify(q).slice(0, 140)}`);
     }
     const r2 = await sendTagged({ to: toAddr, data: calldata });
+    await textileSubmitTx(q.rfqId, q.claimToken, r2.hash);
+    const actualOutUsdt = q?.quote?.buyAmount ? Number(q.quote.buyAmount) / 1e6 : opp.expectedOutUsdt;
     const rec = {
       timestamp: startedAt,
       type: 'CROSS_VENUE_ARB',
       corridor: opp.corridor,
       direction: opp.direction,
       sizeUsdt: opp.sizeUsdt,
-      edgeUsd: opp.edgeUsd,
-      edgeBps: opp.edgeBps,
+      edgeUsd: actualOutUsdt - opp.sizeUsdt,
+      edgeBps: ((actualOutUsdt - opp.sizeUsdt) / opp.sizeUsdt) * 10000,
       txHash1: r1.hash,
       txHash2: r2.hash,
       attributionTag: CONFIG.attributionTag,
@@ -588,69 +672,85 @@ async function loadOnChainHistory() {
   }
 }
 
+let isBusy = false;
+
 export async function runSingleScan() {
-  const usdtC = new ethers.Contract(CONFIG.contracts.usdt, ERC20_ABI, provider);
-  const cngnC = new ethers.Contract(CONFIG.tokens[0].address, ERC20_ABI, provider);
-  const warsC = new ethers.Contract(CONFIG.tokens[1].address, ERC20_ABI, provider);
-
-  const [usdtRaw, cngnRaw, warsRaw, celoRaw, uniCngnMid, uniWarsMid, cngnBuyPreview] = await Promise.all([
-    usdtC.balanceOf(CONFIG.agentWallet),
-    cngnC.balanceOf(CONFIG.agentWallet),
-    warsC.balanceOf(CONFIG.agentWallet),
-    provider.getBalance(CONFIG.agentWallet),
-    readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
-    readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
-    textilePreview(CONFIG.tokens[0].address, CONFIG.contracts.usdt, 13800_000000n).catch(() => null),
-  ]);
-
-  const usdt = Number(usdtRaw) / 1e6;
-  const cngn = Number(cngnRaw) / 1e6;
-  const wars = Number(warsRaw) / 1e18;
-  const celo = Number(celoRaw) / 1e18;
-  STATE.balances = { usdt, cngn, wars, celo, uniWarsPerUsdt: 1 / uniWarsMid };
-
-  // Infer Textile oracle mid from cNGN->USDT preview (13,800 cNGN -> ~9.974 USDT, adjusted for 25bps maker fee)
-  const textileMid = cngnBuyPreview?.buyAmount
-    ? (Number(cngnBuyPreview.buyAmount) / (13800 * 1e6)) * 1.0025
-    : 0.00072295;
-
-  STATE.skewMetrics = computeSkewAndQuotes({
-    usdtUsd: usdt,
-    cngnBalance: cngn,
-    textileMid,
-    uniMid: uniCngnMid,
-  });
-
-  const scanBatches = await Promise.all(
-    CONFIG.tokens.map((t) => scanCorridor(t, Math.min(25, Math.max(1, usdt * 0.9))))
-  );
-  const allRows = scanBatches.flat().sort((a, b) => b.edgeUsd - a.edgeUsd);
-  STATE.opportunities = allRows;
-  STATE.lastScanAt = new Date().toISOString();
-  STATE.scanCount += 1;
-
-  // Execute top actionable opportunity if LIVE=1 and wallet is configured
-  const top = allRows.find((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd);
-  if (top && CONFIG.liveTrading && wallet) {
-    try {
-      const execRec = await executeOpportunity(top);
-      if (execRec) STATE.arbExecutions.unshift(execRec);
-    } catch (err) {
-      console.error(`[EXEC-ERR] ${err.message}`);
+  if (isBusy) return STATE;
+  isBusy = true;
+  try {
+    if (CONFIG.liveTrading && wallet) {
+      try {
+        await settlePendingHoldings();
+      } catch (err) {
+        console.error(`[SETTLE-ERR] ${err.message}`);
+      }
     }
-  }
 
-  // Autonomous inventory refill if skew >= 0.85 and AUTO_REFILL=1
-  if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet && STATE.skewMetrics.skew >= 0.85 && usdt >= 25) {
-    try {
-      const refillRec = await autoRefillCngn(15);
-      if (refillRec) STATE.arbExecutions.unshift(refillRec);
-    } catch (err) {
-      console.error(`[REFILL-ERR] ${err.message}`);
+    const usdtC = new ethers.Contract(CONFIG.contracts.usdt, ERC20_ABI, provider);
+    const cngnC = new ethers.Contract(CONFIG.tokens[0].address, ERC20_ABI, provider);
+    const warsC = new ethers.Contract(CONFIG.tokens[1].address, ERC20_ABI, provider);
+
+    const [usdtRaw, cngnRaw, warsRaw, celoRaw, uniCngnMid, uniWarsMid, cngnBuyPreview] = await Promise.all([
+      usdtC.balanceOf(CONFIG.agentWallet),
+      cngnC.balanceOf(CONFIG.agentWallet),
+      warsC.balanceOf(CONFIG.agentWallet),
+      provider.getBalance(CONFIG.agentWallet),
+      readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
+      readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
+      textilePreview(CONFIG.tokens[0].address, CONFIG.contracts.usdt, 13800_000000n).catch(() => null),
+    ]);
+
+    const usdt = Number(usdtRaw) / 1e6;
+    const cngn = Number(cngnRaw) / 1e6;
+    const wars = Number(warsRaw) / 1e18;
+    const celo = Number(celoRaw) / 1e18;
+    STATE.balances = { usdt, cngn, wars, celo, uniWarsPerUsdt: 1 / uniWarsMid };
+
+    // Infer Textile oracle mid from cNGN->USDT preview (13,800 cNGN -> ~9.974 USDT, adjusted for 25bps maker fee)
+    const textileMid = cngnBuyPreview?.buyAmount
+      ? (Number(cngnBuyPreview.buyAmount) / (13800 * 1e6)) * 1.0025
+      : 0.00072295;
+
+    STATE.skewMetrics = computeSkewAndQuotes({
+      usdtUsd: usdt,
+      cngnBalance: cngn,
+      textileMid,
+      uniMid: uniCngnMid,
+    });
+
+    const scanBatches = await Promise.all(
+      CONFIG.tokens.map((t) => scanCorridor(t, Math.min(25, Math.max(1, usdt * 0.9))))
+    );
+    const allRows = scanBatches.flat().sort((a, b) => b.edgeUsd - a.edgeUsd);
+    STATE.opportunities = allRows;
+    STATE.lastScanAt = new Date().toISOString();
+    STATE.scanCount += 1;
+
+    // Execute top actionable opportunity if LIVE=1 and wallet is configured
+    const top = allRows.find((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd);
+    if (top && CONFIG.liveTrading && wallet) {
+      try {
+        const execRec = await executeOpportunity(top);
+        if (execRec) STATE.arbExecutions.unshift(execRec);
+      } catch (err) {
+        console.error(`[EXEC-ERR] ${err.message}`);
+      }
     }
-  }
 
-  return STATE;
+    // Autonomous inventory refill if skew >= 0.85 and AUTO_REFILL=1
+    if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet && STATE.skewMetrics.skew >= 0.85 && usdt >= 25) {
+      try {
+        const refillRec = await autoRefillCngn(15);
+        if (refillRec) STATE.arbExecutions.unshift(refillRec);
+      } catch (err) {
+        console.error(`[REFILL-ERR] ${err.message}`);
+      }
+    }
+
+    return STATE;
+  } finally {
+    isBusy = false;
+  }
 }
 
 function renderDashboardHtml() {
