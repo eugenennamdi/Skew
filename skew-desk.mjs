@@ -575,17 +575,26 @@ async function executeOpportunity(opp) {
   return null;
 }
 
-async function autoRefillCngn(usdtAmount = 15) {
+let permit2Initialized = false;
+
+async function ensurePermit2ForAllCorridors() {
+  if (!wallet || permit2Initialized) return;
+  const allAddrs = [CONFIG.contracts.usdt, ...CONFIG.tokens.map((t) => t.address)];
+  for (const tokenAddr of allAddrs) {
+    await ensureAllowance(tokenAddr, CONFIG.contracts.permit2, 10n ** 24n);
+  }
+  permit2Initialized = true;
+}
+
+async function swapOnUniswap(tokenIn, tokenOut, amountInRaw, label, corridor, sizeUsdt, edgeBps = 0) {
   if (!wallet) return null;
-  const cngnAddr = CONFIG.tokens[0].address;
-  const amountInRaw = ethers.parseUnits(usdtAmount.toFixed(6), 6);
-  const uniQuote = await bestUniQuote(CONFIG.contracts.usdt, cngnAddr, amountInRaw);
+  const uniQuote = await bestUniQuote(tokenIn, tokenOut, amountInRaw);
   if (uniQuote.amountOut === 0n) return null;
-  await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, amountInRaw);
-  const minOut = (uniQuote.amountOut * 997n) / 1000n;
+  await ensureAllowance(tokenIn, CONFIG.contracts.uniSwapRouter02, amountInRaw);
+  const minOut = (uniQuote.amountOut * 995n) / 1000n;
   const swapData = routerIface.encodeFunctionData('exactInputSingle', [{
-    tokenIn: CONFIG.contracts.usdt,
-    tokenOut: cngnAddr,
+    tokenIn,
+    tokenOut,
     fee: uniQuote.fee,
     recipient: wallet.address,
     amountIn: amountInRaw,
@@ -593,21 +602,69 @@ async function autoRefillCngn(usdtAmount = 15) {
     sqrtPriceLimitX96: 0n,
   }]);
   const r = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
-  await ensureAllowance(cngnAddr, CONFIG.contracts.permit2, ethers.MaxUint256);
   const rec = {
     timestamp: new Date().toISOString(),
-    type: 'AUTO_INVENTORY_REFILL',
-    corridor: 'cNGN/USDT',
-    direction: 'uni_v3_0.01%_refill',
-    sizeUsdt: usdtAmount,
-    edgeUsd: 0,
-    edgeBps: -1.0,
+    type: label,
+    corridor,
+    direction: `uni_v3_fee_${uniQuote.fee}`,
+    sizeUsdt,
+    edgeUsd: (sizeUsdt * edgeBps) / 10000,
+    edgeBps,
     txHash1: r.hash,
     txHash2: r.hash,
     attributionTag: CONFIG.attributionTag,
   };
   fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+  console.log(`[TREASURY] ${label} on ${corridor} ($${sizeUsdt.toFixed(2)}) -> tx ${r.hash}`);
   return rec;
+}
+
+async function autoManageTreasuryInventory({ usdt, cngn, wars, usdc, uniCngnMid, uniWarsMid }) {
+  if (!wallet) return null;
+  await ensurePermit2ForAllCorridors();
+
+  const cngnAddr = CONFIG.tokens[0].address;
+  const warsAddr = CONFIG.tokens[1].address;
+  const usdcAddr = CONFIG.tokens[3].address;
+
+  const cngnUsd = cngn * uniCngnMid;
+  const warsUsd = wars * uniWarsMid;
+  const usdcUsd = usdc;
+
+  // 1. AUTO-UNWIND EXCESS MAKER FILLS BACK TO USDT ON UNISWAP V3 (Harvesting Maker BUY spreads!)
+  if (cngnUsd > 26.0) {
+    const excessUsd = cngnUsd - 18.0;
+    const sellCngnRaw = ethers.parseUnits(Math.floor(excessUsd / uniCngnMid).toString(), 6);
+    return swapOnUniswap(cngnAddr, CONFIG.contracts.usdt, sellCngnRaw, 'AUTO_TREASURY_UNWIND', 'cNGN/USDT', excessUsd, 29.0);
+  }
+  if (warsUsd > 17.0) {
+    const excessUsd = warsUsd - 11.0;
+    const sellWarsRaw = ethers.parseUnits(Math.floor(excessUsd / uniWarsMid).toString(), 18);
+    return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, sellWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', excessUsd, 178.0);
+  }
+  if (usdcUsd > 17.0) {
+    const excessUsd = usdcUsd - 11.0;
+    const sellUsdcRaw = ethers.parseUnits(excessUsd.toFixed(6), 6);
+    return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, sellUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', excessUsd, 5.0);
+  }
+
+  // 2. AUTO-REFILL DEPLETED CORRIDOR INVENTORY SO MAKER STAYS #1 ON ALL CORRIDORS
+  if (cngnUsd < 10.0 && usdt >= 30.0) {
+    const buyUsd = Math.min(18.0 - cngnUsd, 18.0);
+    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, cngnAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'cNGN/USDT', buyUsd, 35.0);
+  }
+  if (warsUsd < 4.0 && usdt >= 30.0) {
+    const buyUsd = Math.min(11.0 - warsUsd, 11.0);
+    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, warsAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wARS/USDT', buyUsd, 55.0);
+  }
+  if (usdcUsd < 4.0 && usdt >= 30.0) {
+    const buyUsd = Math.min(11.0 - usdcUsd, 11.0);
+    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, usdcAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'USDC/USDT', buyUsd, 8.0);
+  }
+  return null;
 }
 
 const STATE = {
@@ -691,11 +748,15 @@ export async function runSingleScan() {
     const usdtC = new ethers.Contract(CONFIG.contracts.usdt, ERC20_ABI, provider);
     const cngnC = new ethers.Contract(CONFIG.tokens[0].address, ERC20_ABI, provider);
     const warsC = new ethers.Contract(CONFIG.tokens[1].address, ERC20_ABI, provider);
+    const wbrlC = new ethers.Contract(CONFIG.tokens[2].address, ERC20_ABI, provider);
+    const usdcC = new ethers.Contract(CONFIG.tokens[3].address, ERC20_ABI, provider);
 
-    const [usdtRaw, cngnRaw, warsRaw, celoRaw, uniCngnMid, uniWarsMid, cngnBuyPreview] = await Promise.all([
+    const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, celoRaw, uniCngnMid, uniWarsMid, cngnBuyPreview] = await Promise.all([
       usdtC.balanceOf(CONFIG.agentWallet),
       cngnC.balanceOf(CONFIG.agentWallet),
       warsC.balanceOf(CONFIG.agentWallet),
+      wbrlC.balanceOf(CONFIG.agentWallet),
+      usdcC.balanceOf(CONFIG.agentWallet),
       provider.getBalance(CONFIG.agentWallet),
       readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
       readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
@@ -705,8 +766,11 @@ export async function runSingleScan() {
     const usdt = Number(usdtRaw) / 1e6;
     const cngn = Number(cngnRaw) / 1e6;
     const wars = Number(warsRaw) / 1e18;
+    const wbrl = Number(wbrlRaw) / 1e18;
+    const usdc = Number(usdcRaw) / 1e6;
     const celo = Number(celoRaw) / 1e18;
-    STATE.balances = { usdt, cngn, wars, celo, uniWarsPerUsdt: 1 / uniWarsMid };
+    const totalUsd = usdt + cngn * uniCngnMid + wars * uniWarsMid + usdc;
+    STATE.balances = { usdt, cngn, wars, wbrl, usdc, celo, totalUsd, uniWarsPerUsdt: 1 / uniWarsMid };
 
     // Infer Textile oracle mid from cNGN->USDT preview (13,800 cNGN -> ~9.974 USDT, adjusted for 25bps maker fee)
     const textileMid = cngnBuyPreview?.buyAmount
@@ -736,7 +800,7 @@ export async function runSingleScan() {
     const top = allRows.find((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd);
     const bestRow = allRows[0];
     console.log(
-      `[SCAN #${STATE.scanCount}] USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) edge=$${bestRow.edgeUsd.toFixed(4)} [${bestRow.status}]` : 'none'}`
+      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} USDC=$${usdc.toFixed(2)}) skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) edge=$${bestRow.edgeUsd.toFixed(4)} [${bestRow.status}]` : 'none'}`
     );
     if (top && CONFIG.liveTrading && wallet) {
       try {
@@ -747,13 +811,13 @@ export async function runSingleScan() {
       }
     }
 
-    // Autonomous inventory refill if skew >= 0.85 and AUTO_REFILL=1
-    if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet && STATE.skewMetrics.skew >= 0.85 && usdt >= 25) {
+    // Autonomous multi-currency treasury management (Two-way Maker-to-DEX unwind & refill across cNGN, wARS, USDC)
+    if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet) {
       try {
-        const refillRec = await autoRefillCngn(15);
-        if (refillRec) STATE.arbExecutions.unshift(refillRec);
+        const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, usdc, uniCngnMid, uniWarsMid });
+        if (treasuryRec) STATE.arbExecutions.unshift(treasuryRec);
       } catch (err) {
-        console.error(`[REFILL-ERR] ${err.message}`);
+        console.error(`[TREASURY-ERR] ${err.message}`);
       }
     }
 

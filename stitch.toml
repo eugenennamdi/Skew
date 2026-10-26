@@ -1,5 +1,5 @@
 # Textile Stitch — Skew v2 Dual-Oracle & Inventory-Skew Market Maker
-# Corridor: cNGN -> USDT on Celo Mainnet (Chain 42220)
+# Multi-Corridor FX Maker: cNGN/USDT, wARS/USDT, wBRL/USDT, USDC/USDT on Celo Mainnet (Chain 42220)
 
 chain_id           = 42220
 rpc_url            = "https://forno.celo.org"
@@ -14,28 +14,95 @@ url                = "https://api.textilecredit.com/price?chainId=42220&pair=cng
 staleness_secs     = 900
 rfq_staleness_secs = 240
 
+# 1. cNGN / USDT (6dp / 6dp)
 [[pools]]
-collateral          = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"  # cNGN (6dp)
-collateral_decimals = 6
-debt                = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"  # USDT (6dp)
-debt_decimals       = 6
-rfq_corridor        = "cmtcq1gbl0003ykyl5n2laol9"
-corridor_id         = "cmtcq1gbl0003ykyl5n2laol9"
-corridor_name       = "cNGN → USDT"
-corridor_network    = "Celo"
-
-# Buy side: Pays USDT to buy cNGN (bid below Dual-Oracle mid)
-buy_offset_bps                  = 25
+collateral                      = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f"
+collateral_decimals             = 6
+debt                            = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt_decimals                   = 6
+feed_url                        = "https://api.textilecredit.com/price?chainId=42220&pair=cngn-usdt&corridor=cmtcq1gbl0003ykyl5n2laol9"
+rfq_staleness_secs              = 240
+rfq_corridor                    = "cngn-usdt-celo"
+corridor_id                     = "cngn-usdt-celo"
+corridor_name                   = "cNGN / USDT"
+corridor_network                = "Celo"
+buy_offset_bps                  = 15
 buy_total_liquidity_debt        = "max"
 buy_min_slice_debt              = "1000000"
 buy_max_orders                  = 40
-
-# Sell side: Sells cNGN to receive USDT (ask above Dual-Oracle mid)
-sell_offset_bps                 = 35
+sell_offset_bps                 = 18
 sell_total_liquidity_collateral = "max"
 sell_min_slice_debt             = "1000000"
 sell_max_orders                 = 40
+ttl_secs                        = 60
+refresh_threshold_bps           = 0
 
+# 2. wARS / USDT (18dp / 6dp)
+[[pools]]
+collateral                      = "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D"
+collateral_decimals             = 18
+debt                            = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt_decimals                   = 6
+feed_url                        = "https://api.textilecredit.com/price?chainId=42220&pair=wars-usdt"
+rfq_staleness_secs              = 240
+rfq_corridor                    = "wars-usdt-celo"
+corridor_id                     = "wars-usdt-celo"
+corridor_name                   = "wARS / USDT"
+corridor_network                = "Celo"
+buy_offset_bps                  = 12
+buy_total_liquidity_debt        = "max"
+buy_min_slice_debt              = "1000000"
+buy_max_orders                  = 40
+sell_offset_bps                 = 18
+sell_total_liquidity_collateral = "max"
+sell_min_slice_debt             = "1000000"
+sell_max_orders                 = 40
+ttl_secs                        = 60
+refresh_threshold_bps           = 0
+
+# 3. wBRL / USDT (18dp / 6dp)
+[[pools]]
+collateral                      = "0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0"
+collateral_decimals             = 18
+debt                            = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt_decimals                   = 6
+feed_url                        = "https://api.textilecredit.com/price?chainId=42220&pair=wbrl-usdt"
+rfq_staleness_secs              = 240
+rfq_corridor                    = "wbrl-usdt-celo"
+corridor_id                     = "wbrl-usdt-celo"
+corridor_name                   = "wBRL / USDT"
+corridor_network                = "Celo"
+buy_offset_bps                  = 15
+buy_total_liquidity_debt        = "max"
+buy_min_slice_debt              = "1000000"
+buy_max_orders                  = 40
+sell_offset_bps                 = 18
+sell_total_liquidity_collateral = "max"
+sell_min_slice_debt             = "1000000"
+sell_max_orders                 = 40
+ttl_secs                        = 60
+refresh_threshold_bps           = 0
+
+# 4. USDC / USDT (6dp / 6dp)
+[[pools]]
+collateral                      = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C"
+collateral_decimals             = 6
+debt                            = "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e"
+debt_decimals                   = 6
+feed_url                        = "https://api.textilecredit.com/price?chainId=42220&pair=usdc-usdt"
+rfq_staleness_secs              = 240
+rfq_corridor                    = "usdc-usdt-celo"
+corridor_id                     = "usdc-usdt-celo"
+corridor_name                   = "USDC / USDT"
+corridor_network                = "Celo"
+buy_offset_bps                  = 10
+buy_total_liquidity_debt        = "max"
+buy_min_slice_debt              = "1000000"
+buy_max_orders                  = 40
+sell_offset_bps                 = 8
+sell_total_liquidity_collateral = "max"
+sell_min_slice_debt             = "1000000"
+sell_max_orders                 = 40
 ttl_secs                        = 60
 refresh_threshold_bps           = 0
 

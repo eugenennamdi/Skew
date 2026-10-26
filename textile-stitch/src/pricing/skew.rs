@@ -12,7 +12,7 @@ use crate::pricing::quote::Spread;
 use crate::rfq::wire::RejectReason;
 
 /// Hard safety rails
-pub const MIN_SPREAD_BPS: u32 = 6;              // Never quote below 6 bps (protocol fee + margin guard)
+pub const MIN_SPREAD_BPS: u32 = 1;              // Allow tightening down to 1 bps to win top-of-book RFQ flow
 pub const MAX_SPREAD_BPS: u32 = 150;            // Never quote wider than 150 bps (unless base_bps > 150)
 pub const EXTREME_IMBALANCE_THRESHOLD: f64 = 0.85; // |s| >= 0.85 triggers one-sided quoting
 pub const MIN_PORTFOLIO_VALUE_USD: f64 = 0.05;  // Under $0.05 total value, fail closed
@@ -135,11 +135,9 @@ pub fn calculate_dynamic_spread_with_decimals(
 
     // Circuit Breaker: One-sided quoting near extreme imbalance when depleted leg < $1.00
     if skew >= EXTREME_IMBALANCE_THRESHOLD && !bid && cngn_val < 1.00 {
-        eprintln!("[skew] Extreme skew s={:.3} >= +0.85 (coll=${:.2}): Suppressing SELL quote", skew, cngn_val);
         return Err(RejectReason::Inventory);
     }
     if skew <= -EXTREME_IMBALANCE_THRESHOLD && bid && usdt_val < 1.00 {
-        eprintln!("[skew] Extreme skew s={:.3} <= -0.85 (usdt=${:.2}): Suppressing BUY quote", skew, usdt_val);
         return Err(RejectReason::Inventory);
     }
 
@@ -329,15 +327,15 @@ mod tests {
                 expected_bps: Ok(10), // 25 + (30 * -0.5) = 10
             },
 
-            // 4. Clamping at min (6 bps)
+            // 4. Clamping at min (1 bps)
             TestCase {
-                name: "Aggressive skew clamps at MIN_SPREAD_BPS (6 bps)",
+                name: "Aggressive skew clamps at MIN_SPREAD_BPS (1 bps)",
                 usdt_usd: 3.80,
                 cngn_usd: 0.80,
                 bid: true,
                 base_bps: 20,
                 gamma_bps: 50,
-                expected_bps: Ok(6),
+                expected_bps: Ok(1),
             },
 
             // 5. Clamping at max (150 bps)
@@ -368,7 +366,7 @@ mod tests {
                 bid: true,
                 base_bps: 25,
                 gamma_bps: 30,
-                expected_bps: Ok(6),
+                expected_bps: Ok(1),
             },
 
             // 7. Sub-$0.05 inventory fail-closed guard

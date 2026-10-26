@@ -71,31 +71,23 @@ if command -v docker >/dev/null 2>&1; then
 fi
 sleep 2
 
-# 5. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Auto-Refill & Dashboard on :8080)
-echo "[+] Starting Engine 2 (skew-desk.mjs) in background (24/7 mode)..."
-STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
-  setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
-echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"
-
-# 6. Download Pre-Compiled Linux Binary of Engine 1 (./skew-stitch) from GitHub Release (zero VM disk overhead!)
+# 5. Download Pre-Compiled Linux Binary of Engine 1 (./skew-stitch) from GitHub Release (zero VM disk overhead!)
 RELEASE_URL="https://github.com/eugenennamdi/Skew/releases/download/v2.0.0/skew-stitch-linux-amd64"
-if [ ! -x "./skew-stitch" ]; then
-  echo "[+] Downloading pre-compiled Linux binary ./skew-stitch from GitHub Release..."
-  if curl -fsSL "$RELEASE_URL" -o ./skew-stitch; then
-    chmod +x ./skew-stitch
-    echo "    -> Downloaded ./skew-stitch successfully!"
-  else
-    rm -f ./skew-stitch
-    echo "    -> Pre-compiled release binary is still building on GitHub Actions (takes ~2 mins); Engine 2 is already live!"
-  fi
+echo "[+] Fetching latest pre-compiled Linux binary ./skew-stitch from GitHub Release..."
+if curl -fsSL "$RELEASE_URL" -o ./skew-stitch.new; then
+  mv ./skew-stitch.new ./skew-stitch
+  chmod +x ./skew-stitch
+  echo "    -> Updated ./skew-stitch successfully!"
+else
+  rm -f ./skew-stitch.new
+  echo "    -> Keeping existing ./skew-stitch binary."
 fi
 
 if [ -x "./skew-stitch" ]; then
-  if [ ! -f "stitch.runtime.toml" ] || [ ! -f "rfq-api.key" ] || grep -q "unauthorized" skew-stitch.log 2>/dev/null; then
-    echo "[+] Enrolling maker wallet with Textile RFQ (./skew-stitch connect)..."
-    cp stitch.toml stitch.runtime.toml
-    STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" ./skew-stitch connect --config stitch.runtime.toml || true
-  fi
+  echo "[+] Syncing multi-corridor config (cNGN, wARS, wBRL, USDC) & Permit2 approvals..."
+  cp stitch.toml stitch.runtime.toml
+  STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" ./skew-stitch connect --config stitch.runtime.toml || true
+  STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" ./skew-stitch approve --config stitch.runtime.toml || true
   echo "[+] Starting Engine 1 (./skew-stitch) in background (24/7 mode)..."
   STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
   STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key" \
@@ -104,6 +96,12 @@ if [ -x "./skew-stitch" ]; then
     setsid nohup ./skew-stitch --config stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
   echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
+
+# 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury & Dashboard on :8080)
+echo "[+] Starting Engine 2 (skew-desk.mjs) in background (24/7 mode)..."
+STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
+  setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
+echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"
 
 echo "========================================================"
 echo "  SKEW v2 IS LIVE 24/7!                                 "

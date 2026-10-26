@@ -2534,7 +2534,7 @@ async fn inventory_loop(
     }
 }
 
-/// Read live Celo Uniswap v3 `slot0()` prices for cNGN/USDT and wARS/USDT so the
+/// Read live Celo Uniswap v3 `slot0()` prices for cNGN/USDT, wARS/USDT, and USDC/USDT so the
 /// Dual-Oracle Anti-Arb Shield never quotes through the active DEX market.
 async fn refresh_celo_dex_reference(reader: Batcher, rpc: &Rpc) {
     const SLOT0: [u8; 4] = [0x38, 0x50, 0xc7, 0xbd];
@@ -2550,10 +2550,17 @@ async fn refresh_celo_dex_reference(reader: Batcher, rpc: &Rpc) {
     let Ok(wars_token) = "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D".parse::<Address>() else {
         return;
     };
+    let Ok(usdc_pool) = "0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846".parse::<Address>() else {
+        return;
+    };
+    let Ok(usdc_token) = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C".parse::<Address>() else {
+        return;
+    };
 
     let calls = [
         Call::new(cngn_pool, SLOT0.to_vec()),
         Call::new(wars_pool, SLOT0.to_vec()),
+        Call::new(usdc_pool, SLOT0.to_vec()),
     ];
     let Ok(results) = reader.read(rpc, &calls).await else {
         return;
@@ -2579,6 +2586,18 @@ async fn refresh_celo_dex_reference(reader: Batcher, rpc: &Rpc) {
                 let usdt_per_wars = sqrt_p * sqrt_p * 1e12;
                 if usdt_per_wars > 0.00005 && usdt_per_wars < 0.05 {
                     crate::pricing::skew::set_dex_reference_price(wars_token, usdt_per_wars);
+                }
+            }
+        }
+    }
+    if let Some(Some(bytes)) = results.get(2) {
+        if bytes.len() >= 32 {
+            let sqrt_x96 = U256::from_be_slice(&bytes[..32]);
+            if let Ok(v) = sqrt_x96.to_string().parse::<f64>() {
+                let sqrt_p = v / q96;
+                let usdc_per_usdt = sqrt_p * sqrt_p;
+                if usdc_per_usdt > 0.80 && usdc_per_usdt < 1.20 {
+                    crate::pricing::skew::set_dex_reference_price(usdc_token, 1.0 / usdc_per_usdt);
                 }
             }
         }
