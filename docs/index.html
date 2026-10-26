@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     :root {
-      /* shadcn/ui dark zinc palette */
+      /* shadcn/ui dark zinc palette (default) */
       --background: #09090b;
       --foreground: #fafafa;
       --card: #111114;
@@ -20,6 +20,11 @@
       --border: #27272a;
       --border-subtle: rgba(255, 255, 255, 0.07);
       --ring: rgba(250, 250, 250, 0.14);
+      --topbar-bg: rgba(9, 9, 11, 0.82);
+      --tab-active-bg: #27272a;
+      --tab-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      --surface-well: #0b0b0e;
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 
       /* Restrained semantic accents */
       --emerald: #10b981;
@@ -39,6 +44,32 @@
       /* Emil Kowalski custom easing curves */
       --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
       --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    }
+
+    html.light {
+      /* shadcn/ui & Textile FX light zinc palette */
+      --background: #f8f8f8;
+      --foreground: #09090b;
+      --card: #ffffff;
+      --card-hover: #f4f4f5;
+      --muted: #f1f1f3;
+      --muted-foreground: #52525b;
+      --subtle-foreground: #71717a;
+      --border: #e4e4e7;
+      --border-subtle: rgba(9, 9, 11, 0.08);
+      --ring: rgba(9, 9, 11, 0.12);
+      --topbar-bg: rgba(248, 248, 248, 0.85);
+      --tab-active-bg: #ffffff;
+      --tab-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      --surface-well: #f4f4f6;
+      --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+      --emerald: #059669;
+      --emerald-bg: rgba(5, 150, 105, 0.08);
+      --emerald-border: rgba(5, 150, 105, 0.22);
+      --amber: #d97706;
+      --amber-bg: rgba(217, 119, 6, 0.08);
+      --amber-border: rgba(217, 119, 6, 0.22);
     }
 
     * {
@@ -73,7 +104,7 @@
       top: 0;
       z-index: 40;
       height: 60px;
-      background: rgba(9, 9, 11, 0.82);
+      background: var(--topbar-bg);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border-subtle);
@@ -154,10 +185,10 @@
       left: 3px;
       width: calc((100% - 6px) / 3);
       height: calc(100% - 6px);
-      background: #27272a;
+      background: var(--tab-active-bg);
       border-radius: 5px;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-      transition: transform 200ms var(--ease-out);
+      box-shadow: var(--tab-active-shadow);
+      transition: transform 200ms var(--ease-out), background-color 150ms ease;
       pointer-events: none;
     }
 
@@ -211,6 +242,12 @@
       transition: transform 150ms var(--ease-out), color 150ms ease, background-color 150ms ease, border-color 150ms ease;
     }
 
+    .btn-icon {
+      width: 32px;
+      padding: 0;
+      justify-content: center;
+    }
+
     .btn:active {
       transform: scale(0.97);
     }
@@ -219,10 +256,10 @@
       .btn:hover {
         color: var(--foreground);
         background: var(--muted);
-        border-color: #3f3f46;
+        border-color: var(--subtle-foreground);
       }
       .tab-btn:hover:not(.active) {
-        color: #d4d4d8;
+        color: var(--foreground);
       }
     }
 
@@ -539,8 +576,8 @@
     }
 
     .corridor-pill.active {
-      background: rgba(255, 255, 255, 0.06);
-      border-color: rgba(255, 255, 255, 0.22);
+      background: var(--card-hover);
+      border-color: var(--foreground);
       color: var(--foreground);
     }
 
@@ -556,7 +593,7 @@
       border-radius: 50%;
       object-fit: cover;
       background: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      border: 1px solid var(--border);
       flex-shrink: 0;
       display: inline-block;
       vertical-align: middle;
@@ -585,7 +622,7 @@
       width: 100%;
       height: 5px;
       border-radius: 999px;
-      background: #27272a;
+      background: var(--border);
       outline: none;
     }
 
@@ -675,8 +712,9 @@
         <div class="brand-mark">S</div>
         <span class="brand-name">Skew</span>
         <span class="status-pill">
-          <svg width="13" height="13" viewBox="0 0 24.989 24.989" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex-shrink:0;">
-            <path d="M 24.989 0 L 0 0 L 0 24.989 L 24.989 24.989 L 24.989 16.27 L 20.847 16.27 C 19.416 19.451 16.201 21.67 12.517 21.67 C 7.437 21.67 3.33 17.529 3.33 12.483 C 3.33 7.437 7.437 3.33 12.517 3.33 C 16.27 3.33 19.485 5.618 20.915 8.867 L 24.989 8.867 Z" fill="#FCFF52"/>
+          <svg width="14" height="14" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex-shrink:0;">
+            <rect width="320" height="320" rx="96" fill="#FCFF52"/>
+            <path d="M250 70H70V250H249.995V187.169H220.125C209.828 210.09 186.649 226.055 160.125 226.055C123.557 226.055 93.9445 196.188 93.9445 159.873C93.9445 123.558 123.557 93.9499 160.125 93.9499C187.161 93.9499 210.34 110.432 220.641 133.865H250V70Z" fill="#09090b"/>
           </svg>
           <span id="liveStatusText">Celo Mainnet</span>
         </span>
@@ -691,6 +729,10 @@
       </nav>
 
       <div class="topbar-actions">
+        <button class="btn btn-icon" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle theme">
+          <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
         <button class="btn" id="syncBtn" onclick="syncTelemetry(true)">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
           <span>Sync</span>
@@ -729,8 +771,8 @@
           </div>
           <div class="card-value mono" id="navValue">$195.37</div>
           <div class="mini-bar" title="USDT vs Local FX allocation">
-            <div class="mini-bar-seg" id="barUsdt" style="width: 90.5%; background: #fafafa;"></div>
-            <div class="mini-bar-seg" id="barLocal" style="width: 9.5%; background: #10b981;"></div>
+            <div class="mini-bar-seg" id="barUsdt" style="width: 90.5%; background: var(--foreground);"></div>
+            <div class="mini-bar-seg" id="barLocal" style="width: 9.5%; background: var(--emerald);"></div>
           </div>
           <div class="card-footer">
             <span id="usdtReadout" class="mono">176.86 USDT (90.5%)</span>
@@ -988,7 +1030,7 @@
             </div>
           </div>
 
-          <div style="padding: 16px; border-radius: var(--radius-md); background: #0b0b0e; border: 1px solid var(--border-subtle);">
+          <div style="padding: 16px; border-radius: var(--radius-md); background: var(--surface-well); border: 1px solid var(--border-subtle);">
             <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted-foreground);margin-bottom:12px;">
               <span id="axisCaption">Rate Axis (cNGN per 1 USDT)</span>
               <span class="text-emerald">SELL &ge; max(P<sub>textile</sub>, P<sub>uni</sub>)</span>
@@ -1451,18 +1493,39 @@
       const xBid = toX(q.bidRate);
 
       document.getElementById('spreadSvg').innerHTML = `
-        <line x1="30" y1="60" x2="570" y2="60" stroke="#27272a" stroke-width="2" />
-        <rect x="${Math.min(xAsk, xUni)}" y="34" width="${Math.max(4, Math.abs(xUni - xAsk))}" height="52" rx="4" fill="rgba(16, 185, 129, 0.12)" />
-        <line x1="${xAsk}" y1="22" x2="${xAsk}" y2="98" stroke="#10b981" stroke-width="2" />
-        <text x="${xAsk}" y="15" fill="#10b981" font-family="JetBrains Mono" font-size="11" font-weight="500" text-anchor="middle">Ask ${fmtRate(key, q.askRate)}</text>
-        <line x1="${xUni}" y1="30" x2="${xUni}" y2="90" stroke="#a1a1aa" stroke-width="1.5" stroke-dasharray="3,3" />
-        <text x="${xUni}" y="108" fill="#a1a1aa" font-family="JetBrains Mono" font-size="10" text-anchor="middle">UniV3 ${fmtRate(key, q.uniRate)}</text>
-        <line x1="${xTex}" y1="30" x2="${xTex}" y2="90" stroke="#71717a" stroke-width="1.5" stroke-dasharray="2,2" />
-        <text x="${xTex}" y="108" fill="#71717a" font-family="JetBrains Mono" font-size="10" text-anchor="middle">Oracle ${fmtRate(key, q.textileRate)}</text>
-        <line x1="${xBid}" y1="22" x2="${xBid}" y2="98" stroke="#fafafa" stroke-width="2" />
-        <text x="${xBid}" y="15" fill="#fafafa" font-family="JetBrains Mono" font-size="11" font-weight="500" text-anchor="middle">Bid ${fmtRate(key, q.bidRate)}</text>
+        <line x1="30" y1="60" x2="570" y2="60" stroke="var(--border)" stroke-width="2" />
+        <rect x="${Math.min(xAsk, xUni)}" y="34" width="${Math.max(4, Math.abs(xUni - xAsk))}" height="52" rx="4" fill="var(--emerald-bg)" />
+        <line x1="${xAsk}" y1="22" x2="${xAsk}" y2="98" stroke="var(--emerald)" stroke-width="2" />
+        <text x="${xAsk}" y="15" fill="var(--emerald)" font-family="JetBrains Mono" font-size="11" font-weight="500" text-anchor="middle">Ask ${fmtRate(key, q.askRate)}</text>
+        <line x1="${xUni}" y1="30" x2="${xUni}" y2="90" stroke="var(--muted-foreground)" stroke-width="1.5" stroke-dasharray="3,3" />
+        <text x="${xUni}" y="108" fill="var(--muted-foreground)" font-family="JetBrains Mono" font-size="10" text-anchor="middle">UniV3 ${fmtRate(key, q.uniRate)}</text>
+        <line x1="${xTex}" y1="30" x2="${xTex}" y2="90" stroke="var(--subtle-foreground)" stroke-width="1.5" stroke-dasharray="2,2" />
+        <text x="${xTex}" y="108" fill="var(--subtle-foreground)" font-family="JetBrains Mono" font-size="10" text-anchor="middle">Oracle ${fmtRate(key, q.textileRate)}</text>
+        <line x1="${xBid}" y1="22" x2="${xBid}" y2="98" stroke="var(--foreground)" stroke-width="2" />
+        <text x="${xBid}" y="15" fill="var(--foreground)" font-family="JetBrains Mono" font-size="11" font-weight="500" text-anchor="middle">Bid ${fmtRate(key, q.bidRate)}</text>
       `;
     }
+
+    function applyTheme(theme) {
+      const root = document.documentElement;
+      const isLight = theme === 'light';
+      root.classList.toggle('light', isLight);
+      root.classList.toggle('dark', !isLight);
+      document.getElementById('themeIconSun').style.display = isLight ? 'none' : 'block';
+      document.getElementById('themeIconMoon').style.display = isLight ? 'block' : 'none';
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.classList.contains('light');
+      const next = isLight ? 'dark' : 'light';
+      try { localStorage.setItem('skew-theme', next); } catch (_) {}
+      applyTheme(next);
+    }
+
+    try {
+      const saved = localStorage.getItem('skew-theme');
+      if (saved === 'light' || saved === 'dark') applyTheme(saved);
+    } catch (_) {}
 
     async function syncTelemetry(withExplorer = false) {
       await pollTelemetry();
