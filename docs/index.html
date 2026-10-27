@@ -888,13 +888,13 @@
               <span>Treasury Value</span>
               <span class="badge emerald">Live RPC</span>
             </div>
-            <div class="card-value mono" id="navValue">$195.86</div>
+            <div class="card-value mono" id="navValue">$195.99</div>
             <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
               <div class="mini-bar-seg" id="barUsdt" style="width: 70.4%; background: var(--foreground);"></div>
               <div class="mini-bar-seg" id="barCngn" style="width: 9.2%; background: #10B981;"></div>
               <div class="mini-bar-seg" id="barWars" style="width: 7.7%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" id="barWbrl" style="width: 5.1%; background: #F59E0B;"></div>
-              <div class="mini-bar-seg" id="barUsdc" style="width: 7.6%; background: #6366F1;"></div>
+              <div class="mini-bar-seg" id="barWbrl" style="width: 5.2%; background: #F59E0B;"></div>
+              <div class="mini-bar-seg" id="barUsdc" style="width: 7.5%; background: #6366F1;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
@@ -922,13 +922,13 @@
               </span>
               <span class="treasury-asset-val mono" id="warsReadout">$15.00</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWbrl" title="BUY @ 1 bps (USDT-backed · DEX 17M-gas TickBitmap shield active)">
+            <div class="treasury-asset-item" id="assetItemWbrl" title="53.89 wBRL ($10.13)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
                 <span class="seg-dot" style="background: #F59E0B;"></span>
                 <span>wBRL</span>
               </span>
-              <span class="treasury-asset-val mono text-emerald" id="wbrlReadout">BUY 1 bps</span>
+              <span class="treasury-asset-val mono" id="wbrlReadout">$10.13</span>
             </div>
             <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
               <span class="treasury-asset-left">
@@ -1365,7 +1365,7 @@
 
     const STATE = {
       blockNumber: 81145300,
-      balances: { USDT: 147.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 0, USDC: 14.98 },
+      balances: { USDT: 137.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 53.89, USDC: 14.98 },
       corridors: {
         cNGN: { symbol: 'cNGN / USDT', textileRate: 1377.76, uniRate: 1378.71, hasDex: true },
         wARS: { symbol: 'wARS / USDT', textileRate: 1647.48, uniRate: 1653.48, hasDex: true },
@@ -1721,12 +1721,12 @@
         {
           corridor: 'wBRL/USDT',
           iconKey: 'wBRL',
-          regime: 'GAS_SHIELD_BUY_ACTIVE',
+          regime: 'TWO_WAY_ACTIVE',
           oracleDispersionBps: Number(wbrlQ.gapBps.toFixed(1)),
           skew: Number(wbrlSkew.toFixed(3)),
           bidSpreadBps: 1,
           askSpreadBps: 34,
-          reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting 1 bps BUY wBRL on Textile backed by $${STATE.balances.USDT.toFixed(0)} USDT.`,
+          reason: `Two-way active ($${wbrlUsd.toFixed(2)} wBRL + $${STATE.balances.USDT.toFixed(2)} USDT); DEX refill shielded by 800k gas guardrail against pool 0x01c3...A40F MAX_TICK (887,271) and auto-seeded via Textile RFQ.`,
         },
         {
           corridor: 'USDC/USDT',

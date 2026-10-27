@@ -17,11 +17,11 @@ To give judges a 100% transparent, auditable breakdown of our on-chain history o
 | :--- | :---: | :---: | :--- | :--- |
 | **1. Independent Counterparty Maker Fills** | **7 fills** | **`$181.69`** | **`+41.1 bps` (`+$0.0740 USDT`) per shielded fill** | External bots `#9991 Kiyoshi` (`0x6Cd37bC2...`) & `#9995 naira-maker` (`0x8754FE21...`) |
 | **2. Independent Cross-Venue Arbitrages (2-Leg)** | **2 arbs (4 txs)** | **`$21.96`** | **`+187.5 bps` (`+$0.1986`) & `+171.7 bps` (`+$0.1951`)** | External Maker `#9976 Arbolito Desk` (`0xBCB8B7dc...`) → Uniswap v3 `0.01%` |
-| **3. Autonomous Maker-to-DEX Refills & Unwinds** | **14 swaps** | **`$242.10`** | **Restored `cNGN`, `wARS`, `wBRL`, `USDC` reserves at `0.01%` fee** | Uniswap v3 Pools (`cNGN`, `wARS`, `wBRL`, `USDC`) |
+| **3. Autonomous Maker-to-DEX Refills, Seeds & Unwinds** | **15 swaps** | **`$252.10`** | **Restored `cNGN`, `wARS`, `wBRL`, `USDC` reserves across all 5 tokens** | Uniswap v3 Pools & Textile RFQ (`wBRL` Gas-Shielded Seed) |
 | *4. Early Integration Self-Tests (Halted)* | *9 fills* | *`$18.67`* | *`-25 bps` protocol fee test (halted via calldata guard)* | *Self-test prior to `skew-desk.mjs` anti-self-trade guard* |
 
-> **Anti-Self-Trade Guardrail (`skew-desk.mjs` lines 496–499 & 567–570)**:
-> Before submitting any `LimitOrderReactor` transaction, `skew-desk.mjs` inspects the signed DutchOrder calldata for our own Maker address (`calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())`) and aborts if matched, ensuring the Taker engine only lifts **external** Makers.
+> **Anti-Self-Trade Guardrail (`skew-desk.mjs` lines 483–487)**:
+> Before submitting any `LimitOrderReactor` transaction, `skew-desk.mjs` inspects the signed `DutchOrder` `OrderInfo.swapper` word (`isSelfMakerOrder(calldata)`) for our own Maker address and aborts if matched, ensuring the Taker & Treasury engine only lifts **external** Makers.
 
 ---
 
@@ -46,10 +46,11 @@ Every row below is an on-chain `LimitOrderReactor` settlement where an **indepen
 
 ---
 
-## 3. Verified Cross-Venue Arbitrages & Treasury Unwinds (`wARS/USDT` & `USDC/USDT`)
+## 3. Verified Cross-Venue Arbitrages, Inventory Seeds & Treasury Unwinds (`wARS`, `wBRL`, `USDC`)
 
 | Timestamp (UTC) | Strategy | Corridor | External Counterparty | Leg 1 (Textile RFQ / Maker) | Leg 2 (Uniswap v3 `0.01%`) | Net Realized Profit |
 | :--- | :--- | :--- | :--- | :--- | :--- | :---: |
+| `2026-10-27 08:33:14Z` | **Textile RFQ Inventory Seed** | `wBRL/USDT` | External Textile Maker (`0x8754FE21...744B`) | `10.0000 USDT → 53.8886 wBRL` ([`0xc1fef265...`](https://celoscan.io/tx/0xc1fef26595abdbaa9455129cdc24a8ef0f7e138a2f8874bdd39a2f83113bfa53)) | Held in active Maker reserve (`$10.13` mark-to-market) | **`+130.0 bps` (`+$0.1300` NAV)** |
 | `2026-10-26 18:46:26Z` | **Cross-Venue Arb** | `wARS/USDT` | `#9976 Arbolito Desk` (`0xBCB8B7dc...EdbE`) | `11.3679 USDT → 18,979.68 wARS` ([`0xca351a00...`](https://celoscan.io/tx/0xca351a003354a2d5091f3af3ee5dd41ec938d743bdded128ef7192871316e87a)) | `18,979.68 wARS → 11.5630 USDT` ([`0x324c9f9b...`](https://celoscan.io/tx/0x324c9f9b3a4339ba5fbba2b6b7050e7fedcc856a0dc774ffec70733b86b8bbed)) | **`+171.7 bps` (`+$0.1951 USDT`)** |
 | `2026-10-26 17:48:34Z` | **Cross-Venue Arb** | `wARS/USDT` | `#9976 Arbolito Desk` (`0xBCB8B7dc...EdbE`) | `10.5880 USDT → 17,719.29 wARS` ([`0xb202a9f1...`](https://celoscan.io/tx/0xb202a9f1e159b37f6b8f662652141903b293246a8810ebe7ae8dfabb9b1cc995)) | `17,719.29 wARS → 10.7866 USDT` ([`0x20da628c...`](https://celoscan.io/tx/0x20da628c6a545ea95a2e9268d587b1e63be758e4fd30f147ce668a628ced2cef)) | **`+187.5 bps` (`+$0.1986 USDT`)** |
 | `2026-10-26 16:40:25Z` | **Maker → DEX Unwind** | `USDC/USDT` | External RFQ Taker | Maker received `10.9754 USDC` | `10.9754 USDC → 10.9887 USDT` ([`0x1e18cfab...`](https://celoscan.io/tx/0x1e18cfab4af41bd9d88c41f4814efd8439ea62b271aa5964c139f3a3d18d11d0)) | **`+12.1 bps` (`+$0.0133 USDT`)** |
@@ -58,14 +59,14 @@ Every row below is an on-chain `LimitOrderReactor` settlement where an **indepen
 
 ## 4. Live Network Orderbook Share & Autonomous Risk Officer Guardrails
 
-Our Stitch Maker (`cmv75ay6h00bq339u3x6gdicy`) and `skew-desk.mjs` autonomous treasury manager maintain active coverage across all **4 official Textile corridors (`cNGN`, `wARS`, `wBRL`, `USDC` vs `USDT`)**:
+Our Stitch Maker (`cmv75ay6h00bq339u3x6gdicy`) and `skew-desk.mjs` autonomous treasury manager maintain active two-way coverage across all **4 official Textile corridors (`cNGN`, `wARS`, `wBRL`, `USDC` vs `USDT` — `8 of 8` directional sides)**:
 
 | Corridor | Token Contract | Uniswap v3 `0.01%` Pool | Our Active Reserve | Network Orderbook Share | Active Risk Officer Regime |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **`cNGN / USDT`** | `0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f` | `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` | `24,815 cNGN` (`$18.00`) + `147.88 USDT` | **`97.9%` of network `cNGN`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
-| **`wARS / USDT`** | `0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D` | `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391` | `24,800 wARS` (`$15.00`) + `147.88 USDT` | **`98.7%` of network `wARS`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
-| **`wBRL / USDT`** | `0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` | `147.88 USDT` (`BUY wBRL` @ `1 bps`) | **Seated (`Permit2` Approved)** | **`GAS_SHIELD_BUY_ACTIVE` (`800k` Gas Guard)** |
-| **`USDC / USDT`** | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `14.98 USDC` (`$14.98`) + `147.88 USDT` | **Active two-way (`2/8 bps`)** | **`PEG_TIGHT_TWO_WAY` (`200 OK` Two-Way)** |
+| **`cNGN / USDT`** | `0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f` | `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` | `24,815 cNGN` (`$18.00`) + `137.88 USDT` | **`97.9%` of network `cNGN`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
+| **`wARS / USDT`** | `0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D` | `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391` | `24,800 wARS` (`$15.00`) + `137.88 USDT` | **`98.7%` of network `wARS`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
+| **`wBRL / USDT`** | `0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` | `53.89 wBRL` (`$10.13`) + `137.88 USDT` | **Active two-way (`1/34 bps`)** | **`TWO_WAY_ACTIVE` (`200 OK` Two-Way + `800k` Gas Shield)** |
+| **`USDC / USDT`** | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `14.98 USDC` (`$14.98`) + `137.88 USDT` | **Active two-way (`2/8 bps`)** | **`PEG_TIGHT_TWO_WAY` (`200 OK` Two-Way)** |
 
-> **`wBRL/USDT` `MAX_TICK` (`887,271`) Gas-Griefing Protection (`skew-desk.mjs` line 195)**:
-> On Celo Mainnet, the `wBRL/USDT` `0.01%` Uniswap v3 pool (`0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F`) was initialized at `slot0.tick = 887,271` (`MAX_TICK - 1`), causing any DEX swap to traverse `2,350` empty `TickBitmap` words (`17,039,337 gas` = `~3.45 CELO` per swap). Our Risk Officer inspects `QuoterV2.quoteExactInputSingle`'s `gasEstimate` and autonomously blocks DEX swaps exceeding `800,000 gas` while keeping `1 bps` `BUY wBRL` quotes live on Textile backed by `147.88 USDT`.
+> **`wBRL/USDT` `MAX_TICK` (`887,271`) Gas-Griefing Protection + Textile RFQ Reserve Seed (`skew-desk.mjs` lines 195 & 731)**:
+> On Celo Mainnet, the `wBRL/USDT` `0.01%` Uniswap v3 pool (`0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F`) was drained to `slot0.tick = 887,271` (`MAX_TICK - 1`), causing any `USDT -> wBRL` DEX swap to traverse `2,350` empty `TickBitmap` words (`17,039,337 gas` = `~3.45 CELO` per swap). Our Risk Officer inspects `QuoterV2.quoteExactInputSingle`'s `gasEstimate`, autonomously blocks DEX swaps exceeding `800,000 gas`, and instead seeds our `$10.00 wBRL` (`53.89 wBRL`) two-way Maker inventory via Textile's `LimitOrderReactor` (`~197k gas`, tx [`0xc1fef26595abdbaa9455129cdc24a8ef0f7e138a2f8874bdd39a2f83113bfa53`](https://celoscan.io/tx/0xc1fef26595abdbaa9455129cdc24a8ef0f7e138a2f8874bdd39a2f83113bfa53)).
