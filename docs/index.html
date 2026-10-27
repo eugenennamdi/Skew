@@ -1344,6 +1344,8 @@
           { jsonrpc: '2.0', id: 4, method: 'eth_call', params: [{ to: POOLS.cNGN, data: '0x3850c7bd' }, 'latest'] },
           { jsonrpc: '2.0', id: 5, method: 'eth_call', params: [{ to: POOLS.wARS, data: '0x3850c7bd' }, 'latest'] },
           { jsonrpc: '2.0', id: 6, method: 'eth_call', params: [{ to: POOLS.USDC, data: '0x3850c7bd' }, 'latest'] },
+          { jsonrpc: '2.0', id: 7, method: 'eth_call', params: [{ to: TOKENS.wARS.address, data: callData }, 'latest'] },
+          { jsonrpc: '2.0', id: 8, method: 'eth_call', params: [{ to: TOKENS.USDC.address, data: callData }, 'latest'] },
         ];
 
         const res = await fetch(CELO_RPC, {
@@ -1369,6 +1371,8 @@
         }
         if (map[2]) STATE.balances.USDT = Number(decodeUint256(map[2])) / 1e6;
         if (map[3]) STATE.balances.cNGN = Number(decodeUint256(map[3])) / 1e6;
+        if (map[7]) STATE.balances.wARS = Number(decodeUint256(map[7])) / 1e18;
+        if (map[8]) STATE.balances.USDC = Number(decodeUint256(map[8])) / 1e6;
 
         // cNGN/USDT pool: token0 is USDT (6 dec), token1 is cNGN (6 dec) -> raw ratio is cNGN per USDT
         const sqrtCngn = decodeUint256(map[4], 0);
@@ -1478,7 +1482,10 @@
       document.getElementById('blockBadge').textContent = '#' + STATE.blockNumber.toLocaleString('en-US');
 
       const cngnUsd = STATE.balances.cNGN / STATE.corridors.cNGN.uniRate;
-      const totalUsd = STATE.balances.USDT + cngnUsd;
+      const warsUsd = (STATE.balances.wARS || 0) / (STATE.corridors.wARS.uniRate || 1653.56);
+      const usdcUsd = STATE.balances.USDC || 0;
+      const localUsd = cngnUsd + warsUsd + usdcUsd;
+      const totalUsd = STATE.balances.USDT + localUsd;
       const usdtPct = totalUsd > 0 ? (STATE.balances.USDT / totalUsd) * 100 : 100;
       const localPct = 100 - usdtPct;
 
@@ -1486,7 +1493,9 @@
       document.getElementById('barUsdt').style.width = usdtPct.toFixed(1) + '%';
       document.getElementById('barLocal').style.width = localPct.toFixed(1) + '%';
       document.getElementById('usdtReadout').textContent = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
-      document.getElementById('cngnReadout').textContent = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)})`;
+      document.getElementById('cngnReadout').textContent = (warsUsd + usdcUsd > 1.0)
+        ? `cNGN · wARS · USDC ($${localUsd.toFixed(2)})`
+        : `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)})`;
 
       const cngnQ = computeQuotes('cNGN');
       document.getElementById('skewValue').textContent = (STATE.skew >= 0 ? '+' : '') + STATE.skew.toFixed(3);

@@ -492,6 +492,11 @@ async function executeOpportunity(opp) {
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response: ${JSON.stringify(q).slice(0, 140)}`);
     }
+    // ponytail: anti-self-trade guard — never fill our own Maker quote on Textile Reactor
+    if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) {
+      console.log(`[ANTI-SELF-TRADE] Skipping ${opp.corridor} taker order matched against our own Maker (${CONFIG.agentWallet})`);
+      return null;
+    }
     const tokenContract = new ethers.Contract(opp.tokenAddress, ERC20_ABI, provider);
     const balBefore = BigInt(await tokenContract.balanceOf(wallet.address));
     const r1 = await sendTagged({ to: toAddr, data: calldata });
@@ -528,6 +533,8 @@ async function executeOpportunity(opp) {
   }
 
   if (opp.direction === 'uni->textile') {
+    // ponytail: our Maker holds 75%+ of network USDT at 1-15 bps BUY spread; skip low-edge uni->textile to avoid self-matching
+    if (opp.edgeBps < 30) return null;
     const amountInRaw = BigInt(opp.amountInRaw);
     await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, amountInRaw);
     const minTokenOut = (BigInt(opp.midTokenRaw) * 995n) / 1000n;
@@ -553,6 +560,10 @@ async function executeOpportunity(opp) {
     const calldata = q?.transactions?.swap?.data;
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response on leg 2: ${JSON.stringify(q).slice(0, 140)}`);
+    }
+    if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) {
+      console.log(`[ANTI-SELF-TRADE] Skipping uni->textile leg 2 matched against our own Maker (${CONFIG.agentWallet})`);
+      return null;
     }
     const r2 = await sendTagged({ to: toAddr, data: calldata });
     await textileSubmitTx(q.rfqId, q.claimToken, r2.hash);
@@ -631,20 +642,16 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, usdc, uniCngnMid,
   const warsUsd = wars * uniWarsMid;
   const usdcUsd = usdc;
 
-  // 1. AUTO-UNWIND MAKER/TAKER FILLS TO USDT ON UNISWAP V3 (Harvesting +178 bps on wARS, +29 bps on cNGN, +12 bps on USDC)
-  if (warsUsd > 1.0) {
-    const warsContract = new ethers.Contract(warsAddr, ERC20_ABI, provider);
-    const fullWarsRaw = BigInt(await warsContract.balanceOf(wallet.address));
-    if (fullWarsRaw > 10n ** 18n) {
-      return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, fullWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', warsUsd, 178.0);
-    }
+  // 1. AUTO-UNWIND EXCESS MAKER/TAKER FILLS TO USDT ON UNISWAP V3 (Keeping $18 cNGN, $15 wARS, $15 USDC Maker reserves)
+  if (warsUsd > 22.0) {
+    const excessUsd = warsUsd - 15.0;
+    const sellWarsRaw = ethers.parseUnits(Math.floor(excessUsd / uniWarsMid).toString(), 18);
+    return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, sellWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', excessUsd, 178.0);
   }
-  if (usdcUsd > 1.0) {
-    const usdcContract = new ethers.Contract(usdcAddr, ERC20_ABI, provider);
-    const fullUsdcRaw = BigInt(await usdcContract.balanceOf(wallet.address));
-    if (fullUsdcRaw > 1_000_000n) {
-      return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, fullUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', usdcUsd, 12.0);
-    }
+  if (usdcUsd > 22.0) {
+    const excessUsd = usdcUsd - 15.0;
+    const sellUsdcRaw = ethers.parseUnits(excessUsd.toFixed(6), 6);
+    return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, sellUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', excessUsd, 12.0);
   }
   if (cngnUsd > 26.0) {
     const excessUsd = cngnUsd - 18.0;
@@ -652,11 +659,21 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, usdc, uniCngnMid,
     return swapOnUniswap(cngnAddr, CONFIG.contracts.usdt, sellCngnRaw, 'AUTO_TREASURY_UNWIND', 'cNGN/USDT', excessUsd, 29.0);
   }
 
-  // 2. AUTO-REFILL DEPLETED cNGN INVENTORY SO MAKER STAYS #1 ON USDT -> cNGN
+  // 2. AUTO-REFILL DEPLETED MAKER RESERVES SO MAKER ANSWERS TWO-WAY FLOW ACROSS cNGN, wARS, AND USDC
   if (cngnUsd < 10.0 && usdt >= 30.0) {
     const buyUsd = Math.min(18.0 - cngnUsd, 18.0);
     const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
     return swapOnUniswap(CONFIG.contracts.usdt, cngnAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'cNGN/USDT', buyUsd, 35.0);
+  }
+  if (warsUsd < 8.0 && usdt >= 40.0) {
+    const buyUsd = Math.min(15.0 - warsUsd, 15.0);
+    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, warsAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wARS/USDT', buyUsd, 140.0);
+  }
+  if (usdcUsd < 8.0 && usdt >= 40.0) {
+    const buyUsd = Math.min(15.0 - usdcUsd, 15.0);
+    const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, usdcAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'USDC/USDT', buyUsd, 10.0);
   }
   return null;
 }
