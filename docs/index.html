@@ -396,6 +396,12 @@
       margin-bottom: 24px;
     }
 
+    .metrics-grid > .card {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
     .card {
       background: var(--card);
       border: 1px solid var(--border-subtle);
@@ -423,7 +429,7 @@
     }
 
     .card-footer {
-      margin-top: 12px;
+      margin-top: 14px;
       padding-top: 12px;
       border-top: 1px solid var(--border-subtle);
       display: flex;
@@ -433,7 +439,7 @@
       color: var(--muted-foreground);
     }
 
-    /* Clean Inventory Bar inside Treasury Card */
+    /* Clean Multi-Asset Inventory Bar & 2x2 Token Breakdown inside Treasury Card */
     .mini-bar {
       height: 6px;
       width: 100%;
@@ -449,6 +455,55 @@
       height: 100%;
       border-radius: 999px;
       transition: width 260ms var(--ease-out);
+      min-width: 4px;
+    }
+
+    .treasury-assets-grid {
+      margin-top: 12px;
+      padding-top: 11px;
+      border-top: 1px solid var(--border-subtle);
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px 16px;
+    }
+
+    .treasury-asset-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      line-height: 1.25;
+      min-width: 0;
+    }
+
+    .treasury-asset-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--foreground);
+      font-weight: 500;
+    }
+
+    .token-icon-xs {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .seg-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .treasury-asset-val {
+      color: var(--muted-foreground);
+      font-size: 11.5px;
     }
 
     /* Section Card Wrapper */
@@ -821,40 +876,78 @@
       <!-- 3 Focused KPI Cards -->
       <div class="metrics-grid">
         <div class="card stagger-item">
-          <div class="card-label">
-            <span>Treasury Value</span>
-            <span class="badge emerald">Live RPC</span>
+          <div>
+            <div class="card-label">
+              <span>Treasury Value</span>
+              <span class="badge emerald">Live RPC</span>
+            </div>
+            <div class="card-value mono" id="navValue">$195.86</div>
+            <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · USDC)">
+              <div class="mini-bar-seg" id="barUsdt" style="width: 75.5%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barCngn" style="width: 9.2%; background: #10B981;"></div>
+              <div class="mini-bar-seg" id="barWars" style="width: 7.7%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" id="barUsdc" style="width: 7.6%; background: #6366F1;"></div>
+            </div>
           </div>
-          <div class="card-value mono" id="navValue">$195.86</div>
-          <div class="mini-bar" title="USDT vs Local FX allocation">
-            <div class="mini-bar-seg" id="barUsdt" style="width: 75.5%; background: var(--foreground);"></div>
-            <div class="mini-bar-seg" id="barLocal" style="width: 24.5%; background: var(--emerald);"></div>
-          </div>
-          <div class="card-footer">
-            <span id="usdtReadout" class="mono">147.88 USDT (75.5%)</span>
-            <span id="cngnReadout" class="mono text-emerald">cNGN · wARS · USDC ($47.98)</span>
+          <div class="treasury-assets-grid">
+            <div class="treasury-asset-item" id="assetItemUsdt" title="147.88 USDT (75.5%)">
+              <span class="treasury-asset-left">
+                <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                <span class="seg-dot" style="background: var(--foreground);"></span>
+                <span>USDT</span>
+              </span>
+              <span class="treasury-asset-val mono" id="usdtReadout">$147.88</span>
+            </div>
+            <div class="treasury-asset-item" id="assetItemCngn" title="24,815 cNGN ($18.00)">
+              <span class="treasury-asset-left">
+                <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
+                <span class="seg-dot" style="background: #10B981;"></span>
+                <span>cNGN</span>
+              </span>
+              <span class="treasury-asset-val mono" id="cngnReadout">$18.00</span>
+            </div>
+            <div class="treasury-asset-item" id="assetItemWars" title="24,800 wARS ($15.00)">
+              <span class="treasury-asset-left">
+                <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
+                <span class="seg-dot" style="background: #38BDF8;"></span>
+                <span>wARS</span>
+              </span>
+              <span class="treasury-asset-val mono" id="warsReadout">$15.00</span>
+            </div>
+            <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
+              <span class="treasury-asset-left">
+                <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdc.svg" alt="USDC" />
+                <span class="seg-dot" style="background: #6366F1;"></span>
+                <span>USDC</span>
+              </span>
+              <span class="treasury-asset-val mono" id="usdcReadout">$14.98</span>
+            </div>
           </div>
         </div>
 
         <div class="card stagger-item">
-          <div class="card-label">
-            <span>Inventory Skew &amp; Spreads</span>
-            <span class="mono text-muted" id="skewRegimeTag">USDT-Heavy</span>
+          <div>
+            <div class="card-label">
+              <span>Inventory Skew &amp; Spreads</span>
+              <span class="mono text-muted" id="skewRegimeTag">USDT-Heavy</span>
+            </div>
+            <div class="card-value mono" id="skewValue">+0.816</div>
           </div>
-          <div class="card-value mono" id="skewValue">+0.816</div>
-          <div class="card-footer" style="margin-top: 30px;">
+          <div class="card-footer">
             <span>Bid spread: <b class="mono" style="color:var(--foreground);" id="bidSpreadFooter">1 bps</b></span>
             <span>Ask spread: <b class="mono" style="color:var(--foreground);" id="askSpreadFooter">42 bps</b></span>
           </div>
         </div>
 
         <div class="card stagger-item">
-          <div class="card-label">
-            <span>Cross-Venue Arbitrage</span>
-            <span class="badge emerald">Verified</span>
+          <div>
+            <div class="card-label">
+              <span>Cross-Venue Arbitrage</span>
+              <span class="badge emerald">Verified</span>
+            </div>
+            <div class="card-value mono text-emerald">+187.5 bps</div>
           </div>
-          <div class="card-value mono text-emerald">+187.5 bps</div>
-          <div class="card-footer" style="margin-top: 30px;">
+          <div class="card-footer">
             <span>Best: <b style="color:var(--foreground);">wARS/USDT</b> (8s)</span>
             <span class="mono text-emerald">+$0.1986 net</span>
           </div>
@@ -1487,15 +1580,25 @@
       const localUsd = cngnUsd + warsUsd + usdcUsd;
       const totalUsd = STATE.balances.USDT + localUsd;
       const usdtPct = totalUsd > 0 ? (STATE.balances.USDT / totalUsd) * 100 : 100;
-      const localPct = 100 - usdtPct;
+      const cngnPct = totalUsd > 0 ? (cngnUsd / totalUsd) * 100 : 0;
+      const warsPct = totalUsd > 0 ? (warsUsd / totalUsd) * 100 : 0;
+      const usdcPct = totalUsd > 0 ? (usdcUsd / totalUsd) * 100 : 0;
 
       document.getElementById('navValue').textContent = '$' + totalUsd.toFixed(2);
       document.getElementById('barUsdt').style.width = usdtPct.toFixed(1) + '%';
-      document.getElementById('barLocal').style.width = localPct.toFixed(1) + '%';
-      document.getElementById('usdtReadout').textContent = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
-      document.getElementById('cngnReadout').textContent = (warsUsd + usdcUsd > 1.0)
-        ? `cNGN · wARS · USDC ($${localUsd.toFixed(2)})`
-        : `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)})`;
+      document.getElementById('barCngn').style.width = cngnPct.toFixed(1) + '%';
+      document.getElementById('barWars').style.width = warsPct.toFixed(1) + '%';
+      document.getElementById('barUsdc').style.width = usdcPct.toFixed(1) + '%';
+
+      document.getElementById('usdtReadout').textContent = `$${STATE.balances.USDT.toFixed(2)}`;
+      document.getElementById('cngnReadout').textContent = `$${cngnUsd.toFixed(2)}`;
+      document.getElementById('warsReadout').textContent = `$${warsUsd.toFixed(2)}`;
+      document.getElementById('usdcReadout').textContent = `$${usdcUsd.toFixed(2)}`;
+
+      document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
+      document.getElementById('assetItemCngn').title = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)} · ${cngnPct.toFixed(1)}%)`;
+      document.getElementById('assetItemWars').title = `${Math.round(STATE.balances.wARS || 0).toLocaleString('en-US')} wARS ($${warsUsd.toFixed(2)} · ${warsPct.toFixed(1)}%)`;
+      document.getElementById('assetItemUsdc').title = `${(STATE.balances.USDC || 0).toFixed(2)} USDC ($${usdcUsd.toFixed(2)} · ${usdcPct.toFixed(1)}%)`;
 
       const cngnQ = computeQuotes('cNGN');
       document.getElementById('skewValue').textContent = (STATE.skew >= 0 ? '+' : '') + STATE.skew.toFixed(3);
