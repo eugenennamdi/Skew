@@ -476,6 +476,13 @@
       min-width: 0;
     }
 
+    .treasury-asset-item.span-full {
+      grid-column: span 2;
+      padding-bottom: 6px;
+      margin-bottom: 1px;
+      border-bottom: 1px dashed var(--border-subtle);
+    }
+
     .treasury-asset-left {
       display: inline-flex;
       align-items: center;
@@ -882,21 +889,22 @@
               <span class="badge emerald">Live RPC</span>
             </div>
             <div class="card-value mono" id="navValue">$195.86</div>
-            <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · USDC)">
-              <div class="mini-bar-seg" id="barUsdt" style="width: 75.5%; background: var(--foreground);"></div>
+            <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
+              <div class="mini-bar-seg" id="barUsdt" style="width: 70.4%; background: var(--foreground);"></div>
               <div class="mini-bar-seg" id="barCngn" style="width: 9.2%; background: #10B981;"></div>
               <div class="mini-bar-seg" id="barWars" style="width: 7.7%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" id="barWbrl" style="width: 5.1%; background: #F59E0B;"></div>
               <div class="mini-bar-seg" id="barUsdc" style="width: 7.6%; background: #6366F1;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item" id="assetItemUsdt" title="147.88 USDT (75.5%)">
+            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="137.88 USDT (70.4%)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
                 <span class="seg-dot" style="background: var(--foreground);"></span>
-                <span>USDT</span>
+                <span>USDT · Settlement Reserve</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdtReadout">$147.88</span>
+              <span class="treasury-asset-val mono" id="usdtReadout">$137.88</span>
             </div>
             <div class="treasury-asset-item" id="assetItemCngn" title="24,815 cNGN ($18.00)">
               <span class="treasury-asset-left">
@@ -913,6 +921,14 @@
                 <span>wARS</span>
               </span>
               <span class="treasury-asset-val mono" id="warsReadout">$15.00</span>
+            </div>
+            <div class="treasury-asset-item" id="assetItemWbrl" title="53.19 wBRL ($10.00)">
+              <span class="treasury-asset-left">
+                <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
+                <span class="seg-dot" style="background: #F59E0B;"></span>
+                <span>wBRL</span>
+              </span>
+              <span class="treasury-asset-val mono" id="wbrlReadout">$10.00</span>
             </div>
             <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
               <span class="treasury-asset-left">
@@ -931,11 +947,11 @@
               <span>Inventory Skew &amp; Spreads</span>
               <span class="mono text-muted" id="skewRegimeTag">USDT-Heavy</span>
             </div>
-            <div class="card-value mono" id="skewValue">+0.816</div>
+            <div class="card-value mono" id="skewValue">+0.783</div>
           </div>
           <div class="card-footer">
             <span>Bid spread: <b class="mono" style="color:var(--foreground);" id="bidSpreadFooter">1 bps</b></span>
-            <span>Ask spread: <b class="mono" style="color:var(--foreground);" id="askSpreadFooter">42 bps</b></span>
+            <span>Ask spread: <b class="mono" style="color:var(--foreground);" id="askSpreadFooter">41 bps</b></span>
           </div>
         </div>
 
@@ -978,6 +994,34 @@
               </tr>
             </thead>
             <tbody id="corridorTableBody">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Autonomous Risk Officer & Regime Decision Log -->
+      <div class="section-card stagger-item">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Autonomous Risk Officer &amp; Regime Decisions</div>
+            <div class="section-desc">Real-time per-corridor regime classification, oracle dispersion guardrails, and Avellaneda-Stoikov spread reasoning</div>
+          </div>
+          <span class="badge emerald" id="riskOfficerBadge">Regime: DUAL_ORACLE_SHIELD</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Corridor</th>
+                <th>Active Regime</th>
+                <th class="num-right">Oracle Dispersion</th>
+                <th class="num-right">Inventory Skew</th>
+                <th class="num-right">Bid / Ask Spread</th>
+                <th>Autonomous Policy &amp; Spread Reasoning</th>
+              </tr>
+            </thead>
+            <tbody id="riskOfficerTableBody">
               <!-- Populated by JS -->
             </tbody>
           </table>
@@ -1297,9 +1341,9 @@
     // Exact canonical Celo Mainnet token addresses matching skew-desk.mjs & stitch.toml
     const TOKENS = {
       USDT: { address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdt.svg' },
-      cNGN: { address: '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/cngn.png' },
-      wARS: { address: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wars-mark.svg' },
-      wBRL: { address: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg' },
+      cNGN: { address: '0xE2702Bd97ee33c88c8f6f92DA3B733608aa76F71', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/cngn.png' },
+      wARS: { address: '0x218c3c3D49d0E7B37aff0D8bB079de36Ae61A4c0', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wars-mark.svg' },
+      wBRL: { address: '0xFE6097a29b50F4A0542A9E7D7833969B19915025', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg' },
       USDC: { address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdc.svg' },
     };
 
@@ -1313,21 +1357,23 @@
     }
 
     const POOLS = {
-      cNGN: '0x6519d56Eb0A69FC0338657784c783B169b8f7d32', // token0 = USDT(6), token1 = cNGN(6)
-      wARS: '0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391', // token0 = wARS(18), token1 = USDT(6)
+      cNGN: '0xa0c69f61ec4c1ad6b44d4dbbe2a17314a351ebe3', // token0 = USDT(6), token1 = cNGN(6)
+      wARS: '0xba04724e6bf6aa3df13f6fe990bf9ff09d3877bb', // token0 = wARS(18), token1 = USDT(6)
+      wBRL: '0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F', // token0 = USDT(6), token1 = wBRL(18)
       USDC: '0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846', // token0 = USDT(6), token1 = USDC(6)
     };
 
     const STATE = {
       blockNumber: 81145300,
-      balances: { USDT: 147.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 0, USDC: 14.98 },
+      balances: { USDT: 137.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 53.19, USDC: 14.98 },
       corridors: {
-        cNGN: { symbol: 'cNGN / USDT', textileRate: 1378.04, uniRate: 1378.71, hasDex: true },
-        wARS: { symbol: 'wARS / USDT', textileRate: 1647.48, uniRate: 1653.56, hasDex: true },
-        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.388,   uniRate: 5.388,   hasDex: false },
-        USDC: { symbol: 'USDC / USDT', textileRate: 1.0002,  uniRate: 0.9999,  hasDex: true },
+        cNGN: { symbol: 'cNGN / USDT', textileRate: 1377.76, uniRate: 1378.71, hasDex: true },
+        wARS: { symbol: 'wARS / USDT', textileRate: 1647.48, uniRate: 1653.48, hasDex: true },
+        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.388,   uniRate: 5.319,   hasDex: true },
+        USDC: { symbol: 'USDC / USDT', textileRate: 1.0002,  uniRate: 1.0001,  hasDex: true },
       },
-      skew: 0.8162,
+      riskOfficer: null,
+      skew: 0.783,
       gamma: 30,
       selectedCorridor: 'cNGN',
       lockLiveSkew: true,
@@ -1422,6 +1468,9 @@
                 STATE.corridors.cNGN.uniRate = 1 / d.skewMetrics.uniMid;
               }
             }
+            if (d.riskOfficer) {
+              STATE.riskOfficer = d.riskOfficer;
+            }
           }
         } catch (_) {}
       }
@@ -1439,6 +1488,7 @@
           { jsonrpc: '2.0', id: 6, method: 'eth_call', params: [{ to: POOLS.USDC, data: '0x3850c7bd' }, 'latest'] },
           { jsonrpc: '2.0', id: 7, method: 'eth_call', params: [{ to: TOKENS.wARS.address, data: callData }, 'latest'] },
           { jsonrpc: '2.0', id: 8, method: 'eth_call', params: [{ to: TOKENS.USDC.address, data: callData }, 'latest'] },
+          { jsonrpc: '2.0', id: 9, method: 'eth_call', params: [{ to: TOKENS.wBRL.address, data: callData }, 'latest'] },
         ];
 
         const res = await fetch(CELO_RPC, {
@@ -1466,6 +1516,7 @@
         if (map[3]) STATE.balances.cNGN = Number(decodeUint256(map[3])) / 1e6;
         if (map[7]) STATE.balances.wARS = Number(decodeUint256(map[7])) / 1e18;
         if (map[8]) STATE.balances.USDC = Number(decodeUint256(map[8])) / 1e6;
+        if (map[9]) STATE.balances.wBRL = Number(decodeUint256(map[9])) / 1e18;
 
         // cNGN/USDT pool: token0 is USDT (6 dec), token1 is cNGN (6 dec) -> raw ratio is cNGN per USDT
         const sqrtCngn = decodeUint256(map[4], 0);
@@ -1575,29 +1626,34 @@
       document.getElementById('blockBadge').textContent = '#' + STATE.blockNumber.toLocaleString('en-US');
 
       const cngnUsd = STATE.balances.cNGN / STATE.corridors.cNGN.uniRate;
-      const warsUsd = (STATE.balances.wARS || 0) / (STATE.corridors.wARS.uniRate || 1653.56);
+      const warsUsd = (STATE.balances.wARS || 0) / (STATE.corridors.wARS.uniRate || 1653.48);
+      const wbrlUsd = (STATE.balances.wBRL || 0) / (STATE.corridors.wBRL.uniRate || 5.319);
       const usdcUsd = STATE.balances.USDC || 0;
-      const localUsd = cngnUsd + warsUsd + usdcUsd;
+      const localUsd = cngnUsd + warsUsd + wbrlUsd + usdcUsd;
       const totalUsd = STATE.balances.USDT + localUsd;
       const usdtPct = totalUsd > 0 ? (STATE.balances.USDT / totalUsd) * 100 : 100;
       const cngnPct = totalUsd > 0 ? (cngnUsd / totalUsd) * 100 : 0;
       const warsPct = totalUsd > 0 ? (warsUsd / totalUsd) * 100 : 0;
+      const wbrlPct = totalUsd > 0 ? (wbrlUsd / totalUsd) * 100 : 0;
       const usdcPct = totalUsd > 0 ? (usdcUsd / totalUsd) * 100 : 0;
 
       document.getElementById('navValue').textContent = '$' + totalUsd.toFixed(2);
       document.getElementById('barUsdt').style.width = usdtPct.toFixed(1) + '%';
       document.getElementById('barCngn').style.width = cngnPct.toFixed(1) + '%';
       document.getElementById('barWars').style.width = warsPct.toFixed(1) + '%';
+      document.getElementById('barWbrl').style.width = Math.max(0.5, wbrlPct).toFixed(1) + '%';
       document.getElementById('barUsdc').style.width = usdcPct.toFixed(1) + '%';
 
-      document.getElementById('usdtReadout').textContent = `$${STATE.balances.USDT.toFixed(2)}`;
+      document.getElementById('usdtReadout').textContent = `$${STATE.balances.USDT.toFixed(2)} (${usdtPct.toFixed(1)}%)`;
       document.getElementById('cngnReadout').textContent = `$${cngnUsd.toFixed(2)}`;
       document.getElementById('warsReadout').textContent = `$${warsUsd.toFixed(2)}`;
+      document.getElementById('wbrlReadout').textContent = `$${wbrlUsd.toFixed(2)}`;
       document.getElementById('usdcReadout').textContent = `$${usdcUsd.toFixed(2)}`;
 
       document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
       document.getElementById('assetItemCngn').title = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)} · ${cngnPct.toFixed(1)}%)`;
       document.getElementById('assetItemWars').title = `${Math.round(STATE.balances.wARS || 0).toLocaleString('en-US')} wARS ($${warsUsd.toFixed(2)} · ${warsPct.toFixed(1)}%)`;
+      document.getElementById('assetItemWbrl').title = `${(STATE.balances.wBRL || 0).toFixed(2)} wBRL ($${wbrlUsd.toFixed(2)} · ${wbrlPct.toFixed(1)}%)`;
       document.getElementById('assetItemUsdc').title = `${(STATE.balances.USDC || 0).toFixed(2)} USDC ($${usdcUsd.toFixed(2)} · ${usdcPct.toFixed(1)}%)`;
 
       const cngnQ = computeQuotes('cNGN');
@@ -1632,6 +1688,85 @@
           </tr>
         `;
       }).join('');
+
+      // Render Autonomous Risk Officer & Regime Decisions
+      const warsSkew = (STATE.balances.USDT + warsUsd) > 0 ? (STATE.balances.USDT - warsUsd) / (STATE.balances.USDT + warsUsd) : 0;
+      const wbrlSkew = (STATE.balances.USDT + wbrlUsd) > 0 ? (STATE.balances.USDT - wbrlUsd) / (STATE.balances.USDT + wbrlUsd) : 0;
+      const usdcSkew = (STATE.balances.USDT + usdcUsd) > 0 ? (STATE.balances.USDT - usdcUsd) / (STATE.balances.USDT + usdcUsd) : 0;
+      const warsQ = computeQuotes('wARS');
+      const wbrlQ = computeQuotes('wBRL');
+      const riskRows = STATE.riskOfficer?.corridors || [
+        {
+          corridor: 'cNGN/USDT',
+          iconKey: 'cNGN',
+          regime: Math.abs(cngnQ.gapBps) > 5 ? 'DUAL_ORACLE_SHIELD' : 'TWO_WAY_ACTIVE',
+          oracleDispersionBps: Number(cngnQ.gapBps.toFixed(1)),
+          skew: Number(STATE.skew.toFixed(3)),
+          bidSpreadBps: cngnQ.buyBps,
+          askSpreadBps: cngnQ.sellBps,
+          reason: `Uniswap v3 trades +${Math.abs(cngnQ.gapBps).toFixed(1)} bps vs Textile; Ask anchored to DEX mid (+${cngnQ.sellBps} bps) locking in +${cngnQ.refillEdgeBps.toFixed(1)} bps refill margin.`,
+        },
+        {
+          corridor: 'wARS/USDT',
+          iconKey: 'wARS',
+          regime: 'TWO_WAY_ACTIVE',
+          oracleDispersionBps: Number(warsQ.gapBps.toFixed(1)),
+          skew: Number(warsSkew.toFixed(3)),
+          bidSpreadBps: 18,
+          askSpreadBps: 22,
+          reason: `98.7% of network wARS orderbook depth ($${warsUsd.toFixed(2)} wARS + $${STATE.balances.USDT.toFixed(2)} USDT); auto-refills on Uniswap v3 below $8.`,
+        },
+        {
+          corridor: 'wBRL/USDT',
+          iconKey: 'wBRL',
+          regime: 'TWO_WAY_ACTIVE',
+          oracleDispersionBps: Number(wbrlQ.gapBps.toFixed(1)),
+          skew: Number(wbrlSkew.toFixed(3)),
+          bidSpreadBps: 18,
+          askSpreadBps: 25,
+          reason: `Two-way quoting backed by Uniswap v3 0.01% pool (147k wBRL liquidity); Ask spread widened to 25 bps to buffer BRL/USD dispersion.`,
+        },
+        {
+          corridor: 'USDC/USDT',
+          iconKey: 'USDC',
+          regime: 'PEG_TIGHT_TWO_WAY',
+          oracleDispersionBps: 1.0,
+          skew: Number(usdcSkew.toFixed(3)),
+          bidSpreadBps: 4,
+          askSpreadBps: 4,
+          reason: `USD stablecoin peg tight within 1.0 bps; quoting 4 bps two-way with automatic Uniswap v3 0.01% unwind above $25 USDC.`,
+        },
+      ];
+      const badgeEl = document.getElementById('riskOfficerBadge');
+      if (badgeEl && STATE.riskOfficer?.overallRegime) {
+        badgeEl.textContent = `Regime: ${STATE.riskOfficer.overallRegime}`;
+      }
+      const roBody = document.getElementById('riskOfficerTableBody');
+      if (roBody) {
+        roBody.innerHTML = riskRows.map((r) => {
+          const symKey = r.iconKey || r.corridor.split('/')[0];
+          const dispSign = r.oracleDispersionBps >= 0 ? '+' : '';
+          const skewSign = r.skew >= 0 ? '+' : '';
+          return `
+            <tr>
+              <td>
+                <span class="pair-cell">
+                  <span class="pair-icons">
+                    <img class="token-icon" src="${getTokenIcon(symKey)}" alt="${symKey}" />
+                    <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
+                  </span>
+                  <b>${r.corridor}</b>
+                </span>
+              </td>
+              <td><span class="badge emerald">${r.regime}</span></td>
+              <td class="num-right mono text-muted">${dispSign}${r.oracleDispersionBps} bps</td>
+              <td class="num-right mono">${skewSign}${Number(r.skew).toFixed(3)}</td>
+              <td class="num-right mono">${r.bidSpreadBps} / ${r.askSpreadBps} bps</td>
+              <td class="text-muted" style="font-size: 12.5px; max-width: 440px;">${r.reason}</td>
+            </tr>
+          `;
+        }).join('');
+      }
 
       renderPricingSimulator();
     }

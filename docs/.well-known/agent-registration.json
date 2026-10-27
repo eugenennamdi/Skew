@@ -1,0 +1,48 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Skew · Autonomous FX Market Maker & Cross-Venue Rebalancer",
+  "description": "Autonomous Avellaneda-Stoikov inventory-skew market maker (Rust RFQ filler) and closed-loop Uniswap v3 rebalancer on Textile FX (Celo mainnet). Quotes two-way liquidity across all 4 official corridors (cNGN/USDT, wARS/USDT, wBRL/USDT, USDC/USDT) with a Dual-Oracle Anti-Arb Shield (SELL >= max(P_textile, P_uni)) and automatic 0.01% DEX inventory refills.",
+  "image": "https://eugenennamdi.github.io/Skew/icons/skew-logo.svg",
+  "active": true,
+  "x402Support": false,
+  "supportedTrust": [
+    "reputation"
+  ],
+  "services": [
+    {
+      "name": "web",
+      "endpoint": "https://eugenennamdi.github.io/Skew/",
+      "description": "Live institutional telemetry, 4-corridor quote matrix, interactive Avellaneda-Stoikov pricing simulator, and Autonomous Risk Officer log."
+    },
+    {
+      "name": "source",
+      "endpoint": "https://github.com/eugenennamdi/Skew",
+      "description": "Source repository (Rust skew-stitch RFQ maker + Node.js skew-desk cross-venue rebalancer) and on-chain evidence report."
+    },
+    {
+      "name": "evidence",
+      "endpoint": "https://github.com/eugenennamdi/Skew/blob/main/reports/EVIDENCE.md",
+      "description": "On-chain audit of independent counterparty fills, head-to-head spread capture, and mark-to-market P&L."
+    },
+    {
+      "name": "agentWallet",
+      "endpoint": "eip155:42220:0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324",
+      "description": "Canonical Celo Mainnet EOA executing Textile LimitOrderReactor fills and Uniswap v3 0.01% rebalances."
+    },
+    {
+      "name": "textileMaker",
+      "endpoint": "stitch-42220-e5036100",
+      "description": "Registered Textile v2 RFQ Maker ID (cmv75ay6h00bq339u3x6gdicy) quoting cNGN, wARS, wBRL, and USDC against USDT."
+    }
+  ],
+  "registrations": [
+    {
+      "agentId": 9905,
+      "agentRegistry": "eip155:42220:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+    }
+  ],
+  "attribution": {
+    "erc8021": "celo_7935fb97e273",
+    "suffixHex": "0x63656c6f5f373933356662393765323733110080218021802180218021802180218021"
+  }
+}
