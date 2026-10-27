@@ -36,6 +36,7 @@ export const CONFIG = {
   erc8021SuffixHex: '63656c6f5f373933356662393765323733110080218021802180218021802180218021',
   contracts: {
     usdt: addr('0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'),
+    celo: addr('0x471EcE3750Da237f93B8E339c536989b8978a438'),
     reactor: addr('0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3'),
     permit2: addr('0x000000000022D473030F116dDEE9F6B43aC78BA3'),
     uniQuoterV2: addr('0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8'),
@@ -148,6 +149,14 @@ const wallet = privKey ? new ethers.Wallet(privKey, provider) : null;
 export async function sendTagged(txReq) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
   const tagged = { ...txReq, data: appendErc8021Suffix(txReq.data || '0x') };
+  if (!tagged.gasPrice && !tagged.maxFeePerGas) {
+    const fd = await provider.getFeeData().catch(() => null);
+    if (fd?.gasPrice) tagged.gasPrice = fd.gasPrice;
+  }
+  if (!tagged.gasLimit) {
+    const est = await provider.estimateGas({ ...tagged, from: wallet.address }).catch(() => 200000n);
+    tagged.gasLimit = (est * 125n) / 100n;
+  }
   const resp = await wallet.sendTransaction(tagged);
   const receipt = await resp.wait();
   return receipt;
@@ -755,8 +764,43 @@ async function seedInventoryViaTextile(tokenOut, amountUsdtRaw, corridor, sizeUs
   return rec;
 }
 
-async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, uniCngnMid, uniWarsMid }) {
+async function unwindViaTextile(tokenIn, amountTokenRaw, corridor, sizeUsdt) {
   if (!wallet) return null;
+  await ensureAllowance(tokenIn, CONFIG.contracts.reactor, amountTokenRaw);
+  const q = await textileRequestQuote(tokenIn, CONFIG.contracts.usdt, amountTokenRaw.toString());
+  const toAddr = q?.transactions?.swap?.to;
+  const calldata = q?.transactions?.swap?.data;
+  if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) return null;
+  if (isSelfMakerOrder(calldata)) return null;
+  const r = await sendTagged({ to: toAddr, data: calldata });
+  await textileSubmitTx(q.rfqId, q.claimToken, r.hash).catch(() => {});
+  const outUsdt = Number(q?.quote?.buyAmount || 0) / 1e6 || sizeUsdt;
+  const rec = {
+    timestamp: new Date().toISOString(),
+    type: 'AUTO_TREASURY_UNWIND_TEXTILE',
+    corridor,
+    direction: 'textile_rfq_unwind',
+    sizeUsdt: outUsdt,
+    edgeUsd: 0,
+    edgeBps: 0,
+    txHash1: r.hash,
+    txHash2: r.hash,
+    attributionTag: CONFIG.attributionTag,
+  };
+  fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+  console.log(`[TREASURY] AUTO_TREASURY_UNWIND_TEXTILE on ${corridor} ($${outUsdt.toFixed(2)}) -> tx ${r.hash}`);
+  return rec;
+}
+
+async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, celo = 0, uniCngnMid, uniWarsMid }) {
+  if (!wallet) return null;
+
+  // 0. AUTO-GAS REFILL: Keep CELO gas reserve >= 3.0 CELO by swapping $2.00 USDT -> ~24.2 CELO on Uniswap v3 0.01%
+  if (celo < 3.0 && usdt >= 2.0) {
+    const gasInRaw = ethers.parseUnits('2.0', 6);
+    return swapOnUniswap(CONFIG.contracts.usdt, CONFIG.contracts.celo, gasInRaw, 'AUTO_GAS_REFILL', 'CELO/USDT', 2.0, 0);
+  }
+
   await ensurePermit2ForAllCorridors();
   await ensureErc8004Metadata();
 
@@ -770,7 +814,14 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, u
   const wbrlUsd = wbrl / 5.319;
   const usdcUsd = usdc;
 
-  // 1. AUTO-UNWIND EXCESS MAKER/TAKER FILLS TO USDT ON UNISWAP V3 (Keeping $18 cNGN, $15 wARS, $10 wBRL, $15 USDC Maker reserves)
+  // 1. AUTO-UNWIND EXCESS MAKER/TAKER FILLS TO USDT (Keeping $18 cNGN, $15 wARS, $10-$35 wBRL, $15 USDC Maker reserves)
+  if (wbrlUsd > 35.0 && usdt < 55.0) {
+    const unwindUsd = Math.min(wbrlUsd - 15.0, 30.0);
+    const sellWbrlRaw = ethers.parseUnits(Math.floor(unwindUsd * 5.319).toString(), 18);
+    const uniUnwind = await swapOnUniswap(wbrlAddr, CONFIG.contracts.usdt, sellWbrlRaw, 'AUTO_TREASURY_UNWIND', 'wBRL/USDT', unwindUsd, 15.0);
+    if (uniUnwind) return uniUnwind;
+    return unwindViaTextile(wbrlAddr, sellWbrlRaw, 'wBRL/USDT', unwindUsd);
+  }
   if (warsUsd > 22.0) {
     const excessUsd = warsUsd - 15.0;
     const sellWarsRaw = ethers.parseUnits(Math.floor(excessUsd / uniWarsMid).toString(), 18);
@@ -959,7 +1010,7 @@ export async function runSingleScan() {
     console.log(
       `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) edge=$${bestRow.edgeUsd.toFixed(4)} [${bestRow.status}]` : 'none'}`
     );
-    if (top && CONFIG.liveTrading && wallet) {
+    if (top && CONFIG.liveTrading && wallet && celo >= 0.15) {
       try {
         const execRec = await executeOpportunity(top);
         if (execRec) STATE.arbExecutions.unshift(execRec);
@@ -968,10 +1019,10 @@ export async function runSingleScan() {
       }
     }
 
-    // Autonomous multi-currency treasury management (Two-way Maker-to-DEX unwind & refill across cNGN, wARS, wBRL, USDC)
+    // Autonomous multi-currency treasury management (Two-way Maker-to-DEX unwind & refill across cNGN, wARS, wBRL, USDC + CELO gas reserve)
     if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet) {
       try {
-        const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, wbrl, usdc, uniCngnMid, uniWarsMid });
+        const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, wbrl, usdc, celo, uniCngnMid, uniWarsMid });
         if (treasuryRec) STATE.arbExecutions.unshift(treasuryRec);
       } catch (err) {
         console.error(`[TREASURY-ERR] ${err.message}`);
