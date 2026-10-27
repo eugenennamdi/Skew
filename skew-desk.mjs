@@ -722,6 +722,33 @@ async function swapOnUniswap(tokenIn, tokenOut, amountInRaw, label, corridor, si
   return rec;
 }
 
+async function seedInventoryViaTextile(tokenOut, amountUsdtRaw, corridor, sizeUsdt) {
+  if (!wallet) return null;
+  await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.reactor, amountUsdtRaw);
+  const q = await textileRequestQuote(CONFIG.contracts.usdt, tokenOut, amountUsdtRaw.toString());
+  const toAddr = q?.transactions?.swap?.to;
+  const calldata = q?.transactions?.swap?.data;
+  if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) return null;
+  if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) return null;
+  const r = await sendTagged({ to: toAddr, data: calldata });
+  await textileSubmitTx(q.rfqId, q.claimToken, r.hash).catch(() => {});
+  const rec = {
+    timestamp: new Date().toISOString(),
+    type: 'AUTO_INVENTORY_REFILL_TEXTILE',
+    corridor,
+    direction: 'textile_rfq_seed',
+    sizeUsdt,
+    edgeUsd: 0,
+    edgeBps: 0,
+    txHash1: r.hash,
+    txHash2: r.hash,
+    attributionTag: CONFIG.attributionTag,
+  };
+  fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+  console.log(`[TREASURY] AUTO_INVENTORY_REFILL_TEXTILE on ${corridor} ($${sizeUsdt.toFixed(2)}) -> tx ${r.hash}`);
+  return rec;
+}
+
 async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, uniCngnMid, uniWarsMid }) {
   if (!wallet) return null;
   await ensurePermit2ForAllCorridors();
@@ -773,7 +800,9 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, u
   if (wbrlUsd < 6.0 && usdt >= 40.0) {
     const buyUsd = Math.min(10.0 - wbrlUsd, 10.0);
     const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
-    return swapOnUniswap(CONFIG.contracts.usdt, wbrlAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wBRL/USDT', buyUsd, 15.0);
+    const uniSeed = await swapOnUniswap(CONFIG.contracts.usdt, wbrlAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wBRL/USDT', buyUsd, 15.0);
+    if (uniSeed) return uniSeed;
+    return seedInventoryViaTextile(wbrlAddr, amountInRaw, 'wBRL/USDT', buyUsd);
   }
   return null;
 }
