@@ -36,6 +36,32 @@ if [ -z "${STITCH_PRIVATE_KEY:-}" ]; then
   fi
 fi
 
+# Recover STITCH_PRIVATE_KEY from any already-running skew-stitch / skew-desk daemon or bash_history and persist to textile-stitch/stitch.env
+if [ -z "${STITCH_PRIVATE_KEY:-}" ]; then
+  for PID in $(pgrep -f "skew-stitch|skew-desk" 2>/dev/null || true); do
+    if sudo test -r "/proc/$PID/environ"; then
+      FOUND_PK=$(sudo tr '\0' '\n' < "/proc/$PID/environ" | grep '^STITCH_PRIVATE_KEY=' | cut -d= -f2- || true)
+      if [ -n "$FOUND_PK" ]; then
+        export STITCH_PRIVATE_KEY="$FOUND_PK"
+        echo "STITCH_PRIVATE_KEY='$FOUND_PK'" >> textile-stitch/stitch.env
+        chmod 600 textile-stitch/stitch.env
+        echo "[+] Recovered STITCH_PRIVATE_KEY from running daemon (PID $PID) and persisted to textile-stitch/stitch.env"
+        break
+      fi
+    fi
+  done
+fi
+
+if [ -z "${STITCH_PRIVATE_KEY:-}" ] && [ -f "$HOME/.bash_history" ]; then
+  FOUND_PK=$(grep -Eo 'STITCH_PRIVATE_KEY=["'\'']?0x[0-9a-fA-F]{64}' "$HOME/.bash_history" | tail -n 1 | grep -Eo '0x[0-9a-fA-F]{64}' || true)
+  if [ -n "$FOUND_PK" ]; then
+    export STITCH_PRIVATE_KEY="$FOUND_PK"
+    echo "STITCH_PRIVATE_KEY='$FOUND_PK'" >> textile-stitch/stitch.env
+    chmod 600 textile-stitch/stitch.env
+    echo "[+] Recovered STITCH_PRIVATE_KEY from bash_history and persisted to textile-stitch/stitch.env"
+  fi
+fi
+
 if [ -z "${STITCH_PRIVATE_KEY:-}" ]; then
   echo "[!] Please export STITCH_PRIVATE_KEY before running:"
   echo "    export STITCH_PRIVATE_KEY=\"0xYOUR_PRIVATE_KEY\""
