@@ -840,7 +840,7 @@ if (process.argv.includes('--check')) {
   if (sim.effectiveSellMid < sim.uniMid) {
     throw new Error('Dual-oracle anti-arb shield failed: effectiveSellMid < uniMid');
   }
-  if (!renderDashboardHtml().includes('SKEW')) {
+  if (!renderDashboardHtml().includes('Skew')) {
     throw new Error('Dashboard HTML check failed');
   }
   await loadOnChainHistory();

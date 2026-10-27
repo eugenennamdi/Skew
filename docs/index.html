@@ -825,14 +825,14 @@
             <span>Treasury Value</span>
             <span class="badge emerald">Live RPC</span>
           </div>
-          <div class="card-value mono" id="navValue">$195.37</div>
+          <div class="card-value mono" id="navValue">$195.88</div>
           <div class="mini-bar" title="USDT vs Local FX allocation">
-            <div class="mini-bar-seg" id="barUsdt" style="width: 90.5%; background: var(--foreground);"></div>
-            <div class="mini-bar-seg" id="barLocal" style="width: 9.5%; background: var(--emerald);"></div>
+            <div class="mini-bar-seg" id="barUsdt" style="width: 90.8%; background: var(--foreground);"></div>
+            <div class="mini-bar-seg" id="barLocal" style="width: 9.2%; background: var(--emerald);"></div>
           </div>
           <div class="card-footer">
-            <span id="usdtReadout" class="mono">176.86 USDT (90.5%)</span>
-            <span id="cngnReadout" class="mono text-emerald">25,520 cNGN ($18.51)</span>
+            <span id="usdtReadout" class="mono">177.88 USDT (90.8%)</span>
+            <span id="cngnReadout" class="mono text-emerald">24,815 cNGN ($18.00)</span>
           </div>
         </div>
 
@@ -841,7 +841,7 @@
             <span>Inventory Skew &amp; Spreads</span>
             <span class="mono text-muted" id="skewRegimeTag">USDT-Heavy</span>
           </div>
-          <div class="card-value mono" id="skewValue">+0.810</div>
+          <div class="card-value mono" id="skewValue">+0.816</div>
           <div class="card-footer" style="margin-top: 30px;">
             <span>Bid spread: <b class="mono" style="color:var(--foreground);" id="bidSpreadFooter">1 bps</b></span>
             <span>Ask spread: <b class="mono" style="color:var(--foreground);" id="askSpreadFooter">42 bps</b></span>
@@ -914,6 +914,44 @@
             </thead>
             <tbody>
               <tr>
+                <td><span class="badge emerald">Maker → DEX Refill</span></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>cNGN / USDT</b>
+                  </span>
+                </td>
+                <td class="text-muted">Shielded Maker Fill → Uniswap v3 Refill</td>
+                <td class="num-right mono">18.06 ← 17.99 USDT <span class="text-subtle">(24,799 cNGN)</span></td>
+                <td class="num-right mono text-emerald">+41.1 bps (+$0.0740)</td>
+                <td class="num-right mono">
+                  <a class="link-subtle" href="https://celoscan.io/tx/0x51b956998cde49e9b799573de2775279081225b0ec3fe370710579616e45fca4" target="_blank">Fill ↗</a> ·
+                  <a class="link-subtle" href="https://celoscan.io/tx/0x28d4e71468195aae4a1275a32dc935b2936e94864838267c3ecac3e8b436c6d5" target="_blank">Refill ↗</a>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge emerald">Maker → DEX Refill</span></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>cNGN / USDT</b>
+                  </span>
+                </td>
+                <td class="text-muted">Shielded Maker Fill → Uniswap v3 Refill</td>
+                <td class="num-right mono">18.07 ← 18.00 USDT <span class="text-subtle">(24,811 cNGN)</span></td>
+                <td class="num-right mono text-emerald">+41.1 bps (+$0.0740)</td>
+                <td class="num-right mono">
+                  <a class="link-subtle" href="https://celoscan.io/tx/0x83037bbef5572efa61bd60bccb9dd61130ccd88fa715b41ea1d0312541390400" target="_blank">Fill ↗</a> ·
+                  <a class="link-subtle" href="https://celoscan.io/tx/0x28269876309cf739400af88f4dde7ead65dc70057143fcaaee22b6f3ba5dc47a" target="_blank">Refill ↗</a>
+                </td>
+              </tr>
+              <tr>
                 <td><span class="badge emerald">Cross-Venue Arb</span></td>
                 <td>
                   <span class="pair-cell">
@@ -967,24 +1005,6 @@
                 <td class="num-right mono text-emerald">+12.1 bps (+$0.0133)</td>
                 <td class="num-right mono">
                   <a class="link-subtle" href="https://celoscan.io/tx/0x1e18cfab4af41bd9d88c41f4814efd8439ea62b271aa5964c139f3a3d18d11d0" target="_blank">0x1e18...11d0 ↗</a>
-                </td>
-              </tr>
-              <tr>
-                <td><span class="badge">Inventory Refill</span></td>
-                <td>
-                  <span class="pair-cell">
-                    <span class="pair-icons">
-                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
-                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
-                    </span>
-                    <b>cNGN / USDT</b>
-                  </span>
-                </td>
-                <td class="text-muted">Uniswap v3 0.01% → Maker Reserve</td>
-                <td class="num-right mono">15.00 USDT → 20,679 cNGN</td>
-                <td class="num-right mono text-emerald">+59.0 bps vs Ask</td>
-                <td class="num-right mono">
-                  <a class="link-subtle" href="https://celoscan.io/tx/0x9fc2a2ce612333818b989d68b96763fc93ba43318b9d501d5c5cb73c563a19b2" target="_blank">0x9fc2...19b2 ↗</a>
                 </td>
               </tr>
             </tbody>
@@ -1206,15 +1226,15 @@
     };
 
     const STATE = {
-      blockNumber: 63932150,
-      balances: { USDT: 176.86, cNGN: 25519.81, wARS: 0, wBRL: 0, USDC: 0 },
+      blockNumber: 81145000,
+      balances: { USDT: 177.88, cNGN: 24814.62, wARS: 0, wBRL: 0, USDC: 0 },
       corridors: {
-        cNGN: { symbol: 'cNGN / USDT', textileRate: 1381.70, uniRate: 1378.71, hasDex: true },
-        wARS: { symbol: 'wARS / USDT', textileRate: 1445.08, uniRate: 1641.64, hasDex: true },
-        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.168,   uniRate: 5.168,   hasDex: false },
+        cNGN: { symbol: 'cNGN / USDT', textileRate: 1378.04, uniRate: 1378.71, hasDex: true },
+        wARS: { symbol: 'wARS / USDT', textileRate: 1445.08, uniRate: 1653.56, hasDex: true },
+        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.384,   uniRate: 5.384,   hasDex: false },
         USDC: { symbol: 'USDC / USDT', textileRate: 1.0002,  uniRate: 0.9999,  hasDex: true },
       },
-      skew: 0.8105,
+      skew: 0.8162,
       gamma: 30,
       selectedCorridor: 'cNGN',
       lockLiveSkew: true,
