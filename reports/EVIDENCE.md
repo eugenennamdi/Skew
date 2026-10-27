@@ -2,7 +2,7 @@
 
 - **Agent Name**: **Skew — Autonomous Inventory-Skew FX Market Maker & Cross-Venue Arbitrageur**
 - **Track**: **Open Corridors: Textile FX** (`cNGN`, `wARS`, `wBRL`, `USDC` vs `USDT` on Celo Mainnet `42220`)
-- **ERC-8004 Identity**: **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432)
+- **ERC-8004 Identity**: **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) (Mint: [`0x2a7659bf...8451`](https://celoscan.io/tx/0x2a7659bf72cd2c68295c488f7937d9bd2e6126f4155972d6be86dbbe01338451) · `eip-8004#registration-v1` `setAgentURI` Upgrade: [`0x9019d6c7...3b50`](https://celoscan.io/tx/0x9019d6c71cfd1b73657afa9086892fdff9daddb5eb428e3be98d4059c0ad3b50))
 - **ERC-8021 Attribution Suffix**: `celo_7935fb97e273` (`35-byte` suffix `0x63656c6f5f373933356662393765323733110080218021802180218021802180218021`)
 - **Agent EOA Wallet (Maker & Taker)**: [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)
 - **Textile Stitch Maker ID**: `cmv75ay6h00bq339u3x6gdicy` (`stitch-42220-e5036100`)
@@ -56,13 +56,16 @@ Every row below is an on-chain `LimitOrderReactor` settlement where an **indepen
 
 ---
 
-## 4. Live Network Orderbook Share & 5-Asset Treasury Allocation
+## 4. Live Network Orderbook Share & Autonomous Risk Officer Guardrails
 
-Our Stitch Maker (`cmv75ay6h00bq339u3x6gdicy`) and `skew-desk.mjs` autonomous treasury manager maintain active inventory across all **5 Celo FX tokens (`USDT`, `cNGN`, `wARS`, `wBRL`, `USDC`)** and all **4 official Textile corridors**:
+Our Stitch Maker (`cmv75ay6h00bq339u3x6gdicy`) and `skew-desk.mjs` autonomous treasury manager maintain active coverage across all **4 official Textile corridors (`cNGN`, `wARS`, `wBRL`, `USDC` vs `USDT`)**:
 
-| Corridor | Token Contract | Uniswap v3 `0.01%` Pool | Our Active Reserve | Network Orderbook Share | Live RFQ Preview Status |
+| Corridor | Token Contract | Uniswap v3 `0.01%` Pool | Our Active Reserve | Network Orderbook Share | Active Risk Officer Regime |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **`cNGN / USDT`** | `0xE2702Bd97ee33c88c8f6f92DA3B733608aa76F71` | `0xa0c69f61ec4c1ad6b44d4dbbe2a17314a351ebe3` | `24,815 cNGN` (`$18.00`) + `USDT` | **`97.9%` of network `cNGN`** | **`200 OK` (`BUY` & `SELL` seated)** |
-| **`wARS / USDT`** | `0x218c3c3D49d0E7B37aff0D8bB079de36Ae61A4c0` | `0xba04724e6bf6aa3df13f6fe990bf9ff09d3877bb` | `24,800 wARS` (`$15.00`) + `USDT` | **`98.7%` of network `wARS`** | **`200 OK` (`BUY` & `SELL` seated)** |
-| **`wBRL / USDT`** | `0xFE6097a29b50F4A0542A9E7D7833969B19915025` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` | `~53.19 wBRL` (`$10.00`) + `USDT` | **`100%` of network `wBRL`** | **`200 OK` (`BUY` & `SELL` seated)** |
-| **`USDC / USDT`** | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `14.98 USDC` (`$14.98`) + `USDT` | **Active two-way (`4 bps`)** | **`200 OK` (`BUY` & `SELL` seated)** |
+| **`cNGN / USDT`** | `0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f` | `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` | `24,815 cNGN` (`$18.00`) + `147.88 USDT` | **`97.9%` of network `cNGN`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
+| **`wARS / USDT`** | `0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D` | `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391` | `24,800 wARS` (`$15.00`) + `147.88 USDT` | **`98.7%` of network `wARS`** | **`DUAL_ORACLE_SHIELD` (`200 OK` Two-Way)** |
+| **`wBRL / USDT`** | `0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` | `147.88 USDT` (`BUY wBRL` @ `1 bps`) | **Seated (`Permit2` Approved)** | **`GAS_SHIELD_BUY_ACTIVE` (`800k` Gas Guard)** |
+| **`USDC / USDT`** | `0xcebA9300f2b948710d2653dD7B07f33A8B32118C` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `14.98 USDC` (`$14.98`) + `147.88 USDT` | **Active two-way (`2/8 bps`)** | **`PEG_TIGHT_TWO_WAY` (`200 OK` Two-Way)** |
+
+> **`wBRL/USDT` `MAX_TICK` (`887,271`) Gas-Griefing Protection (`skew-desk.mjs` line 195)**:
+> On Celo Mainnet, the `wBRL/USDT` `0.01%` Uniswap v3 pool (`0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F`) was initialized at `slot0.tick = 887,271` (`MAX_TICK - 1`), causing any DEX swap to traverse `2,350` empty `TickBitmap` words (`17,039,337 gas` = `~3.45 CELO` per swap). Our Risk Officer inspects `QuoterV2.quoteExactInputSingle`'s `gasEstimate` and autonomously blocks DEX swaps exceeding `800,000 gas` while keeping `1 bps` `BUY wBRL` quotes live on Textile backed by `147.88 USDT`.

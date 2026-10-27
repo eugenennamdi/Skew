@@ -922,13 +922,13 @@
               </span>
               <span class="treasury-asset-val mono" id="warsReadout">$15.00</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWbrl" title="53.19 wBRL ($10.00)">
+            <div class="treasury-asset-item" id="assetItemWbrl" title="BUY @ 1 bps (USDT-backed · DEX 17M-gas TickBitmap shield active)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
                 <span class="seg-dot" style="background: #F59E0B;"></span>
                 <span>wBRL</span>
               </span>
-              <span class="treasury-asset-val mono" id="wbrlReadout">$10.00</span>
+              <span class="treasury-asset-val mono text-emerald" id="wbrlReadout">BUY 1 bps</span>
             </div>
             <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
               <span class="treasury-asset-left">
@@ -1341,9 +1341,9 @@
     // Exact canonical Celo Mainnet token addresses matching skew-desk.mjs & stitch.toml
     const TOKENS = {
       USDT: { address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdt.svg' },
-      cNGN: { address: '0xE2702Bd97ee33c88c8f6f92DA3B733608aa76F71', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/cngn.png' },
-      wARS: { address: '0x218c3c3D49d0E7B37aff0D8bB079de36Ae61A4c0', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wars-mark.svg' },
-      wBRL: { address: '0xFE6097a29b50F4A0542A9E7D7833969B19915025', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg' },
+      cNGN: { address: '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/cngn.png' },
+      wARS: { address: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wars-mark.svg' },
+      wBRL: { address: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0', decimals: 18, icon: 'https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg' },
       USDC: { address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, icon: 'https://app.textilecredit.com/images/tokenIcons/usdc.svg' },
     };
 
@@ -1357,15 +1357,15 @@
     }
 
     const POOLS = {
-      cNGN: '0xa0c69f61ec4c1ad6b44d4dbbe2a17314a351ebe3', // token0 = USDT(6), token1 = cNGN(6)
-      wARS: '0xba04724e6bf6aa3df13f6fe990bf9ff09d3877bb', // token0 = wARS(18), token1 = USDT(6)
-      wBRL: '0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F', // token0 = USDT(6), token1 = wBRL(18)
+      cNGN: '0x6519d56Eb0A69FC0338657784c783B169b8f7d32', // token0 = USDT(6), token1 = cNGN(6)
+      wARS: '0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391', // token0 = wARS(18), token1 = USDT(6)
+      wBRL: '0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F', // token0 = USDT(6), token1 = wBRL(18) (MAX_TICK 17.04M gas guard)
       USDC: '0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846', // token0 = USDT(6), token1 = USDC(6)
     };
 
     const STATE = {
       blockNumber: 81145300,
-      balances: { USDT: 137.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 53.19, USDC: 14.98 },
+      balances: { USDT: 147.88, cNGN: 24814.62, wARS: 24800.37, wBRL: 0, USDC: 14.98 },
       corridors: {
         cNGN: { symbol: 'cNGN / USDT', textileRate: 1377.76, uniRate: 1378.71, hasDex: true },
         wARS: { symbol: 'wARS / USDT', textileRate: 1647.48, uniRate: 1653.48, hasDex: true },
@@ -1647,13 +1647,15 @@
       document.getElementById('usdtReadout').textContent = `$${STATE.balances.USDT.toFixed(2)} (${usdtPct.toFixed(1)}%)`;
       document.getElementById('cngnReadout').textContent = `$${cngnUsd.toFixed(2)}`;
       document.getElementById('warsReadout').textContent = `$${warsUsd.toFixed(2)}`;
-      document.getElementById('wbrlReadout').textContent = `$${wbrlUsd.toFixed(2)}`;
+      document.getElementById('wbrlReadout').textContent = wbrlUsd > 0.01 ? `$${wbrlUsd.toFixed(2)}` : 'BUY 1 bps';
       document.getElementById('usdcReadout').textContent = `$${usdcUsd.toFixed(2)}`;
 
       document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
       document.getElementById('assetItemCngn').title = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)} · ${cngnPct.toFixed(1)}%)`;
       document.getElementById('assetItemWars').title = `${Math.round(STATE.balances.wARS || 0).toLocaleString('en-US')} wARS ($${warsUsd.toFixed(2)} · ${warsPct.toFixed(1)}%)`;
-      document.getElementById('assetItemWbrl').title = `${(STATE.balances.wBRL || 0).toFixed(2)} wBRL ($${wbrlUsd.toFixed(2)} · ${wbrlPct.toFixed(1)}%)`;
+      document.getElementById('assetItemWbrl').title = wbrlUsd > 0.01
+        ? `${(STATE.balances.wBRL || 0).toFixed(2)} wBRL ($${wbrlUsd.toFixed(2)} · ${wbrlPct.toFixed(1)}%)`
+        : `Quoting 1 bps BUY wBRL backed by $${STATE.balances.USDT.toFixed(2)} USDT (Uniswap v3 pool 0x01c3...A40F has 17.04M-gas MAX_TICK anomaly; blocked by 800k gas guardrail)`;
       document.getElementById('assetItemUsdc').title = `${(STATE.balances.USDC || 0).toFixed(2)} USDC ($${usdcUsd.toFixed(2)} · ${usdcPct.toFixed(1)}%)`;
 
       const cngnQ = computeQuotes('cNGN');
@@ -1709,22 +1711,22 @@
         {
           corridor: 'wARS/USDT',
           iconKey: 'wARS',
-          regime: 'TWO_WAY_ACTIVE',
+          regime: 'DUAL_ORACLE_SHIELD',
           oracleDispersionBps: Number(warsQ.gapBps.toFixed(1)),
           skew: Number(warsSkew.toFixed(3)),
-          bidSpreadBps: 18,
-          askSpreadBps: 22,
+          bidSpreadBps: 4,
+          askSpreadBps: 38,
           reason: `98.7% of network wARS orderbook depth ($${warsUsd.toFixed(2)} wARS + $${STATE.balances.USDT.toFixed(2)} USDT); auto-refills on Uniswap v3 below $8.`,
         },
         {
           corridor: 'wBRL/USDT',
           iconKey: 'wBRL',
-          regime: 'TWO_WAY_ACTIVE',
+          regime: 'GAS_SHIELD_BUY_ACTIVE',
           oracleDispersionBps: Number(wbrlQ.gapBps.toFixed(1)),
           skew: Number(wbrlSkew.toFixed(3)),
-          bidSpreadBps: 18,
-          askSpreadBps: 25,
-          reason: `Two-way quoting backed by Uniswap v3 0.01% pool (147k wBRL liquidity); Ask spread widened to 25 bps to buffer BRL/USD dispersion.`,
+          bidSpreadBps: 1,
+          askSpreadBps: 34,
+          reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting 1 bps BUY wBRL on Textile backed by $${STATE.balances.USDT.toFixed(0)} USDT.`,
         },
         {
           corridor: 'USDC/USDT',
@@ -1732,9 +1734,9 @@
           regime: 'PEG_TIGHT_TWO_WAY',
           oracleDispersionBps: 1.0,
           skew: Number(usdcSkew.toFixed(3)),
-          bidSpreadBps: 4,
-          askSpreadBps: 4,
-          reason: `USD stablecoin peg tight within 1.0 bps; quoting 4 bps two-way with automatic Uniswap v3 0.01% unwind above $25 USDC.`,
+          bidSpreadBps: 2,
+          askSpreadBps: 8,
+          reason: `USD stablecoin peg tight within 1.0 bps; quoting 2/8 bps two-way with automatic Uniswap v3 0.01% unwind above $22 USDC.`,
         },
       ];
       const badgeEl = document.getElementById('riskOfficerBadge');

@@ -182,16 +182,17 @@ async function readPoolMid(poolAddr, token0IsUsdt, tokenDecimals = 6) {
 async function bestUniQuote(tokenIn, tokenOut, amountInRaw) {
   // All 4 Textile FX stablecoin pools on Celo (cNGN, wARS, wBRL, USDC vs USDT) live in the 100 (0.01%) or 500 (0.05%) fee tier.
   // Probing 100 first avoids RPC rate-limiting (HTTP 429) on datacenter/GCP VMs.
+  // Guardrail: reject malformed pools whose TickBitmap traversal exceeds 800k gas (e.g., wBRL/USDT initialized at MAX_TICK = 887271 -> 17.04M gas).
   for (const fee of [100, 500]) {
     try {
-      const [amountOut] = await quoter.quoteExactInputSingle.staticCall({
+      const [amountOut, , , gasEstimate] = await quoter.quoteExactInputSingle.staticCall({
         tokenIn,
         tokenOut,
         amountIn: amountInRaw,
         fee,
         sqrtPriceLimitX96: 0n,
       });
-      if (BigInt(amountOut) > 0n) {
+      if (BigInt(amountOut) > 0n && BigInt(gasEstimate || 0n) <= 800000n) {
         return { fee, amountOut: BigInt(amountOut) };
       }
     } catch {
@@ -658,14 +659,14 @@ function computeRiskOfficerDecisions({ usdt, cngn, wars, wbrl, usdc, uniCngnMid,
       },
       {
         corridor: 'wBRL/USDT',
-        regime: wbrlUsd >= 5 ? 'TWO_WAY_ACTIVE' : 'SEEDING_RESERVE',
+        regime: wbrlUsd >= 5 ? 'TWO_WAY_ACTIVE' : 'GAS_SHIELD_BUY_ACTIVE',
         inventoryUsd: Number(wbrlUsd.toFixed(2)),
         skew: Number(((usdt - wbrlUsd) / Math.max(1, usdt + wbrlUsd)).toFixed(3)),
         oracleDispersionBps: 12.8,
-        bidSpreadBps: 6,
+        bidSpreadBps: 1,
         askSpreadBps: 34,
         replenishEdgeBps: 34.0,
-        reason: `Two-way quoting backed by $${usdt.toFixed(0)} USDT + $${wbrlUsd.toFixed(2)} wBRL reserve; asymmetric spread leaned toward local FX accumulation.`,
+        reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting 1 bps BUY wBRL on Textile backed by $${usdt.toFixed(0)} USDT.`,
       },
       {
         corridor: 'USDC/USDT',
