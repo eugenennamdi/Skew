@@ -480,6 +480,12 @@ async function settlePendingHoldings() {
   }
 }
 
+function isSelfMakerOrder(calldata = '') {
+  const reactorWord = '000000000000000000000000' + CONFIG.contracts.reactor.slice(2).toLowerCase();
+  const ourWord = '000000000000000000000000' + CONFIG.agentWallet.slice(2).toLowerCase();
+  return calldata.toLowerCase().includes(reactorWord + ourWord);
+}
+
 async function executeOpportunity(opp) {
   if (!wallet) return null;
   const startedAt = new Date().toISOString();
@@ -493,8 +499,8 @@ async function executeOpportunity(opp) {
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response: ${JSON.stringify(q).slice(0, 140)}`);
     }
-    // ponytail: anti-self-trade guard — never fill our own Maker quote on Textile Reactor
-    if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) {
+    // ponytail: anti-self-trade guard — inspect OrderInfo.swapper (word immediately after reactor)
+    if (isSelfMakerOrder(calldata)) {
       console.log(`[ANTI-SELF-TRADE] Skipping ${opp.corridor} taker order matched against our own Maker (${CONFIG.agentWallet})`);
       return null;
     }
@@ -562,7 +568,7 @@ async function executeOpportunity(opp) {
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response on leg 2: ${JSON.stringify(q).slice(0, 140)}`);
     }
-    if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) {
+    if (isSelfMakerOrder(calldata)) {
       console.log(`[ANTI-SELF-TRADE] Skipping uni->textile leg 2 matched against our own Maker (${CONFIG.agentWallet})`);
       return null;
     }
@@ -729,7 +735,7 @@ async function seedInventoryViaTextile(tokenOut, amountUsdtRaw, corridor, sizeUs
   const toAddr = q?.transactions?.swap?.to;
   const calldata = q?.transactions?.swap?.data;
   if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) return null;
-  if (calldata.toLowerCase().includes(CONFIG.agentWallet.slice(2).toLowerCase())) return null;
+  if (isSelfMakerOrder(calldata)) return null;
   const r = await sendTagged({ to: toAddr, data: calldata });
   await textileSubmitTx(q.rfqId, q.claimToken, r.hash).catch(() => {});
   const rec = {
