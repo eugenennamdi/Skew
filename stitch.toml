@@ -111,3 +111,6 @@ enabled             = true
 url                 = "wss://api.textilecredit.com/v2/maker/stream"
 maker_id            = "cmv75ay6h00bq339u3x6gdicy"
 validation_contract = "0x10B9EbA3a175Df418a35CB8329a527691EE258C5"
+
+[erc8004]
+agent_id = 9905
