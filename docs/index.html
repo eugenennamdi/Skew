@@ -881,12 +881,6 @@
           <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
           <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
         </button>
-        <button class="btn" id="syncBtn" onclick="triggerManualSync()" title="Streaming live every 3s — click to force an immediate bot &amp; RPC scan">
-          <span class="btn-content" id="syncBtnContent">
-            <span class="live-dot"></span>
-            <span id="syncBtnText" class="mono">Live · 3s</span>
-          </span>
-        </button>
         <a class="btn mono" href="https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324" target="_blank" rel="noopener">
           0xe503...7324 ↗
         </a>
@@ -2116,60 +2110,10 @@
       if (saved === 'light' || saved === 'dark') applyTheme(saved);
     } catch (_) {}
 
-    let isManualSyncing = false;
-
-    function morphSyncButton(innerHtml) {
-      const el = document.getElementById('syncBtnContent');
-      if (!el) return;
-      el.classList.add('morphing');
-      setTimeout(() => {
-        el.innerHTML = innerHtml;
-        el.classList.remove('morphing');
-      }, 110);
-    }
-
-    function updateIdleLiveLabel() {
-      if (isManualSyncing) return;
-      const txt = document.getElementById('syncBtnText');
-      if (txt && STATE.rpcMs) {
-        txt.textContent = `Live · ${STATE.rpcMs}ms`;
-      }
-    }
-
     async function syncTelemetry(withExplorer = false) {
       await pollTelemetry();
       if (withExplorer) await pollExplorer();
       renderUI();
-      updateIdleLiveLabel();
-    }
-
-    async function triggerManualSync() {
-      if (isManualSyncing) return;
-      isManualSyncing = true;
-      morphSyncButton(`
-        <svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-        <span class="mono">Scanning...</span>
-      `);
-
-      try {
-        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-          await fetch('/scan', { method: 'POST' }).catch(() => {});
-        }
-        await Promise.all([pollTelemetry(), pollExplorer()]);
-        renderUI();
-      } finally {
-        morphSyncButton(`
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-          <span class="mono text-emerald">Synced #${STATE.blockNumber.toLocaleString('en-US')}</span>
-        `);
-        setTimeout(() => {
-          isManualSyncing = false;
-          morphSyncButton(`
-            <span class="live-dot"></span>
-            <span id="syncBtnText" class="mono">Live · ${STATE.rpcMs || 85}ms</span>
-          `);
-        }, 1200);
-      }
     }
 
     renderUI();
