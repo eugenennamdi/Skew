@@ -15,24 +15,25 @@ To give judges a 100% transparent, auditable breakdown of our on-chain history o
 
 | Category | Count | Volume (USD) | Realized Edge / Outcome | Counterparties |
 | :--- | :---: | :---: | :--- | :--- |
-| **1. Independent Counterparty Maker Fills** | **40 fills (`10` v2)** | **`$1,784.84` (`$303.23` v2)** | **`+41.1 bps` (`+$0.0740 USDT`) per shielded fill** | External bots `#9991 Kiyoshi` (`0x497F...` / `0x6Cd3...`), `#9995 naira-maker` (`0x8754...`), `0x12bc...` |
-| **2. Independent Cross-Venue Arbitrages (2-Leg)** | **265 arbs (`530` txs)** | **`$13,179.50`** | **`+$10.0939 USDT` realized (`+48.6 bps` on `53x cNGN`, `+187.5 bps` peak on `wARS`, `159x` Oct 28 wave)** | External Makers `0x25A5c1Ae...` & `#9976 Arbolito Desk` → Uniswap v3 `0.01%` |
-| **3. Autonomous Maker-to-DEX Refills, Seeds & Unwinds** | **50 swaps** | **`$2,254.18`** | **Restored `cNGN`, `wARS`, `wBRL`, `USDC`, `CELO` (`+24.22 CELO`) reserves** | Uniswap v3 Pools & Textile RFQ (`wBRL` Unwind + Seed) |
+| **1. Independent Counterparty Maker Fills** | **41 fills (`11` v2)** | **`$1,925.12` (`$443.51` v2)** | **`+41.1 bps` (`+$0.0740 USDT`) per shielded fill + `$140.28` institutional fill** | External bots `#9908 Naira Desk` (`0xEfdF...`), `#9991 Kiyoshi` (`0x497F...` / `0x6Cd3...`), `#9995 naira-maker` (`0x8754...`) |
+| **2. Independent Cross-Venue Arbitrages (2-Leg)** | **268 arbs (`536` txs)** | **`$13,460.07`** | **`+$10.12+ USDT` realized (`+48.6 bps` on `53x cNGN`, `+187.5 bps` peak on `wARS`, `159x` Oct 28 wave)** | External Makers `0x25A5c1Ae...` & `#9976 Arbolito Desk` → Uniswap v3 `0.01%` |
+| **3. Autonomous Maker-to-DEX Refills, Seeds & Unwinds** | **51 swaps** | **`$2,394.47`** | **Restored `cNGN`, `wARS`, `wBRL`, `USDC`, `CELO` (`+24.22 CELO`) reserves** | Uniswap v3 Pools & Textile RFQ (`wBRL` Unwind + Seed) |
 | *4. Early Integration Self-Tests (Halted)* | *9 fills* | *`$236.94`* | *`-25 bps` protocol fee test (halted via calldata guard)* | *Self-test prior to `skew-desk.mjs` anti-self-trade guard* |
-| **Total Cumulative On-Chain Execution** | **`639` settlements (`634` wallet txs)** | **`$17,455.46` (`89.5x` turnover)** | **`+$10.25 USDT` (`+5.26%` RoC) · `99.8%` All-Time (`633/634`) · `100.0%` Last 48h (`536/536`)** | **#1 Participant Maker (`40` Fills) & #1 Taker (`284` External)** |
+| **Total Cumulative On-Chain Execution** | **`789` Celo Mainnet txs (`2,026` ERC-20 transfers)** | **`$17,736+` (`90.9x` turnover)** | **`+$10.30+ USDT` (`+5.28%` RoC · `$203.39` live equity) · `99.8%` All-Time · `100.0%` Last 48h** | **#1 Participant Maker (`41` Fills) & Dual-Engine Taker** |
 
 > **Anti-Self-Trade Guardrail (`skew-desk.mjs` lines 483–487)**:
 > Before submitting any `LimitOrderReactor` transaction, `skew-desk.mjs` inspects the signed `DutchOrder` `OrderInfo.swapper` word (`isSelfMakerOrder(calldata)`) for our own Maker address and aborts if matched, ensuring the Taker & Treasury engine only lifts **external** Makers.
 
 ---
 
-## 2. Verified Independent Counterparty Maker Fills (`10` Recent v2 Fills · `$301.17` / `40` All-Time · `$1,782.78`)
+## 2. Verified Independent Counterparty Maker Fills (`11` Recent v2 Fills · `$443.51` / `41` All-Time · `$1,925.12`)
 
-Every row below is an on-chain `LimitOrderReactor` settlement where an **independent external counterparty** lifted our Stitch Maker quote (`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`), followed by our autonomous Uniswap v3 `0.01%` inventory replenishment:
+Every row below is an on-chain `LimitOrderReactor` settlement where an **independent external counterparty** lifted our Stitch Maker quote (`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`), followed by our autonomous Uniswap v3 `0.01%` inventory replenishment or unwind:
 
-| # | Timestamp (UTC) | Corridor | External Taker (Counterparty) | Maker Out | Maker In | Paired Uniswap v3 Refill (`0.01%`) | Net Realized Edge | On-Chain Proof |
+| # | Timestamp (UTC) | Corridor | External Taker (Counterparty) | Maker Out | Maker In | Paired Uniswap v3 Refill / Unwind (`0.01%`) | Net Realized Edge | On-Chain Proof |
 | :-: | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :--- |
-| **1** | `2026-10-27 13:46:09Z` | `wBRL/USDT` | `#9991 Kiyoshi` (`0x497F1283...512f`) | `86.4820 USDT` | `459.5680 wBRL` | Active Maker `wBRL` reserve (`5.3140 wBRL/USDT`) | **`1 bps` Top-of-Book** | [`0x9e9abd6d...5a5a`](https://celoscan.io/tx/0x9e9abd6d1ebb31a309642d6e58efb7f3e68d4d50e9942ca266bc49beaf7d5a5a) |
+| **1** | `2026-10-29 13:52:41Z` | `cNGN/USDT` | `#9908 Naira Desk` (`0xEfdFcb05...`) | `140.2795 USDT` | `193,716.31 cNGN` | Sold `193,747 cNGN` for `140.2908 USDT` 27s later ([`0x6f82fbaa...`](https://celoscan.io/tx/0x6f82fbaa43677a010fcc6da464719dd4edf1998468d0d5c5c2f79cf64a4f565d)) | **`+$0.0113 USDT` (`1 bps` Top-of-Book)** | [`0xd13ec8ec...937e`](https://celoscan.io/tx/0xd13ec8ec5b95d4b90e1bfe856da0e0881b38a01c6e833f225dbb11cb8ec8937e) |
+| **2** | `2026-10-27 13:46:09Z` | `wBRL/USDT` | `#9991 Kiyoshi` (`0x497F1283...512f`) | `86.4820 USDT` | `459.5680 wBRL` | Active Maker `wBRL` reserve (`5.3140 wBRL/USDT`) | **`1 bps` Top-of-Book** | [`0x9e9abd6d...5a5a`](https://celoscan.io/tx/0x9e9abd6d1ebb31a309642d6e58efb7f3e68d4d50e9942ca266bc49beaf7d5a5a) |
 | **2** | `2026-10-27 13:44:52Z` | `wBRL/USDT` | `#9991 Kiyoshi` (`0x497F1283...512f`) | `30.2480 USDT` | `160.7269 wBRL` | Active Maker `wBRL` reserve (`5.3136 wBRL/USDT`) | **`1 bps` Top-of-Book** | [`0xad56b61e...dcaa`](https://celoscan.io/tx/0xad56b61ef545e79d0c4e23d25ce0ade4710419336e925eac670bce5aad19dcaa) |
 | **3** | `2026-10-27 09:15:22Z` | `cNGN/USDT` | `#9991 Kiyoshi` (`0x497F1283...512f`) | `3,660.50 cNGN` | `2.6659 USDT` | Shielded ask `1,373.08 cNGN/USDT` vs `1,378.71` DEX mid | **`+41.0 bps` (`+$0.0109`)** | [`0x02c7f016...d783`](https://celoscan.io/tx/0x02c7f01676d4ef18f0df44e0516e0ed3060bfc58dd1a7f109033c7bff75fd783) |
 | **4** | `2026-10-26 22:02:13Z` | `cNGN/USDT` | `#9995 naira-maker` (`0x8754FE21...744B`) | `24,799.26 cNGN` | `18.0620 USDT` | Bought `24,800.16 cNGN` for `17.9880 USDT` ([`0x28d4e714...`](https://celoscan.io/tx/0x28d4e71468195aae4a1275a32dc935b2936e94864838267c3ecac3e8b436c6d5)) | **`+41.1 bps` (`+$0.0740`)** | [`0x51b95699...fca4`](https://celoscan.io/tx/0x51b956998cde49e9b799573de2775279081225b0ec3fe370710579616e45fca4) |
