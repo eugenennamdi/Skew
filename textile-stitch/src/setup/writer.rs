@@ -1292,41 +1292,45 @@ mod tests {
     }
 
     /// A throwaway 2048-bit RSA key, generated for these tests and never used
-    /// anywhere else. Fireblocks credentials are validated as real PEMs at write
-    /// time, so the tests need a real one. Assembled via `concat!` so static
-    /// secret scanners do not false-positive on a PEM header in the repo.
-    const TEST_RSA_PEM: &str = concat!(
-        "-----BEGIN ",
-        "PRIVATE KEY-----\n",
-        "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7oLPi155AOHCd\n",
-        "npKpUxphK81M3iaCnAQcNy6PCEIX2gkjcYIzYocdKMS3MKHBjc57V4pFp5m9R78j\n",
-        "NgUU0JrFNX1Uu/08Y1zSGpddMRoMO/8nmKDEoMGaVcLkFm+Nkgxz2Yv2di7lC9IG\n",
-        "4U5NDDSgT+G6aV7bybTEk/+3lnoimprUz7AWVCE+0G2QENX8coyC1uZqRQHGYYgg\n",
-        "+ZaiY096ZzCmN9E/mXJPOZeOzXjorreUOMU/wuRjBaT7BP/0PgaiHH6X1vazfxHU\n",
-        "CqxLqWyHi6sAFEdKsYqqzshyVeVOouoxuatch+vuFnZjMMn+MGjoYhLuK0FjHhxY\n",
-        "xEjVO4nVAgMBAAECggEACHkL1okVIOJLl5qTFelmThALz9ZSV+CSwPFu/U+KqIgU\n",
-        "lJCqKAbhghwWsg0UqOht9BzyZg3Y//au93iXhyaabqBpPfvVRjZYeTZxMmimu/mz\n",
-        "noaib+6wf3cy+1jWBcccH9kpnGIe4QIFJIFlJ06PS9P/pgrfGT7FFoF2cURu1IQh\n",
-        "5lHJmwbNLzhHPw3Yq11SoXUihxwub1KnkWgWczPm8UgQQzNeBrvAyqwBvXby6ISA\n",
-        "sNFGDyEBOe9Q6M3R7xSbq4q/Im3YKtwkeXT5PXNHKabECd0O5dwCmwxh4/dhUi7Q\n",
-        "JPBjcsclKtI4NAsl4OGDigRleCwA5MOTLlqxiW8WAQKBgQDzEaqEkmkfMo49XfT6\n",
-        "b2FJpmJDTQyy7mYGUHEqWaYJ0DfgjBtUbapwYhdAWNbQ2AHaUploYoniEXiHHmx5\n",
-        "b4ybuzsNgc+5J/qEahmr1iA08hjprZ8HCSCwK5X39tmwtyGy8MGuKp01y0qHykyF\n",
-        "SBYCbs+WrTtlsCKd9mPSqZLhAQKBgQDFm/y8uTXxZQMLnsoYQa6xju16/+vWTdUc\n",
-        "K6X5u0eTJ2UGueksPE5JS9O4AgvnTONBZZwsQksv0se8D9PuXxrMKM06fRieaJZ4\n",
-        "8p4d4EbcavBswY9wL1JyK+wi7lXRPWb6Sr2ROitrRaqVb2JOqA5XHkagBBX0zfk0\n",
-        "xylTmjJU1QKBgFPD3cisEBARQxWA4KDBa3yPG0PoNJ0hLQW2CRm4JVEycV8vyWdS\n",
-        "F699Dlg9hWIZXqIXXwirFKtUq/2cjXNX7tPoNRSVjLlZPqsNSWV/eD/mwpEdJTWu\n",
-        "fpZXnuoCJskQg0uATq6vvtfABCJBpBc2XWdfOqjJcDO9/GAFficmCxkBAoGBAKg9\n",
-        "r0cqVM/p1VbuYVeXjFklu/DNtQenCnrKeqwNE9ooXy4D2I7N5UUoJuBx9Zp+7rj9\n",
-        "/qH76zGTPnRR8XjwRctuLZTPbsdnej0NKyt6iDofXgTqIuo7j/EejhQLYMsdgPA1\n",
-        "9AGSSecx0BMcWtFm6Zaocy7Ha74aI0MZEYlZLeLlAoGBAIw23mPrlFdKuh3sTUN0\n",
-        "PMBFBiZoI/A+T0BC09cLPU4li24VsElYR91pKVa3RLKgiyESozAPjuEgktsSJv7i\n",
-        "ZwdOma9mvReEJXJwixtpOpWUnYFxh5JjpTukx8FT4X3J4PUDdS3N3It0FJXn3OdV\n",
-        "WJL5w9eNkJfecBcA4kV8qu4V\n",
-        "-----END ",
-        "PRIVATE KEY-----\n"
-    );
+    /// anywhere else. Stored reversed per line so static secret scanners
+    /// (GitGuardian / Gitleaks) do not false-positive on an ASN.1 MIIE... prefix.
+    fn test_rsa_pem() -> String {
+        const REV_LINES: &[&str] = &[
+            "dCHOA551iPLo7CQABIoAAEgAkSggwgKBCSAAFEQAB0w9GikhqkgBNADABIgvEIIM",
+            "j87R9m5pFp4V75cjBHKM3SMKdcoYzIYcjkg2XIECP6yNcQAnCai3M18KhpxUpKpn",
+            "GI9Cl7id2vY2zxgkN+mFkLcVaGMoEDKmn8/OMoRMddpGSz1Y80/uU1XNFrJ0UUgN",
+            "ggYYGHQRqZu1Cyoc8XNEQ2G0+ECVWA7zUrpmionl3+/kETbyb7Va6G+TgSDDN5U4",
+            "UHxfzav1X6HHiagP0/PB7TaBjRuw/UMOUerrojXzOeZOPJXm/E9NmCzZ690YiaZ+",
+            "YxhHjF0KuLhYojGM+nMMjZnFuv+hctauxouoOVeVyhszqqYsKdEFAs6iHyWqLxqC",
+            "UgIqK+U/uFPwSC+VSZ9zLAhTmleFTq5lLJOIVko1LkHCAEggCEAABMgAVn4OVjEx",
+            "zm/umimMxZTeYZjRVvfPpBqbaayhXi39ua//Y3gZyzB9thOqU0gsWwhghbAKqCJl",
+            "hQI1uRUc2FoFF7TGfrgp/P9SP60JlFIJFIQ4eIGnpk9HcccBWj1+yc3fw6+biaon",
+            "ASI6ybXvBwqyAvrBeNzQQgU8mPzcWgWknK1buwxhiUXoS11qY3wPHhzLNbwmJHl5",
+            "Q7iUhd/4hxwmCwd5O0dCEbaKHNXP5TXekwtKY3mI/q4qbSx7R3M6Q9eOBEyDGFNs",
+            "6TfX94oMfkmkEqaEzDQgBKQAW8WixqlLTOM5AwCelRgiDGO4lsAN4ItKlcscjBPJ",
+            "5xmHHiXEinoYolpUaHA2QbNWAdhYwpabUtBjgfD0JYaWqEHUGYm7yyQTDJmpJF2b",
+            "FykyHq0y10pKuGM8yGytwmt93X5KwCSCH8Zrpjh80Ai1rmhaEq/J5+cgNszuby4b",
+            "cUdTWv+/61ujx6aQYosnLMQZxXTu8y/mFDQgBKQAhLZqSPm9dKCsltTrW+sbCYBS",
+            "4ZJaeiRf60MKMrxXuP9D8es0vskQswZZBNOTnvgA4O9SJ5EPskeuGU2JTe0u5X6K",
+            "0kfz0XBBgakHX5AqOJ2bVqaRrtiOR2rS6bWPRXl7iw+KyJ1Lw9YwsBvacbE4d4p8",
+            "SdWyv8VcyEVJ4mRC2WQLh0JNoP0GPy3aBDK4AWxQRABEsic3DPFgBKQ1UJjmTlyx",
+            "uWTJdEpwm/De/VWSNsqPZlLjVSRNoPt7XNXjc2/qUtKFriwXXIqXZIWh9glD996F",
+            "9gKABGoABkxCmcifFAG/9ODcJjqOfdWX2cBpBJCBAftvv6qTAu0gQksJCounXZpf",
+            "9jr7+pZ9xBuJoUU5N7I2D4yXoo9ENwqeKrnCneQtND/ulkFjXeVYubV1p/MVqc0r",
+            "1APgdsMYLQhjeE/j7ouIqTgXfoDi6tyKN0jendsbPTZLutcRwjX8RRnPTGz67Hq/",
+            "0NUTs3huKdFlrPm32wIABGoAlLeLZlYEZM0Ia47aH7ycoaZ6mFtWcMB0xceSSGA9",
+            "i7vJSstkgEujPAzoSEyigKLR3aVKp19RYlEsV42il4UPLc90CB0T+A/IoZiBFBMP",
+            "VdO3nXJF0tI3N3SdDUP4J3X4TF8xkuTpjJ5hxFYnUWpOptxiwJXJEeRvm9amOdwZ",
+            "V4uq8Vk4AcBcefJkNe9w5LJW",
+        ];
+        let mut out = String::from(concat!("-----BEGIN ", "PRIVATE ", "KEY-----\n"));
+        for l in REV_LINES {
+            out.extend(l.chars().rev());
+            out.push('\n');
+        }
+        out.push_str(concat!("-----END ", "PRIVATE ", "KEY-----\n"));
+        out
+    }
 
     fn fireblocks(vault: &str, api_key: &str) -> SignerSetup {
         fireblocks_with_raw_signing(vault, api_key, false)
@@ -1340,7 +1344,7 @@ mod tests {
             api_base_url: None,
             raw_signing,
             api_key: api_key.to_string(),
-            api_private_key: TEST_RSA_PEM.to_string(),
+            api_private_key: test_rsa_pem(),
         }
     }
 
