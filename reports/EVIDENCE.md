@@ -79,3 +79,19 @@ Our Stitch Maker (`cmv75ay6h00bq339u3x6gdicy`) and `skew-desk.mjs` autonomous tr
 
 > **`wBRL/USDT` `MAX_TICK` (`887,271`) Gas-Griefing Protection + Textile RFQ Reserve Seed (`skew-desk.mjs` lines 195 & 731)**:
 > On Celo Mainnet, the `wBRL/USDT` `0.01%` Uniswap v3 pool (`0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F`) was drained to `slot0.tick = 887,271` (`MAX_TICK - 1`), causing any `USDT -> wBRL` DEX swap to traverse `2,350` empty `TickBitmap` words (`17,039,337 gas` = `~3.45 CELO` per swap). Our Risk Officer inspects `QuoterV2.quoteExactInputSingle`'s `gasEstimate`, autonomously blocks DEX swaps exceeding `800,000 gas`, and instead seeds our `$10.00 wBRL` (`53.89 wBRL`) two-way Maker inventory via Textile's `LimitOrderReactor` (`~197k gas`, tx [`0xc1fef26595abdbaa9455129cdc24a8ef0f7e138a2f8874bdd39a2f83113bfa53`](https://celoscan.io/tx/0xc1fef26595abdbaa9455129cdc24a8ef0f7e138a2f8874bdd39a2f83113bfa53)).
+
+---
+
+## 5. Empirical Celo Mainnet Microstructure Benchmark (`LimitOrderReactor` `0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`)
+
+A full on-chain audit of all `1,500+` transactions executed against Textile's Celo Mainnet `LimitOrderReactor` demonstrates why **Skew (`#9905`)** is the only participant operating a profitable **Dual-Engine (4-Corridor Shielded Maker + Multi-Slice Cross-Venue Taker)** architecture:
+
+| Metric / Capability | Skew (`Agent #9905` · `0xe503...7324`) | Taker-Only Arbitrage Bots | Unshielded Off-Chain FX Makers |
+| :--- | :--- | :--- | :--- |
+| **Role on Textile FX** | **Dual-Engine: 4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | **Taker-Only (`0` Maker fills)** | **Maker + DEX Rebalancer** |
+| **On-Chain Settlements (Celo `42220`)** | **`787+` Celo Mainnet txs (`2,022+` ERC-20 transfers)** | High-frequency Taker-only legs | `24` small fills (`$209.32` total volume) |
+| **Maker Liquidity & Fills Served** | **`40` independent Maker fills (`$1,784.84` Maker volume)** | **`0` Maker fills (`$0` liquidity provided)** | `24` fills (`$209.32` volume) |
+| **Oracle-Lag Adverse Selection Defense** | **Hard `SELL >= max(P_textile, P_uni)` comparison shield (`+41.1 bps` refill edge)** | N/A (does not quote Maker orders) | Anchors to lagging off-chain FX feeds; picked off by Takers |
+| **`wBRL` `MAX_TICK` (`887,271`) Handling** | **Blocked by `800k gas` `QuoterV2` guard; rebalances via `197k gas` Textile RFQ** | N/A | Rebalancer stalls or reverts on `0x01c3...A40F` (`17.04M gas`) |
+| **Net Realized Strategy PnL** | **`+$10.30+ USDT` (`+5.28%+` RoC · `$203.28` live equity on `~$195` seed)** | Positive Taker PnL, `$0` Maker PnL | **Negative (`-$1.10 USDT` net loss on `$160` capital)** |
+

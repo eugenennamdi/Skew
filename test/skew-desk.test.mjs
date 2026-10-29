@@ -6,13 +6,16 @@ import { fileURLToPath } from 'node:url';
 import {
   CONFIG,
   MAX_UNI_QUOTE_GAS,
+  OFFCHAIN_FX_DEFAULTS,
   appendErc8021Suffix,
   computeSkewAndQuotes,
+  computeSliceSizesUsdt,
   computeRiskOfficerDecisions,
   isSelfMakerOrder,
   isValidUniQuoteGas,
   renderDashboardHtml,
   runDryRunVerification,
+  validatePrivateKey,
 } from '../skew-desk.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -129,9 +132,31 @@ test('Autonomous Risk Officer & dry-run sandbox verification', () => {
   });
   assert.equal(risk.enabled, true);
   assert.equal(risk.corridors.length, 4);
+  assert.equal(risk.corridors[0].dailyCarryBps, 8.5);
+  assert.equal(risk.corridors[1].dailyCarryBps, 13.3);
+  assert.equal(risk.corridors[2].dailyCarryBps, 4.2);
+  assert.equal(risk.corridors[3].dailyCarryBps, 0.0);
+  assert.equal(risk.corridors[0].offChainPerUsd, OFFCHAIN_FX_DEFAULTS.NGN);
 
   const regJsonPath = path.join(__dirname, '..', 'docs', '.well-known', 'agent-registration.json');
   const regJson = JSON.parse(fs.readFileSync(regJsonPath, 'utf8'));
   assert.equal(regJson.type, 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1');
-  assert.ok(renderDashboardHtml().includes('ERC-8004'));
+  const html = renderDashboardHtml();
+  assert.ok(html.includes('ERC-8004'));
+  assert.ok(html.includes('isMiniPay'));
+  assert.ok(html.includes('FEE_CURRENCY_USDT'));
+});
+
+test('Multi-slice trade sizing (100% / 50% / 25% of liquid USDT budget) and private key format validation', () => {
+  const slices = computeSliceSizesUsdt(140.0, 150.0);
+  // 90% of 140 = 126.00 -> [126.00, 63.00, 31.50, 25.00]
+  assert.deepEqual(slices, [126, 63, 31.5, 25]);
+
+  const capped = computeSliceSizesUsdt(200.0, 150.0);
+  assert.equal(capped[0], 150);
+
+  assert.equal(validatePrivateKey(''), null);
+  const sampleKey = '0x' + '11'.repeat(32);
+  assert.equal(validatePrivateKey(sampleKey), sampleKey);
+  assert.throws(() => validatePrivateKey('not-a-private-key'), /Invalid STITCH_PRIVATE_KEY format/);
 });

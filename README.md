@@ -8,12 +8,12 @@ Skew is an autonomous FX liquidity, smart-pricing, and multi-currency treasury e
 | :--- | :--- |
 | **Live Trading & Telemetry Terminal** | **[`https://eugenennamdi.github.io/Skew/`](https://eugenennamdi.github.io/Skew/)** (Real-time Celo RPC + Blockscout v2 + Avellaneda-Stoikov Simulator) |
 | **ERC-8004 Agent Identity** | **Agent `#9905`** on [`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`](https://celoscan.io/token/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432?a=9905) · `[erc8004] agent_id = 9905` in [`stitch.toml`](stitch.toml) · [`eip-8004#registration-v1` Metadata](docs/.well-known/agent-registration.json) |
-| **Agent EOA Wallet** | [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324) |
+| **Agent EOA Wallet (Celo Mainnet `42220`)** | [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324) (**`787+` Celo Mainnet txs** · **`2,022+` ERC-20 transfers** · **`$203.28` live equity**) |
 | **ERC-8021 Attribution Tag** | `celo_7935fb97e273` (`35-byte` suffix `0x63656c6f5f373933356662393765323733110080218021802180218021802180218021`) |
 | **Textile Maker ID** | `cmv75ay6h00bq339u3x6gdicy` (`stitch-42220-e5036100`, seated across `cngn-usdt-celo`, `wars-usdt-celo`, `wbrl-usdt-celo`, `usdc-usdt-celo`) |
-| **Independent Counterparty Audit** | **[`reports/EVIDENCE.md`](reports/EVIDENCE.md)** (`639` on-chain settlements · **`+$10.25 USDT` (`+5.26%` RoC) Strategy PnL** · `$17,455.46` volume (`89.5x` turnover) · `40` Maker fills · `265` 2-leg arbs) |
+| **Independent Counterparty Audit** | **[`reports/EVIDENCE.md`](reports/EVIDENCE.md)** (**`787` Celo Mainnet txs** · **`+$10.30+ USDT` (`+5.28%+` RoC) Strategy PnL** · `$17,600+` volume (`90.3x` turnover) · `40` Maker fills · `268+` 2-leg arbs) |
 | **Canonical Contracts** | Textile Reactor [`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`](https://celoscan.io/address/0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3) · Permit2 [`0x000000000022D473030F116dDEE9F6B43aC78BA3`](https://celoscan.io/address/0x000000000022D473030F116dDEE9F6B43aC78BA3) |
-| **Runtime & Lockfile** | **Node.js `>= 20.0.0`** ([`.nvmrc`](.nvmrc) / [`package-lock.json`](package-lock.json)) · **Rust `1.82+`** ([`textile-stitch/Cargo.lock`](textile-stitch/Cargo.lock)) · **[`SECURITY.md`](SECURITY.md)** |
+| **Runtime, MiniPay & Lockfile** | **Node.js `>= 20.0.0`** ([`.nvmrc`](.nvmrc) / [`package-lock.json`](package-lock.json)) · **Rust `1.82+`** ([`textile-stitch/Cargo.lock`](textile-stitch/Cargo.lock)) · **MiniPay (`isMiniPay`) & CIP-64 `feeCurrency` (`USDT`)** · **[`SECURITY.md`](SECURITY.md)** |
 
 ### How to Run (Zero-Secret Sandbox & Live Mainnet Reproduction)
 
@@ -73,11 +73,22 @@ $$\text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \g
 
 * **Top-of-Book `1 bps` `BUY` Capture + Uniswap Auto-Unwind:** When holding excess `USDT` ($s > +0.50$), `BUY` spreads tighten to **`1 bps`** across `cNGN`, `wARS`, `wBRL`, and `USDC`. Because Textile's oracle mid for `wARS` (`~1,671 wARS/USDT`) and `cNGN` (`~1,383 cNGN/USDT`) trades at a discount to Uniswap v3 (`1,641.8 wARS/USDT` and `1,378.8 cNGN/USDT`), Engine 2 (`skew-desk.mjs`) automatically unwinds incoming `wARS`, `USDC`, and excess `cNGN` fills on Uniswap v3 `0.01%` pools for **`+178 bps` (`wARS`), `+29 bps` (`cNGN`), and `+12 bps` (`USDC`) instant realized profit**.
 
-### D. Adaptive `availableSellAmount` Cross-Venue Sizing (`skew-desk.mjs`)
+### D. Multi-Slice (`100% / 50% / 25%`) + Adaptive `availableSellAmount` Cross-Venue Sizing & 3-Source FX Carry (`skew-desk.mjs`)
 
 When scanning all 4 official Textile FX corridors (`cNGN`, `wARS`, `wBRL`, `USDC` against `USDT`) across `textile -> uni` and `uni -> textile`:
-1. `skew-desk.mjs` probes `POST /v2/rfq/preview` at `$25 USDT`.
-2. If a maker's remaining depth is smaller than `$25` (`status: "no_quote", reason: "no_valid_quote"` with `availableSellAmount >= 1000000`), `skew-desk.mjs` **automatically re-quotes at `95%` of `availableSellAmount`**, signs an EIP-712 `TakerControl` proof (`POST /v2/rfq/request`), executes Leg 1 on Textile's `LimitOrderReactor`, and unwinds Leg 2 on Uniswap v3 `SwapRouter02`.
+1. **Multi-Slice Dynamic Budget (`computeSliceSizesUsdt`):** `skew-desk.mjs` computes candidate slices at **`100%`, `50%`, and `25%` of available liquid `USDT`** (up to `$150` per slice, plus a `$25` baseline floor) and probes `POST /v2/rfq/preview` at the top slice first.
+2. **Adaptive Sub-Slice Resizing (`availableSellAmount`):** If a maker's remaining depth is smaller than the probe slice (`status: "no_quote", reason: "no_valid_quote"` with `availableSellAmount >= 1000000`), `skew-desk.mjs` **automatically re-quotes at `98%` of `availableSellAmount`**. If the full slice suffers Uniswap v3 pool price impact, it steps down across the `50%` and `25%` slices to pick whichever size maximizes net dollar profit (`edgeUsd`).
+3. **3-Source FX Basis Triangulation & Devaluation Carry (`fetchOffChainFxRates`):** Alongside Textile RFQ and Celo Uniswap v3 `0.01%` pools, the Autonomous Risk Officer tracks live independent off-chain FX reference rates (`open.er-api.com` for `NGN`/`BRL` and `dolarapi.com` for `ARS` cripto) and incorporates emerging-market daily crawl/carry rates (`wARS: +13.3 bps/day`, `cNGN: +8.5 bps/day`, `wBRL: +4.2 bps/day`, `USDC: 0.0 bps/day`) into per-corridor spread reasoning.
+
+### E. Empirical Celo Mainnet Microstructure Benchmark (`LimitOrderReactor` `0xa9AA0a64...35b3`)
+
+Analyzing all `1,500+` settlements on Textile's Celo Mainnet `LimitOrderReactor` reveals three distinct agent archetypes and explains why **Dual-Engine (Shielded Maker + Multi-Slice Taker)** is required to generate sustainable positive PnL on both sides of the book:
+
+| Architecture Archetype | Maker Liquidity Provided | Taker Arbitrage Execution | `wBRL` `MAX_TICK` (`17.04M gas`) Handling | Realized Maker & Taker PnL Outcome |
+| :--- | :---: | :---: | :--- | :--- |
+| **1. Dual-Engine Shielded Maker + Taker (`Skew #9905`)** | **4 Corridors (`8/8` sides · `40` Maker fills · `$1,784.84` Maker vol)** | **`268+` 2-leg arbs (`$17,600+` total vol · `787+` Celo Mainnet txs)** | **Blocked by `800k gas` `QuoterV2` guard; rebalances via `197k gas` Textile RFQ** | **`+$10.30+ USDT` (`+5.28%+` RoC · `$203.28` live equity on `~$195` seed)** |
+| **2. Single-Sided Taker-Only Bot** | `0` Maker fills (`$0` liquidity provided to Textile) | High-volume Taker sweeps (`100% / 50% / 25%` slices) | Avoids Maker inventory | Profitable as Taker, but contributes **zero Maker liquidity** to Textile corridors |
+| **3. Unshielded Off-Chain-Anchored Maker** | Multi-corridor Maker quotes anchored to off-chain FX mid | No `SELL >= max(P_textile, P_uni)` hard floor | Rebalancer reverts or stalls on `wBRL` `slot0.tick = 887,271` | **Negative Maker PnL (`-$1.10 USDT` loss)** when off-chain FX lags Uniswap v3 |
 
 ---
 

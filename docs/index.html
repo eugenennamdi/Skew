@@ -1466,6 +1466,16 @@
     const CELO_RPC = 'https://forno.celo.org';
     const BLOCKSCOUT_BASE = `https://celo.blockscout.com/api/v2/addresses/${AGENT_WALLET}`;
     const ERC8021_MARKER = '63656c6f5f373933356662393765323733'; // "celo_7935fb97e273"
+    const FEE_CURRENCY_USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'; // Celo CIP-64 feeCurrency (USDT)
+
+    function detectMiniPayProvider() {
+      const isMiniPay = Boolean(typeof window !== 'undefined' && window.ethereum && window.ethereum.isMiniPay);
+      if (isMiniPay) {
+        const statusEl = document.getElementById('liveStatusText');
+        if (statusEl) statusEl.textContent = 'Celo Mainnet · MiniPay';
+      }
+      return { isMiniPay, feeCurrency: FEE_CURRENCY_USDT };
+    }
 
     // Exact canonical Celo Mainnet token addresses matching skew-desk.mjs & stitch.toml
     const TOKENS = {
@@ -1956,7 +1966,7 @@
           skew: Number(STATE.skew.toFixed(3)),
           bidSpreadBps: cngnQ.buyBps,
           askSpreadBps: cngnQ.sellBps,
-          reason: `Ask anchored to Uniswap v3 mid (+${cngnQ.sellBps} bps), locking +${cngnQ.refillEdgeBps.toFixed(1)} bps replenishment edge.`,
+          reason: `Ask anchored to max(P_textile, P_uni) (+${cngnQ.sellBps} bps, +8.5 bps/day NGN carry), locking +${cngnQ.refillEdgeBps.toFixed(1)} bps DEX refill edge.`,
         },
         {
           corridor: 'wARS/USDT',
@@ -1966,7 +1976,7 @@
           skew: Number(warsSkew.toFixed(3)),
           bidSpreadBps: 4,
           askSpreadBps: 38,
-          reason: `Ask anchored to Uniswap v3 mid ($${warsUsd.toFixed(2)} reserve); auto-refills on 0.01% pool below $8.`,
+          reason: `Ask anchored above Uniswap v3 & DolarAPI (+13.3 bps/day crawl carry, $${warsUsd.toFixed(2)} reserve); auto-refills on 0.01% pool below $8.`,
         },
         {
           corridor: 'wBRL/USDT',
@@ -1976,7 +1986,7 @@
           skew: Number(wbrlSkew.toFixed(3)),
           bidSpreadBps: 1,
           askSpreadBps: 34,
-          reason: `Uniswap v3 0.01% pool at MAX_TICK (17M gas) blocked; rebalances via Textile RFQ (~197k gas).`,
+          reason: `Uniswap v3 0.01% pool at MAX_TICK (17M gas) blocked; rebalances via Textile RFQ (~197k gas, +4.2 bps/day Selic carry).`,
         },
         {
           corridor: 'USDC/USDT',
@@ -1986,7 +1996,7 @@
           skew: Number(usdcSkew.toFixed(3)),
           bidSpreadBps: 2,
           askSpreadBps: 8,
-          reason: `Stablecoin peg within 1.0 bps; quoting 2 / 8 bps two-way with auto-unwind above $22.`,
+          reason: `Stablecoin peg within 1.0 bps; quoting 2 / 8 bps two-way with Multi-Slice (100% / 50% / 25%) execution sizing.`,
         },
       ];
       const roBody = document.getElementById('riskOfficerTableBody');
@@ -2116,6 +2126,7 @@
       renderUI();
     }
 
+    detectMiniPayProvider();
     renderUI();
     syncTelemetry(true);
     setInterval(() => syncTelemetry(false), 3000);

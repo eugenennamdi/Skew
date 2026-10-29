@@ -47,11 +47,13 @@ export const CONFIG = {
   },
   // Strictly restricted to the 4 official Textile FX track currencies (cNGN, wARS, wBRL, USDC against USDT)
   tokens: [
-    { symbol: 'cNGN', address: addr('0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f'), decimals: 6, probeUsdt: 25 },
-    { symbol: 'wARS', address: addr('0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D'), decimals: 18, probeUsdt: 25 },
-    { symbol: 'wBRL', address: addr('0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0'), decimals: 18, probeUsdt: 25 },
-    { symbol: 'USDC', address: addr('0xcebA9300f2b948710d2653dD7B07f33A8B32118C'), decimals: 6, probeUsdt: 25 },
+    { symbol: 'cNGN', address: addr('0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f'), decimals: 6, probeUsdt: 150, fxCode: 'NGN', dailyCarryBps: 8.5 },
+    { symbol: 'wARS', address: addr('0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D'), decimals: 18, probeUsdt: 150, fxCode: 'ARS', dailyCarryBps: 13.3 },
+    { symbol: 'wBRL', address: addr('0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0'), decimals: 18, probeUsdt: 150, fxCode: 'BRL', dailyCarryBps: 4.2 },
+    { symbol: 'USDC', address: addr('0xcebA9300f2b948710d2653dD7B07f33A8B32118C'), decimals: 6, probeUsdt: 150, fxCode: 'USD', dailyCarryBps: 0.0 },
   ],
+  maxSliceUsdt: Number(process.env.MAX_SLICE_USDT || '150'),
+  sliceFractions: [1.0, 0.5, 0.25],
   legacyUnwindTokens: [
     { symbol: 'WETH', address: addr('0xD221812de1BD094f35587EE8E174B07B6167D9Af'), decimals: 18 },
   ],
@@ -138,12 +140,71 @@ export function computeSkewAndQuotes({ usdtUsd, cngnBalance, textileMid, uniMid,
   };
 }
 
+/**
+ * Validate optional operator private key format (0x-prefixed 64-character hex string).
+ * Returns null in read-only / telemetry mode when no private key is supplied.
+ */
+export function validatePrivateKey(rawKey = '') {
+  const clean = String(rawKey || '').trim();
+  if (!clean) return null;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(clean)) {
+    throw new Error('Invalid STITCH_PRIVATE_KEY format: expected 0x-prefixed 64-character hex string');
+  }
+  return clean;
+}
+
+/**
+ * Compute dynamic trade sizing slices (100%, 50%, 25% of liquid USDT budget, plus $25 floor)
+ * to maximize net dollar profit (edgeUsd) across shallow and deep pools.
+ */
+export function computeSliceSizesUsdt(liquidUsdt, maxSliceUsdt = CONFIG.maxSliceUsdt) {
+  const budget = Math.max(1.0, Math.min(maxSliceUsdt, Number(liquidUsdt || 25) * 0.9));
+  const rawSlices = [budget, budget * 0.5, budget * 0.25, Math.min(25, budget)];
+  const unique = [...new Set(rawSlices.map((v) => Number(Math.max(1.0, v).toFixed(2))))];
+  return unique.sort((a, b) => b - a);
+}
+
+export const OFFCHAIN_FX_DEFAULTS = {
+  NGN: 1381.5,
+  ARS: 1445.0,
+  BRL: 5.33,
+  USD: 1.0,
+  source: 'open.er-api.com + dolarapi.com',
+};
+
+let cachedOffChainFx = { ...OFFCHAIN_FX_DEFAULTS, fetchedAt: 0 };
+
+export async function fetchOffChainFxRates() {
+  if (Date.now() - cachedOffChainFx.fetchedAt < 300_000) return cachedOffChainFx;
+  try {
+    const [erRes, arsRes] = await Promise.all([
+      fetchJson('https://open.er-api.com/v6/latest/USD', { timeoutMs: 3500 }).catch(() => null),
+      fetchJson('https://dolarapi.com/v1/dolares/cripto', { timeoutMs: 3500 }).catch(() => null),
+    ]);
+    const rates = erRes?.rates || {};
+    const arsMid = arsRes?.compra && arsRes?.venta
+      ? (Number(arsRes.compra) + Number(arsRes.venta)) / 2
+      : Number(rates.ARS || OFFCHAIN_FX_DEFAULTS.ARS);
+    cachedOffChainFx = {
+      NGN: Number(rates.NGN || OFFCHAIN_FX_DEFAULTS.NGN),
+      ARS: arsMid,
+      BRL: Number(rates.BRL || OFFCHAIN_FX_DEFAULTS.BRL),
+      USD: 1.0,
+      source: erRes?.rates ? 'open.er-api.com + dolarapi.com (live)' : OFFCHAIN_FX_DEFAULTS.source,
+      fetchedAt: Date.now(),
+    };
+  } catch {
+    // Keep deterministic fallback if offline or rate-limited
+  }
+  return cachedOffChainFx;
+}
+
 const provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl, CONFIG.chainId, { staticNetwork: true });
 const quoter = new ethers.Contract(CONFIG.contracts.uniQuoterV2, QUOTER_ABI, provider);
 const routerIface = new ethers.Interface(ROUTER_ABI);
 const erc20Iface = new ethers.Interface(ERC20_ABI);
 
-const privKey = process.env.STITCH_PRIVATE_KEY || process.env.AGENT_PRIVATE_KEY || '';
+const privKey = validatePrivateKey(process.env.STITCH_PRIVATE_KEY || process.env.AGENT_PRIVATE_KEY || '');
 const wallet = privKey ? new ethers.Wallet(privKey, provider) : null;
 
 export async function sendTagged(txReq) {
@@ -235,10 +296,11 @@ async function textilePreview(sellToken, buyToken, sellAmountRaw) {
 }
 
 /**
- * Scan a single token across both directions with adaptive availableSellAmount sizing.
+ * Scan a single token across both directions with Multi-Slice (100% / 50% / 25%) + adaptive availableSellAmount sizing.
  */
 async function scanCorridor(token, maxUsdtBudget) {
-  const probeUsdt = Math.max(0.5, Math.min(token.probeUsdt, maxUsdtBudget || token.probeUsdt));
+  const candidateSlices = computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, token.probeUsdt);
+  const probeUsdt = candidateSlices[0] || 25;
   const usdtInRaw = ethers.parseUnits(probeUsdt.toFixed(6), 6);
   const rows = [];
 
@@ -260,10 +322,32 @@ async function scanCorridor(token, maxUsdtBudget) {
     }
 
     if (preview && preview.status === 'preview' && preview.buyAmount) {
-      const tokenOutRaw = BigInt(preview.buyAmount);
-      const uniBack = await bestUniQuote(token.address, CONFIG.contracts.usdt, tokenOutRaw);
-      const usdtInNum = Number(actualInRaw) / 1e6;
-      const usdtOutNum = Number(uniBack.amountOut) / 1e6;
+      let bestInRaw = actualInRaw;
+      let bestTokenOutRaw = BigInt(preview.buyAmount);
+      let bestUniBack = await bestUniQuote(token.address, CONFIG.contracts.usdt, bestTokenOutRaw);
+      let bestEdgeUsd = Number(bestUniBack.amountOut) / 1e6 - Number(bestInRaw) / 1e6;
+      let sliceLabel = actualInRaw < usdtInRaw ? `Adaptive size ($${(Number(actualInRaw) / 1e6).toFixed(2)} max depth)` : `100% slice ($${(Number(actualInRaw) / 1e6).toFixed(2)})`;
+
+      // Multi-slice down-step: if 100% slice suffers DEX price impact, evaluate 50% and 25% slices to maximize net edgeUsd
+      if (bestEdgeUsd < CONFIG.minEdgeUsd && actualInRaw >= 4000000n) {
+        for (const frac of [50n, 25n]) {
+          const sliceInRaw = (actualInRaw * frac) / 100n;
+          const sliceTokenRaw = (BigInt(preview.buyAmount) * frac) / 100n;
+          if (sliceInRaw < 1000000n || sliceTokenRaw <= 0n) continue;
+          const sliceUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, sliceTokenRaw);
+          const sliceEdgeUsd = Number(sliceUni.amountOut) / 1e6 - Number(sliceInRaw) / 1e6;
+          if (sliceEdgeUsd > bestEdgeUsd) {
+            bestInRaw = sliceInRaw;
+            bestTokenOutRaw = sliceTokenRaw;
+            bestUniBack = sliceUni;
+            bestEdgeUsd = sliceEdgeUsd;
+            sliceLabel = `${frac}% multi-slice ($${(Number(sliceInRaw) / 1e6).toFixed(2)})`;
+          }
+        }
+      }
+
+      const usdtInNum = Number(bestInRaw) / 1e6;
+      const usdtOutNum = Number(bestUniBack.amountOut) / 1e6;
       const edgeUsd = usdtOutNum - usdtInNum;
       const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
       rows.push({
@@ -273,14 +357,15 @@ async function scanCorridor(token, maxUsdtBudget) {
         decimals: token.decimals,
         direction: 'textile->uni',
         sizeUsdt: usdtInNum,
-        amountInRaw: actualInRaw.toString(),
-        midTokenRaw: tokenOutRaw.toString(),
+        amountInRaw: bestInRaw.toString(),
+        midTokenRaw: bestTokenOutRaw.toString(),
         expectedOutUsdt: usdtOutNum,
-        uniFee: uniBack.fee,
+        uniFee: bestUniBack.fee,
         edgeUsd,
         edgeBps,
+        sliceCandidatesUsdt: candidateSlices,
         status: edgeUsd >= CONFIG.minEdgeUsd ? 'ACTIONABLE' : 'WATCH',
-        note: actualInRaw < usdtInRaw ? `Adaptive size ($${usdtInNum.toFixed(2)} max depth)` : 'Full probe depth',
+        note: sliceLabel,
       });
     } else {
       rows.push({
@@ -291,6 +376,7 @@ async function scanCorridor(token, maxUsdtBudget) {
         expectedOutUsdt: 0,
         edgeUsd: 0,
         edgeBps: 0,
+        sliceCandidatesUsdt: candidateSlices,
         status: 'NO_MAKER',
         note: preview?.reason || 'no_makers_online',
       });
@@ -304,6 +390,7 @@ async function scanCorridor(token, maxUsdtBudget) {
       expectedOutUsdt: 0,
       edgeUsd: 0,
       edgeBps: 0,
+      sliceCandidatesUsdt: candidateSlices,
       status: 'ERR',
       note: e.message?.slice(0, 40) || 'error',
     });
@@ -652,61 +739,97 @@ async function ensurePermit2ForAllCorridors() {
   permit2Initialized = true;
 }
 
-export function computeRiskOfficerDecisions({ usdt, cngn, wars, wbrl, usdc, uniCngnMid, uniWarsMid, skewMetrics }) {
+export function computeRiskOfficerDecisions({
+  usdt,
+  cngn,
+  wars,
+  wbrl,
+  usdc,
+  uniCngnMid,
+  uniWarsMid,
+  skewMetrics,
+  offChainFx = OFFCHAIN_FX_DEFAULTS,
+}) {
   const nowIso = new Date().toISOString();
   const cngnUsd = cngn * uniCngnMid;
   const warsUsd = wars * uniWarsMid;
   const wbrlUsd = wbrl / 5.388;
   const usdcUsd = usdc;
+  const sliceSizesUsdt = computeSliceSizesUsdt(usdt);
+
+  const cngnPerUsdOnChain = uniCngnMid > 0 ? 1 / uniCngnMid : OFFCHAIN_FX_DEFAULTS.NGN;
+  const warsPerUsdOnChain = uniWarsMid > 0 ? 1 / uniWarsMid : OFFCHAIN_FX_DEFAULTS.ARS;
+  const cngnOffChainBasisBps = Number((((cngnPerUsdOnChain - offChainFx.NGN) / offChainFx.NGN) * 10000).toFixed(1));
+  const warsOffChainBasisBps = Number((((warsPerUsdOnChain - offChainFx.ARS) / offChainFx.ARS) * 10000).toFixed(1));
+  const wbrlOffChainBasisBps = Number((((5.388 - offChainFx.BRL) / offChainFx.BRL) * 10000).toFixed(1));
+
   const decisions = [
-      {
-        corridor: 'cNGN/USDT',
-        regime: Math.abs(skewMetrics.oracleGapBps) > 15 ? 'DUAL_ORACLE_SHIELD' : 'SKEW_REBALANCE',
-        inventoryUsd: Number(cngnUsd.toFixed(2)),
-        skew: Number(skewMetrics.skew.toFixed(3)),
-        oracleDispersionBps: Number(skewMetrics.oracleGapBps.toFixed(1)),
-        bidSpreadBps: skewMetrics.dynamicBuyBps ?? 6,
-        askSpreadBps: skewMetrics.dynamicSellBps ?? 42,
-        replenishEdgeBps: Number(skewMetrics.replenishEdgeBps.toFixed(1)),
-        reason: `SELL floor anchored to max(P_textile, P_uni) (+${skewMetrics.replenishEdgeBps.toFixed(1)} bps refill margin vs Uniswap v3 0.01%); BUY tightened to ${skewMetrics.dynamicBuyBps ?? 6} bps on +${skewMetrics.skew.toFixed(2)} USDT skew.`,
-      },
-      {
-        corridor: 'wARS/USDT',
-        regime: 'DUAL_ORACLE_SHIELD',
-        inventoryUsd: Number(warsUsd.toFixed(2)),
-        skew: Number(((usdt - warsUsd) / Math.max(1, usdt + warsUsd)).toFixed(3)),
-        oracleDispersionBps: 36.9,
-        bidSpreadBps: 4,
-        askSpreadBps: 38,
-        replenishEdgeBps: 36.9,
-        reason: `98.7% of network wARS depth ($${warsUsd.toFixed(2)} reserve); SELL anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS/USDT) locking in +36.9 bps refill edge.`,
-      },
-      {
-        corridor: 'wBRL/USDT',
-        regime: wbrlUsd >= 5 ? 'TWO_WAY_ACTIVE' : 'GAS_SHIELD_BUY_ACTIVE',
-        inventoryUsd: Number(wbrlUsd.toFixed(2)),
-        skew: Number(((usdt - wbrlUsd) / Math.max(1, usdt + wbrlUsd)).toFixed(3)),
-        oracleDispersionBps: 12.8,
-        bidSpreadBps: 1,
-        askSpreadBps: 34,
-        replenishEdgeBps: 34.0,
-        reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting 1 bps BUY wBRL on Textile backed by $${usdt.toFixed(0)} USDT.`,
-      },
-      {
-        corridor: 'USDC/USDT',
-        regime: 'PEG_TIGHT_TWO_WAY',
-        inventoryUsd: Number(usdcUsd.toFixed(2)),
-        skew: Number(((usdt - usdcUsd) / Math.max(1, usdt + usdcUsd)).toFixed(3)),
-        oracleDispersionBps: 2.0,
-        bidSpreadBps: 2,
-        askSpreadBps: 8,
-        replenishEdgeBps: 10.0,
-        reason: `Peg dispersion < 3 bps against Uniswap v3 0.01% pool; quoting tight 2/8 bps two-way dollar corridor with $${usdcUsd.toFixed(2)} USDC reserve.`,
-      },
-    ];
+    {
+      corridor: 'cNGN/USDT',
+      regime: Math.abs(skewMetrics.oracleGapBps) > 15 ? 'DUAL_ORACLE_SHIELD' : 'SKEW_REBALANCE',
+      inventoryUsd: Number(cngnUsd.toFixed(2)),
+      skew: Number(skewMetrics.skew.toFixed(3)),
+      oracleDispersionBps: Number(skewMetrics.oracleGapBps.toFixed(1)),
+      offChainPerUsd: Number(offChainFx.NGN.toFixed(2)),
+      offChainBasisBps: cngnOffChainBasisBps,
+      dailyCarryBps: 8.5,
+      sliceSizesUsdt,
+      bidSpreadBps: skewMetrics.dynamicBuyBps ?? 6,
+      askSpreadBps: skewMetrics.dynamicSellBps ?? 42,
+      replenishEdgeBps: Number(skewMetrics.replenishEdgeBps.toFixed(1)),
+      reason: `SELL floor anchored to max(P_textile, P_uni) (+${skewMetrics.replenishEdgeBps.toFixed(1)} bps refill margin vs Uniswap v3 0.01%, off-chain NGN ${offChainFx.NGN.toFixed(1)} / +8.5 bps/day carry); BUY tightened to ${skewMetrics.dynamicBuyBps ?? 6} bps on +${skewMetrics.skew.toFixed(2)} USDT skew.`,
+    },
+    {
+      corridor: 'wARS/USDT',
+      regime: 'DUAL_ORACLE_SHIELD',
+      inventoryUsd: Number(warsUsd.toFixed(2)),
+      skew: Number(((usdt - warsUsd) / Math.max(1, usdt + warsUsd)).toFixed(3)),
+      oracleDispersionBps: 36.9,
+      offChainPerUsd: Number(offChainFx.ARS.toFixed(2)),
+      offChainBasisBps: warsOffChainBasisBps,
+      dailyCarryBps: 13.3,
+      sliceSizesUsdt,
+      bidSpreadBps: 4,
+      askSpreadBps: 38,
+      replenishEdgeBps: 36.9,
+      reason: `98.7% of network wARS depth ($${warsUsd.toFixed(2)} reserve); SELL anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS/USDT vs DolarAPI ${offChainFx.ARS.toFixed(1)}, +13.3 bps/day crawl carry) locking in +36.9 bps refill edge.`,
+    },
+    {
+      corridor: 'wBRL/USDT',
+      regime: wbrlUsd >= 5 ? 'TWO_WAY_ACTIVE' : 'GAS_SHIELD_BUY_ACTIVE',
+      inventoryUsd: Number(wbrlUsd.toFixed(2)),
+      skew: Number(((usdt - wbrlUsd) / Math.max(1, usdt + wbrlUsd)).toFixed(3)),
+      oracleDispersionBps: 12.8,
+      offChainPerUsd: Number(offChainFx.BRL.toFixed(3)),
+      offChainBasisBps: wbrlOffChainBasisBps,
+      dailyCarryBps: 4.2,
+      sliceSizesUsdt,
+      bidSpreadBps: 1,
+      askSpreadBps: 34,
+      replenishEdgeBps: 34.0,
+      reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting two-way wBRL (${offChainFx.BRL.toFixed(2)} BRL/USD ref, +4.2 bps/day Selic carry) backed by $${usdt.toFixed(0)} USDT.`,
+    },
+    {
+      corridor: 'USDC/USDT',
+      regime: 'PEG_TIGHT_TWO_WAY',
+      inventoryUsd: Number(usdcUsd.toFixed(2)),
+      skew: Number(((usdt - usdcUsd) / Math.max(1, usdt + usdcUsd)).toFixed(3)),
+      oracleDispersionBps: 2.0,
+      offChainPerUsd: 1.0,
+      offChainBasisBps: 0.0,
+      dailyCarryBps: 0.0,
+      sliceSizesUsdt,
+      bidSpreadBps: 2,
+      askSpreadBps: 8,
+      replenishEdgeBps: 10.0,
+      reason: `Peg dispersion < 3 bps against Uniswap v3 0.01% pool; quoting tight 2/8 bps two-way dollar corridor with $${usdcUsd.toFixed(2)} USDC reserve.`,
+    },
+  ];
   return {
     enabled: true,
     overallRegime: 'DUAL_ORACLE_SHIELD',
+    fxReferenceSource: offChainFx.source || OFFCHAIN_FX_DEFAULTS.source,
+    sliceSizesUsdt,
     lastReviewAt: nowIso,
     decisions,
     corridors: decisions,
@@ -1001,6 +1124,7 @@ export async function runSingleScan() {
       ? (Number(cngnBuyPreview.buyAmount) / (13800 * 1e6)) * 1.0025
       : 0.00072295;
 
+    const offChainFx = await fetchOffChainFxRates();
     STATE.skewMetrics = computeSkewAndQuotes({
       usdtUsd: usdt,
       cngnBalance: cngn,
@@ -1016,11 +1140,12 @@ export async function runSingleScan() {
       uniCngnMid,
       uniWarsMid,
       skewMetrics: STATE.skewMetrics,
+      offChainFx,
     });
 
     const scanBatches = [];
     for (const t of CONFIG.tokens) {
-      scanBatches.push(await scanCorridor(t, Math.min(25, Math.max(1, usdt * 0.9))));
+      scanBatches.push(await scanCorridor(t, Math.min(CONFIG.maxSliceUsdt, Math.max(1, usdt * 0.9))));
     }
     const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : 2);
     const allRows = scanBatches
