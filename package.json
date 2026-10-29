@@ -1,7 +1,7 @@
 {
   "name": "skew-fx-agent",
   "version": "2.0.0",
-  "description": "Autonomous Dual-Oracle FX Market Maker & Cross-Venue Arbitrage Agent on Celo Mainnet (ERC-8004 #9905 / ERC-8021 celo_7935fb97e273)",
+  "description": "Autonomous FX market maker and arbitrage agent on Celo Mainnet.",
   "type": "module",
   "main": "skew-desk.mjs",
   "bin": {
