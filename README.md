@@ -124,19 +124,36 @@ Every transaction sent by both `./skew-stitch` and `skew-desk.mjs` is signed by 
 
 ---
 
-## 5. Quick Start & Verification
+## 5. Quick Start, Environment Variables & Verification
 
 ### 1. Clean Sandbox Verification (No Secrets or Funds Required)
 ```bash
 git clone https://github.com/eugenennamdi/Skew.git
 cd Skew
 npm ci
+npm run build
 npm test
-npm run dry-run
+npm run demo
 npm run check
 ```
 
-### 2. Rust Engine 1 (`skew-stitch`) Unit Tests
+### 2. Environment Variables ([`.env.example`](.env.example))
+
+All variables are optional in sandbox / telemetry mode (`LIVE=0`):
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CELO_RPC_URL` | `https://forno.celo.org` | Celo Mainnet (`42220`) JSON-RPC endpoint |
+| `LIVE` | `0` | Set to `1` to enable live on-chain Taker & Treasury execution |
+| `AUTO_REFILL` | `0` | Set to `1` to enable autonomous two-way Maker-to-DEX inventory unwind & refill |
+| `STITCH_PRIVATE_KEY` | *(empty in sandbox)* | `0x`-prefixed 64-hex Celo EOA key (required only when `LIVE=1`) |
+| `RFQ_API_KEY` | *(empty in sandbox)* | Textile Stitch WebSocket Maker API key (for Engine 1 `./skew-stitch`) |
+| `MAX_SLICE_USDT` | `150` | Maximum single-trade `USDT` slice for Multi-Slice (`100% / 50% / 25%`) sizing |
+| `MIN_EDGE_USD` | `0.01` | Minimum net dollar profit threshold (`USDT`) for cross-venue arbitrage execution |
+| `SCAN_INTERVAL_MS` | `12000` | Cross-venue scan & telemetry refresh interval (`ms`) |
+| `PORT` | `8080` | Local telemetry & dashboard HTTP server port (`/status`, `/trades`, `/health`) |
+
+### 3. Rust Engine 1 (`skew-stitch`) Unit Tests
 ```bash
 cd textile-stitch
 cargo test --no-default-features --lib pricing::skew
@@ -144,7 +161,7 @@ cargo test --no-default-features --lib attribution
 cargo test --no-default-features --lib rfq::responder
 ```
 
-### 3. Live Mainnet Execution (Requires `.env` with `STITCH_PRIVATE_KEY`)
+### 4. Live Mainnet Execution (Requires `.env` with `STITCH_PRIVATE_KEY`)
 ```bash
 cp .env.example .env
 # Edit .env with your Celo Mainnet EOA key and set LIVE=1
@@ -155,5 +172,5 @@ cp .env.example .env
 
 ## 6. License
 
-* **[`textile-stitch/`](textile-stitch/LICENSE)**: Licensed under **`AGPL-3.0-or-later`** (extended from upstream [`textile-protocol/textile-stitch`](https://github.com/textile-protocol/textile-stitch)).
-* **[`skew-desk.mjs`](skew-desk.mjs) & [`docs/`](docs/index.html)**: Licensed under **`MIT / Apache-2.0`**.
+* **[`LICENSE`](LICENSE)** (`skew-desk.mjs` & `docs/`): Licensed under **`MIT`**.
+* **[`textile-stitch/LICENSE`](textile-stitch/LICENSE)**: Licensed under **`AGPL-3.0-or-later`** (extended from upstream [`textile-protocol/textile-stitch`](https://github.com/textile-protocol/textile-stitch)).

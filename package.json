@@ -13,6 +13,9 @@
   },
   "scripts": {
     "start": "node skew-desk.mjs",
+    "build": "node --check skew-desk.mjs && node --check test/skew-desk.test.mjs",
+    "typecheck": "node --check skew-desk.mjs && node --check test/skew-desk.test.mjs",
+    "demo": "node skew-desk.mjs --dry-run",
     "test": "node --test test/skew-desk.test.mjs",
     "check": "node skew-desk.mjs --check",
     "dry-run": "node skew-desk.mjs --dry-run",
