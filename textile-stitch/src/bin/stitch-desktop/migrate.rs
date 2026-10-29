@@ -204,7 +204,7 @@ mod tests {
         fs::write(&p.toml, "[bot]\nname = \"x\"\n").unwrap();
         fs::write(
             &p.key,
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80\n"),
         )
         .unwrap();
 

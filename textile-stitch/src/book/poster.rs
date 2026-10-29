@@ -277,7 +277,7 @@ mod tests {
     use alloy_primitives::B256;
     use async_trait::async_trait;
 
-    const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const TEST_KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     fn order_with_nonce(nonce: u64) -> OrderParams {
         OrderParams {

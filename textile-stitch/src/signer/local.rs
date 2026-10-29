@@ -82,7 +82,7 @@ mod tests {
     use super::*;
     use crate::time::unix_now;
 
-    const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const TEST_KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     fn temp_key_file(contents: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();

@@ -1,0 +1,42 @@
+name: CI — Skew v2 Unit Tests & Sandbox Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node-tests:
+    name: Node 20 Unit Tests & Sandbox Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - name: Clean install dependencies from lockfile
+        run: npm ci
+      - name: Run unit test suite
+        run: npm test
+      - name: Run zero-secret sandbox verification
+        run: npm run dry-run
+
+  rust-tests:
+    name: Rust Engine 1 (skew-stitch) Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: textile-stitch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: textile-stitch
+      - name: Run Skew pricing, Dual-Oracle & ERC-8021 attribution tests
+        run: |
+          cargo test --no-default-features --lib pricing::skew
+          cargo test --no-default-features --lib attribution
+          cargo test --no-default-features --lib rfq::responder

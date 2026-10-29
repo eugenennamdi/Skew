@@ -1,9 +1,9 @@
 # Secrets & credentials (NEVER commit)
 *.key
 *.pem
-!textile-stitch/src/setup/testdata/*.pem
 *.env
 .env*
+!.env.example
 **/rfq-api.key
 **/stitch.env
 **/rfq-instance-id

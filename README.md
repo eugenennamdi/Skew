@@ -13,6 +13,20 @@ Skew is an autonomous FX liquidity, smart-pricing, and multi-currency treasury e
 | **Textile Maker ID** | `cmv75ay6h00bq339u3x6gdicy` (`stitch-42220-e5036100`, seated across `cngn-usdt-celo`, `wars-usdt-celo`, `wbrl-usdt-celo`, `usdc-usdt-celo`) |
 | **Independent Counterparty Audit** | **[`reports/EVIDENCE.md`](reports/EVIDENCE.md)** (`639` on-chain settlements · **`+$10.25 USDT` (`+5.26%` RoC) Strategy PnL** · `$17,455.46` volume (`89.5x` turnover) · `40` Maker fills · `265` 2-leg arbs) |
 | **Canonical Contracts** | Textile Reactor [`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`](https://celoscan.io/address/0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3) · Permit2 [`0x000000000022D473030F116dDEE9F6B43aC78BA3`](https://celoscan.io/address/0x000000000022D473030F116dDEE9F6B43aC78BA3) |
+| **Runtime & Lockfile** | **Node.js `>= 20.0.0`** ([`.nvmrc`](.nvmrc) / [`package-lock.json`](package-lock.json)) · **Rust `1.82+`** ([`textile-stitch/Cargo.lock`](textile-stitch/Cargo.lock)) · **[`SECURITY.md`](SECURITY.md)** |
+
+### How to Run (Zero-Secret Sandbox & Live Mainnet Reproduction)
+
+No API keys, private keys, or wallet funds are required to install, test, or run the telemetry server in a clean sandbox (`LIVE=0` default):
+
+```bash
+# Requires Node.js >= 20 (see .nvmrc)
+npm ci                  # Clean install from committed package-lock.json
+npm test                # Run offline unit tests (Avellaneda-Stoikov skew, Dual-Oracle shield, MAX_TICK guard, ERC-8021)
+npm run dry-run         # Zero-secret offline sandbox verification (exits 0 with JSON proof)
+npm run check           # Read-only Celo Mainnet (42220) RPC + Textile RFQ 4-corridor live check
+npm start               # Start local telemetry server & dashboard on http://localhost:8080 (/status, /trades)
+```
 
 ---
 
@@ -93,31 +107,37 @@ Every transaction sent by both `./skew-stitch` and `skew-desk.mjs` is signed by 
 * [`textile-stitch/src/rfq/mod.rs`](textile-stitch/src/rfq/mod.rs) — Batched Celo Uniswap v3 `slot0()` reader (`refresh_celo_dex_reference`) refreshing `cNGN/USDT`, `wARS/USDT`, and `USDC/USDT` DEX mids every 2 seconds.
 * [`textile-stitch/src/attribution.rs`](textile-stitch/src/attribution.rs) & [`textile-stitch/src/chain/tx.rs`](textile-stitch/src/chain/tx.rs) — Deterministic 35-byte ERC-8021 calldata suffix (`celo_7935fb97e273`) injected into every signed Rust transaction.
 * [`skew-desk.mjs`](skew-desk.mjs) — Autonomous 4-corridor cross-venue arbitrage engine, two-way Uniswap v3 `0.01%` treasury auto-unwind/refill manager, EIP-712 `TakerControl` signer, ERC-8021 tagged transaction sender (`sendTagged`), and live telemetry web server (`http://localhost:8080`, `/status`, `/trades`).
+* [`test/skew-desk.test.mjs`](test/skew-desk.test.mjs) — Node `node:test` unit test suite covering Celo Mainnet (`42220`) & ERC-8004 `#9905` invariants, 35-byte ERC-8021 attribution, Avellaneda-Stoikov inventory skew, Dual-Oracle `max/min` shield, `MAX_TICK` (`800k gas`) filter, and anti-self-trade calldata verification.
 * [`stitch.toml`](stitch.toml) — Multi-corridor Celo mainnet configuration (`cngn-usdt-celo`, `wars-usdt-celo`, `wbrl-usdt-celo`, `usdc-usdt-celo`).
-* [`run-vm.sh`](run-vm.sh) — One-command 24/7 Google Cloud VM launcher with automatic maker enrollment (`./skew-stitch connect`), Permit2 approval verification (`./skew-stitch approve`), and `setsid` daemon detachment.
+* [`run-vm.sh`](run-vm.sh) — Production 24/7 launcher loading `.env` / `textile-stitch/stitch.env` (see [`.env.example`](.env.example) and [`SECURITY.md`](SECURITY.md)).
 
 ---
 
 ## 5. Quick Start & Verification
 
-### 1. One-Command 24/7 Cloud VM Deployment
+### 1. Clean Sandbox Verification (No Secrets or Funds Required)
 ```bash
 git clone https://github.com/eugenennamdi/Skew.git
 cd Skew
-./run-vm.sh
+npm ci
+npm test
+npm run dry-run
+npm run check
 ```
 
-### 2. Run Self-Checks & Unit Tests
+### 2. Rust Engine 1 (`skew-stitch`) Unit Tests
 ```bash
-# Verify Rust Dual-Oracle Anti-Arb Shield, Inventory Skew & ERC-8021 Attribution
 cd textile-stitch
-cargo test --lib pricing::skew
-cargo test --lib attribution
-cargo test --lib rfq::responder
-cd ..
+cargo test --no-default-features --lib pricing::skew
+cargo test --no-default-features --lib attribution
+cargo test --no-default-features --lib rfq::responder
+```
 
-# Verify Live Celo RPC + Textile 4-Corridor Scanner & Dual-Oracle Math
-node skew-desk.mjs --check
+### 3. Live Mainnet Execution (Requires `.env` with `STITCH_PRIVATE_KEY`)
+```bash
+cp .env.example .env
+# Edit .env with your Celo Mainnet EOA key and set LIVE=1
+./run-vm.sh
 ```
 
 ---

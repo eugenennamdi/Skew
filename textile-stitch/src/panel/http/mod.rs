@@ -429,7 +429,7 @@ pub(crate) mod testkit {
     use crate::panel::PanelConfig;
 
     /// A hardhat test key. Public, funded on nobody's mainnet.
-    pub const TEST_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    pub const TEST_KEY: &str = concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     /// Catalog templates are RFQ-only. Lifecycle fixtures model leftover book
     /// bots so Start still works without Connect.

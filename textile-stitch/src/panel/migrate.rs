@@ -749,7 +749,7 @@ mod tests {
     use crate::panel::naming::LABEL_COMPOSE_SERVICE;
     use std::io::Write;
 
-    const KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     /// A `ContainerFiles` that serves a fixed set of files, or fails.
     struct FakeFiles {

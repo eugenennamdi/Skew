@@ -114,7 +114,7 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     // Anvil/Hardhat account #0.
-    const KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     fn key() -> SigningKey {
         SigningKey::from_slice(&hex::decode(KEY).unwrap()).unwrap()

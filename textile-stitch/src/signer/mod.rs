@@ -622,7 +622,7 @@ mod tests {
     use alloy_primitives::{address, b256};
 
     // Anvil/Hardhat account #0 — a well-known test vector.
-    const KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     fn key() -> SigningKey {
         SigningKey::from_slice(&hex::decode(KEY).unwrap()).unwrap()

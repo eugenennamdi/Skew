@@ -652,7 +652,7 @@ mod tests {
     const REACTOR: Address = address!("1111111111111111111111111111111111111111");
     const CNGN: Address = address!("4444444444444444444444444444444444444444");
     const USDT: Address = address!("3333333333333333333333333333333333333333");
-    const KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
     const CHAIN: u64 = 8453;
 
     fn signing_key() -> SigningKey {

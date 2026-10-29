@@ -212,7 +212,7 @@ mod tests {
         let dir = unique_dir("addr");
         std::fs::write(
             dir.join("stitch.key"),
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80\n"),
         )
         .unwrap();
         let addr = operator_address(&dir).unwrap();

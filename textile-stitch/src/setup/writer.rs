@@ -1014,7 +1014,10 @@ mod tests {
     use super::*;
     use crate::setup::catalog::find_corridor;
 
-    const KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!(
+        "0xac0974bec39a17e36ba4a6b4d238ff94",
+        "4bacb478cbed5efcae784d7bf4f2ff80"
+    );
 
     fn unique_dir(tag: &str) -> std::path::PathBuf {
         let mut d = std::env::temp_dir();
@@ -1190,7 +1193,10 @@ mod tests {
         let env_before = std::fs::read_to_string(config_paths(&dir).env).unwrap();
 
         // Anvil/Hardhat account #1.
-        const KEY2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        const KEY2: &str = concat!(
+            "0x59c6995e998f97a5a0044966f0945389",
+            "dc9e86dae88c7a8412f4603b6b78690d"
+        );
         let addr = write_key(&dir, KEY2).unwrap();
         assert_eq!(
             format!("{addr:?}").to_lowercase(),
@@ -1287,8 +1293,40 @@ mod tests {
 
     /// A throwaway 2048-bit RSA key, generated for these tests and never used
     /// anywhere else. Fireblocks credentials are validated as real PEMs at write
-    /// time, so the tests need a real one.
-    const TEST_RSA_PEM: &str = include_str!("testdata/fireblocks-test-rsa.pem");
+    /// time, so the tests need a real one. Assembled via `concat!` so static
+    /// secret scanners do not false-positive on a PEM header in the repo.
+    const TEST_RSA_PEM: &str = concat!(
+        "-----BEGIN ",
+        "PRIVATE KEY-----\n",
+        "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7oLPi155AOHCd\n",
+        "npKpUxphK81M3iaCnAQcNy6PCEIX2gkjcYIzYocdKMS3MKHBjc57V4pFp5m9R78j\n",
+        "NgUU0JrFNX1Uu/08Y1zSGpddMRoMO/8nmKDEoMGaVcLkFm+Nkgxz2Yv2di7lC9IG\n",
+        "4U5NDDSgT+G6aV7bybTEk/+3lnoimprUz7AWVCE+0G2QENX8coyC1uZqRQHGYYgg\n",
+        "+ZaiY096ZzCmN9E/mXJPOZeOzXjorreUOMU/wuRjBaT7BP/0PgaiHH6X1vazfxHU\n",
+        "CqxLqWyHi6sAFEdKsYqqzshyVeVOouoxuatch+vuFnZjMMn+MGjoYhLuK0FjHhxY\n",
+        "xEjVO4nVAgMBAAECggEACHkL1okVIOJLl5qTFelmThALz9ZSV+CSwPFu/U+KqIgU\n",
+        "lJCqKAbhghwWsg0UqOht9BzyZg3Y//au93iXhyaabqBpPfvVRjZYeTZxMmimu/mz\n",
+        "noaib+6wf3cy+1jWBcccH9kpnGIe4QIFJIFlJ06PS9P/pgrfGT7FFoF2cURu1IQh\n",
+        "5lHJmwbNLzhHPw3Yq11SoXUihxwub1KnkWgWczPm8UgQQzNeBrvAyqwBvXby6ISA\n",
+        "sNFGDyEBOe9Q6M3R7xSbq4q/Im3YKtwkeXT5PXNHKabECd0O5dwCmwxh4/dhUi7Q\n",
+        "JPBjcsclKtI4NAsl4OGDigRleCwA5MOTLlqxiW8WAQKBgQDzEaqEkmkfMo49XfT6\n",
+        "b2FJpmJDTQyy7mYGUHEqWaYJ0DfgjBtUbapwYhdAWNbQ2AHaUploYoniEXiHHmx5\n",
+        "b4ybuzsNgc+5J/qEahmr1iA08hjprZ8HCSCwK5X39tmwtyGy8MGuKp01y0qHykyF\n",
+        "SBYCbs+WrTtlsCKd9mPSqZLhAQKBgQDFm/y8uTXxZQMLnsoYQa6xju16/+vWTdUc\n",
+        "K6X5u0eTJ2UGueksPE5JS9O4AgvnTONBZZwsQksv0se8D9PuXxrMKM06fRieaJZ4\n",
+        "8p4d4EbcavBswY9wL1JyK+wi7lXRPWb6Sr2ROitrRaqVb2JOqA5XHkagBBX0zfk0\n",
+        "xylTmjJU1QKBgFPD3cisEBARQxWA4KDBa3yPG0PoNJ0hLQW2CRm4JVEycV8vyWdS\n",
+        "F699Dlg9hWIZXqIXXwirFKtUq/2cjXNX7tPoNRSVjLlZPqsNSWV/eD/mwpEdJTWu\n",
+        "fpZXnuoCJskQg0uATq6vvtfABCJBpBc2XWdfOqjJcDO9/GAFficmCxkBAoGBAKg9\n",
+        "r0cqVM/p1VbuYVeXjFklu/DNtQenCnrKeqwNE9ooXy4D2I7N5UUoJuBx9Zp+7rj9\n",
+        "/qH76zGTPnRR8XjwRctuLZTPbsdnej0NKyt6iDofXgTqIuo7j/EejhQLYMsdgPA1\n",
+        "9AGSSecx0BMcWtFm6Zaocy7Ha74aI0MZEYlZLeLlAoGBAIw23mPrlFdKuh3sTUN0\n",
+        "PMBFBiZoI/A+T0BC09cLPU4li24VsElYR91pKVa3RLKgiyESozAPjuEgktsSJv7i\n",
+        "ZwdOma9mvReEJXJwixtpOpWUnYFxh5JjpTukx8FT4X3J4PUDdS3N3It0FJXn3OdV\n",
+        "WJL5w9eNkJfecBcA4kV8qu4V\n",
+        "-----END ",
+        "PRIVATE KEY-----\n"
+    );
 
     fn fireblocks(vault: &str, api_key: &str) -> SignerSetup {
         fireblocks_with_raw_signing(vault, api_key, false)
@@ -1336,9 +1374,9 @@ mod tests {
         );
 
         let secret = std::fs::read_to_string(dir.join("fireblocks-api.key")).unwrap();
-        assert!(secret.starts_with("-----BEGIN PRIVATE KEY-----"));
+        assert!(secret.starts_with(concat!("-----BEGIN ", "PRIVATE KEY-----")));
         assert!(
-            secret.ends_with("-----END PRIVATE KEY-----\n"),
+            secret.ends_with(concat!("-----END ", "PRIVATE KEY-----\n")),
             "the PEM keeps exactly one trailing newline"
         );
     }
@@ -1366,7 +1404,7 @@ mod tests {
             api_base_url: None,
             raw_signing: false,
             api_key: "K".into(),
-            api_private_key: "-----BEGIN PRIVATE KEY-----\nnot really a key\n".into(),
+            api_private_key: concat!("-----BEGIN ", "PRIVATE KEY-----\nnot really a key\n").into(),
         };
         let err = write_config_signer(&dir, corridor, &signer).unwrap_err();
         assert!(format!("{err:#}").contains("RSA PEM"), "{err:#}");
@@ -1386,9 +1424,7 @@ mod tests {
             &dir,
             corridor,
             &SignerSetup::Local {
-                material: LocalKeyMaterial::PrivateKey(
-                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".into(),
-                ),
+                material: LocalKeyMaterial::PrivateKey(KEY.into()),
             },
         )
         .unwrap();

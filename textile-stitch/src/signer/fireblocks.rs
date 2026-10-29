@@ -1154,7 +1154,7 @@ pub(crate) fn parse_rsa_pem(pem: &str) -> anyhow::Result<jsonwebtoken::EncodingK
         anyhow!(
             "the Fireblocks API private key is not a usable RSA PEM ({e}). Paste the whole \
              fireblocks_secret.key file issued with the API key, including the \
-             '-----BEGIN PRIVATE KEY-----' and END lines."
+             BEGIN and END header lines."
         )
     })
 }

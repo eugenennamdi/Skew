@@ -1,0 +1,27 @@
+title = "Skew Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist public Celo transaction hashes, ERC-8021 attribution suffix, and upstream Anvil/Fireblocks test fixtures"
+paths = [
+  '''(^|/)testdata/''',
+  '''(^|/)Cargo\.lock$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)reports/EVIDENCE\.md$''',
+]
+regexTarget = "line"
+regexes = [
+  '''ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  '''59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d''',
+  '''63656c6f5f373933356662393765323733110080218021802180218021802180218021''',
+  '''celoscan\.io/tx/0x[0-9a-fA-F]{64}''',
+  '''b256!\("[0-9a-fA-F]{64}"\)''',
+  '''sha256:[0-9a-fA-F]{64}''',
+  '''choose-a-long-password''',
+  '''11111111-2222-3333-4444-555555555555''',
+]
+commits = [
+  "2d5e81c21f13c18189cb9db45da886f0420fe046",
+]

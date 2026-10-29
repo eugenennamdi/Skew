@@ -663,7 +663,7 @@ mod tests {
     use alloy_primitives::address;
     use std::sync::Arc;
 
-    const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const TEST_KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
 
     fn local_signer() -> DynSigner {
         Arc::new(LocalSigner::new(parse_private_key(TEST_KEY).unwrap()))

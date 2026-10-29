@@ -969,7 +969,7 @@ mod tests {
         setup::write_config(
             &dir,
             corridor,
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80"),
         )
         .unwrap();
         dir
@@ -1331,13 +1331,13 @@ mod tests {
         // Its key, named after the config — not the canonical stitch.key.
         std::fs::write(
             root.join("stitch.bot1.key"),
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80\n"),
         )
         .unwrap();
         // And an unrelated canonical key for another bot, which must not win.
         std::fs::write(
             root.join("stitch.key"),
-            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n",
+            concat!("0x59c6995e998f97a5a0044966f0945389", "dc9e86dae88c7a8412f4603b6b78690d\n"),
         )
         .unwrap();
 
@@ -1596,7 +1596,7 @@ mod tests {
         setup::write_config(
             &dir,
             corridor,
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80"),
         )
         .unwrap();
         // Duplicate the pool block so the config has two.

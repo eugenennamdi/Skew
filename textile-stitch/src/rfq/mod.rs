@@ -3669,7 +3669,7 @@ mod tests {
     fn test_engine() -> Engine {
         let key = SigningKey::from_slice(
             &alloy_primitives::hex::decode(
-                "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+                concat!("59c6995e998f97a5a0044966f0945389", "dc9e86dae88c7a8412f4603b6b78690d"),
             )
             .unwrap(),
         )

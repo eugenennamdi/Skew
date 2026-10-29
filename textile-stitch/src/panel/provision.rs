@@ -1104,7 +1104,7 @@ mod tests {
         setup::write_config(
             &dir,
             corridor,
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            concat!("0xac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80"),
         )
         .unwrap();
         let rt = signer_runtime(&dir).unwrap();

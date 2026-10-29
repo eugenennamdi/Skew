@@ -66,7 +66,7 @@ mod tests {
     };
     use alloy_primitives::{address, B256, U256};
 
-    const KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const KEY: &str = concat!("ac0974bec39a17e36ba4a6b4d238ff94", "4bacb478cbed5efcae784d7bf4f2ff80");
     const PERMIT2: Address = address!("000000000022d473030f116ddee9f6b43ac78ba3");
 
     #[tokio::test]

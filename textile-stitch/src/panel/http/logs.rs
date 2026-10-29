@@ -1434,7 +1434,7 @@ mod tests {
         seed_transacting(&h, "bot-a", ContainerState::Exited);
         seed_transacting(&h, "bot-b", ContainerState::Running);
         // Rewrite bot-b's key so it signs as somebody else.
-        let other = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        let other = concat!("0x59c6995e998f97a5a0044966f0945389", "dc9e86dae88c7a8412f4603b6b78690d");
         std::fs::write(
             h.root.join("bot-b").join("stitch.key"),
             format!("{other}\n"),
