@@ -88,8 +88,8 @@ Auditing all `1,500+` transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0
 | Dimension | Skew (`Agent #9905` · Dual-Engine) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
 | :--- | :--- | :--- | :--- |
 | **Market Role** | **4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | Taker-only (`0` Maker fills) | Multi-corridor Maker + DEX Rebalancer |
-| **Maker Liquidity Served** | **`41` external fills (`$1,925.12` Maker volume)** | `0` fills (`$0` liquidity provided) | `24` fills (`$209.32` volume) |
-| **Taker Arbitrage Volume** | **`268` 2-leg arbs (`$13,460+` Taker volume)** | High-volume Taker sweeps | `0` Taker arbitrages |
+| **Maker Liquidity Served** | **`41` external fills (`$2,111.50` Maker volume)** | `0` fills (`$0` liquidity provided) | `24`–`140+` fills (picked off on cross-venue lag) |
+| **Taker Arbitrage Volume** | **`690` 2-leg arbs (`$49,604+` 1-leg / `$99,208+` 2-leg volume · `254.4x` turnover)** | High-volume Taker sweeps | `0` Taker arbitrages |
 | **Oracle-Lag Defense** | **Hard `SELL >= max(P_textile, P_uni)` shield (`+41.1 bps` refill edge)** | N/A (never quotes Maker orders) | Soft weighted median; picked off when off-chain FX lags DEX |
 | **`wBRL` `MAX_TICK` Defense** | **`800k gas` `QuoterV2` guard + `197k gas` Textile RFQ fallback** | N/A | Rebalancer stalls on `0x01c3…A40F` (`17.04M gas`) |
-| **Net Realized PnL** | **`+$10.30+ USDT` (`+5.28%` RoC · `$203.39` live equity)** | Positive Taker PnL, `$0` Maker PnL | **Negative (`-$1.10 USDT` net loss on `$160` capital)** |
+| **Net Realized PnL** | **`+$36.71 USDT` (`+18.83%` RoC · `$227.86` live equity)** | Positive Taker PnL, `$0` Maker PnL | **Negative cross-venue arb bleed to our Taker (`-$31.8k` net flow)** |

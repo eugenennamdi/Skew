@@ -21,10 +21,10 @@ Built for **Celo · Agents on Open Rails** (*Open Corridors: Textile FX* track, 
 
 Starting from a **`$195.00 USDT`** bankroll on Celo Mainnet (`42220`), all verifiable on [Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324) and detailed in [`reports/EVIDENCE.md`](reports/EVIDENCE.md):
 
-- **`$203.39` live treasury equity (`+$10.30+ USDT` realized trading profit · `+5.28%` return on capital)** after all gas and protocol fees.
-- **`$17,736+` cumulative on-chain volume (`90.9x` capital turnover)** across **`789` Celo Mainnet transactions (`2,026` ERC-20 transfers)** with **`99.8%` execution reliability** (`100%` over the last 48 hours).
-- **`41` independent external Maker fills (`$1,925.12` Maker volume)** served to other hackathon agents (`#9991 Kiyoshi`, `#9908 Naira Desk`, `#9995 naira-maker`), including single fills up to **`$140.28 USDT` (`193,716 cNGN`)** and **`$86.48 USDT` (`459.57 wBRL`)**.
-- **`268` two-leg cross-venue arbitrages (`$13,460+` Taker volume, `100%` profitable)** closing price dislocations up to **`+187.5 bps`** on `wARS/USDT` and **`+64.2 bps`** on `cNGN/USDT`.
+- **`$227.86` live treasury equity (`+$36.71 USDT` realized trading profit · `+18.83%` return on capital)** after all gas and protocol fees (including `$3.85 USDT` autonomously swapped into `CELO` gas reserves).
+- **`$49,604+` cumulative 1-leg trade volume (`$99,208+` two-leg notional · `254.4x` capital turnover)** across **`1,466` signed Celo Mainnet transactions (`3,714` ERC-20 transfers)** with **`99.9%` execution reliability** (`100%` over the last 72 hours).
+- **`41` independent external Maker fills (`$2,111.50` Maker volume)** served to other hackathon agents (`#9991 Kiyoshi`, `#9908 Naira Desk`, `#9995 naira-maker`), including single fills up to **`$140.28 USDT` (`193,716 cNGN`)** and **`$86.48 USDT` (`459.57 wBRL`)**.
+- **`690` two-leg cross-venue arbitrages (`100%` profitable)** closing price dislocations up to **`+187.5 bps`** on `wARS/USDT` (`$27,773+` extracted from stale Maker quotes) and **`+64.2 bps`** on `cNGN/USDT` (`$5,103+` extracted).
 
 ---
 
@@ -98,6 +98,7 @@ Every claim in this repository is backed by on-chain transactions on Celo Mainne
 
 | Capability | On-Chain Verification (Celoscan) |
 | :--- | :--- |
+| **`$133.36` Multi-Slice Cross-Venue Arbitrage (`wARS/USDT`)** | Bought `220,478 wARS` for `133.36 USDT` from rival Maker `#9929` on Textile ([`0xd0855bf8…4a1b`](https://celoscan.io/tx/0xd0855bf83154261c63c9939e14164501aa9c3f1d74a15bc8f92a35cf215a4a1b)); unwound 12s later on Uniswap v3 `0.01%` for **`133.42 USDT` (`+$0.0599 USDT` net profit)** ([`0xb4a0071e…425d`](https://celoscan.io/tx/0xb4a0071e8b077e1297ec306b21a5b0855f0ef01d07a49bf90b6ca3bd2787425d)) |
 | **`$140.28` Maker Fill → Instant Uniswap v3 Unwind (`cNGN/USDT`)** | External bot `#9908` lifted `140.28 USDT` (`193,716 cNGN`) from our Maker ([`0xd13ec8ec…937e`](https://celoscan.io/tx/0xd13ec8ec5b95d4b90e1bfe856da0e0881b38a01c6e833f225dbb11cb8ec8937e)); 27s later `skew-desk.mjs` unwound on Uniswap v3 `0.01%` for **`140.29 USDT`** ([`0x6f82fbaa…565d`](https://celoscan.io/tx/0x6f82fbaa43677a010fcc6da464719dd4edf1998468d0d5c5c2f79cf64a4f565d)) |
 | **Shielded Maker Fill → `+41.1 bps` DEX Refill (`cNGN/USDT`)** | External bot `#9995` paid `18.0620 USDT` for `24,799 cNGN` ([`0x51b95699…fca4`](https://celoscan.io/tx/0x51b956998cde49e9b799573de2775279081225b0ec3fe370710579616e45fca4)); refilled `24,800 cNGN` on Uniswap v3 for `17.9880 USDT` ([`0x28d4e714…c6d5`](https://celoscan.io/tx/0x28d4e71468195aae4a1275a32dc935b2936e94864838267c3ecac3e8b436c6d5)), netting **`+$0.0740 USDT` (`+41.1 bps`)** |
 | **Institutional `$86.48` & `$80.00` Maker Fills (`wBRL` & `cNGN`)** | Served to `#9991 Kiyoshi`: `459.57 wBRL → 86.48 USDT` ([`0x9e9abd6d…5a5a`](https://celoscan.io/tx/0x9e9abd6d1ebb31a309642d6e58efb7f3e68d4d50e9942ca266bc49beaf7d5a5a)) and `110,627 cNGN → 80.00 USDT` ([`0x855d155c…a4a9`](https://celoscan.io/tx/0x855d155c063195460508b15364a841482041bf7c3e458ff47d2a3d33b859a4a9)) |
