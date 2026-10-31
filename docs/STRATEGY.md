@@ -25,9 +25,9 @@ $$P_{\text{uni}} = \left(\frac{\text{sqrtPriceX96}}{2^{96}}\right)^2 \cdot 10^{\
 
 Before applying inventory-skew spreads, `effective_mid_for_side()` enforces a hard no-cross boundary:
 
-$$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, \; P_{\text{uni}}\right), \qquad P_{\text{mid, eff}}(\text{BUY}) = \min\left(P_{\text{textile}}, \; P_{\text{uni}}\right)$$
+$$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, P_{\text{uni}}\right), \qquad P_{\text{mid, eff}}(\text{BUY}) = \min\left(P_{\text{textile}}, P_{\text{uni}}\right)$$
 
-- **On-chain proof of the shield in action:** On Oct 26 at `21:42Z`, external bot `#9995 naira-maker` (`0x8754FE21…744B`) lifted our `cNGN` ask when Textile's oracle lagged Uniswap v3 by `34 bps`. At `21:43Z`, we enabled `effective_mid_for_side()`. On the very next three fills (`21:44Z`, `21:58Z`, `22:02Z` — e.g. [`0x51b95699…fca4`](https://celoscan.io/tx/0x51b956998cde49e9b799573de2775279081225b0ec3fe370710579616e45fca4)), `#9995` paid **`1,372.92 cNGN/USDT`** to our Maker while `skew-desk.mjs` immediately refilled the exact `cNGN` on Uniswap v3 at **`1,378.71 cNGN/USDT`** ([`0x28d4e714…c6d5`](https://celoscan.io/tx/0x28d4e71468195aae4a1275a32dc935b2936e94864838267c3ecac3e8b436c6d5)), locking in **`+41.1 bps` (`+$0.0740 USDT`) risk-free profit per fill**.
+- **On-chain proof of the shield in action:** On Oct 26 at `21:42Z`, external bot `#9995 naira-maker` (`0x8754FE21…744B`) lifted our `cNGN` ask when Textile's oracle lagged Uniswap v3 by `34 bps`. At `21:43Z`, we enabled `effective_mid_for_side()`. On the very next three fills (`21:44Z`, `21:58Z`, `22:02Z` — e.g. [`0x51b95699…fca4`](https://celoscan.io/tx/0x51b956998cde49e9b799573de2775279081225b0ec3fe370710579616e45fca4)), `#9995` paid **`1,372.92 cNGN/USDT`** to our Maker while `skew-desk.mjs` immediately refilled the exact `cNGN` on Uniswap v3 at **`1,378.71 cNGN/USDT`** ([`0x28d4e714…c6d5`](https://celoscan.io/tx/0x28d4e71468195aae4a1275a32dc935b2936e94864838267c3ecac3e8b436c6d5)), locking in **`+41.1 bps` (`+$0.0740 USDT`) positive replenishment margin per fill**.
 
 ---
 
@@ -40,10 +40,10 @@ $$V_{\text{USDT}} = \frac{\text{bal}_{\text{USDT}}}{10^6}, \qquad V_{\text{tok}}
 
 Given corridor base spreads and risk aversion $\gamma = 30\text{ bps}$:
 
-$$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, \; 1\text{ bps}, \; 150\text{ bps}\right), \qquad \text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, \; 1\text{ bps}, \; 150\text{ bps}\right)$$
+$$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right), \qquad \text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right)$$
 
-### B. 3-Source Off-Chain FX Triangulation & Daily Crawl Carry
-Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) fetches live independent off-chain FX rates (`open.er-api.com` for `NGN`/`BRL` and `dolarapi.com/v1/dolares/cripto` for `ARS`) and incorporates daily emerging-market currency carry/crawl into the Autonomous Risk Officer:
+### B. Deterministic Risk Officer: 3-Source Off-Chain FX Triangulation & Daily Crawl Carry
+Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) runs a deterministic, zero-latency quantitative Risk Officer (`buildRiskOfficerReport()`)—avoiding slow external LLM API calls inside the 2-second quoting loop—that triangulates live off-chain FX rates (`open.er-api.com` for `NGN`/`BRL` and `dolarapi.com/v1/dolares/cripto` for `ARS`) and incorporates daily emerging-market currency carry/crawl:
 
 | Corridor | Token Decimals | Primary Celo Uniswap v3 Pool (`0.01%`) | Off-Chain Reference Source | Daily Crawl / Carry (`bps/day`) | Target Maker Reserve |
 | :--- | :---: | :--- | :--- | :---: | :---: |
@@ -83,13 +83,18 @@ During live Celo Mainnet operation, we discovered a critical on-chain anomaly on
 
 ## 5. Empirical Celo Mainnet Microstructure Benchmark
 
-Auditing all `1,500+` transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs deployed during the hackathon:
+> [!NOTE]
+> **Point-in-Time Floor Snapshot (`2026-10-30 18:33 UTC` · Celo Mainnet Block `#81,484,785`):**
+> All figures below match the synchronized checkpoint in [`README.md`](../README.md) and [`reports/EVIDENCE.md`](../reports/EVIDENCE.md). Because **Agent `#9905`** trades 24/7 on Celo Mainnet (`42220`), live cumulative totals can be verified at **[eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)** (`GET /status`) or **[Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)**.
+
+Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs deployed during the hackathon:
 
 | Dimension | Skew (`Agent #9905` · Dual-Engine) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
 | :--- | :--- | :--- | :--- |
 | **Market Role** | **4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | Taker-only (`0` Maker fills) | Multi-corridor Maker + DEX Rebalancer |
-| **Maker Liquidity Served** | **`41` external fills (`$2,111.50` Maker volume)** | `0` fills (`$0` liquidity provided) | `24`–`140+` fills (picked off on cross-venue lag) |
-| **Taker Arbitrage Volume** | **`690` 2-leg arbs (`$49,604+` 1-leg / `$99,208+` 2-leg volume · `254.4x` turnover)** | High-volume Taker sweeps | `0` Taker arbitrages |
-| **Oracle-Lag Defense** | **Hard `SELL >= max(P_textile, P_uni)` shield (`+41.1 bps` refill edge)** | N/A (never quotes Maker orders) | Soft weighted median; picked off when off-chain FX lags DEX |
+| **On-Chain Settlements** | **`1,466` signed EOA txs (`3,714` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
+| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `41` external fills (`$2,111.50` Maker volume)** | `0` fills (`$0` liquidity provided) | `24`–`140+` fills (exposed to cross-venue oracle lag) |
+| **Cross-Venue Arbitrage & Total Volume** | **`690` 2-leg arbs (`$45,096.26` 1-leg arb · `$49,604.23` total 1-leg · `$99,208.47` 2-leg · `254.4x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
+| **Oracle-Lag Defense** | **Hard `SELL >= max(P_textile, P_uni)` shield (`+41.1 bps` refill edge)** | N/A (never quotes Maker orders) | Soft weighted median; exposed when off-chain FX lags DEX |
 | **`wBRL` `MAX_TICK` Defense** | **`800k gas` `QuoterV2` guard + `197k gas` Textile RFQ fallback** | N/A | Rebalancer stalls on `0x01c3…A40F` (`17.04M gas`) |
-| **Net Realized PnL** | **`+$36.71 USDT` (`+18.83%` RoC · `$227.86` live equity)** | Positive Taker PnL, `$0` Maker PnL | **Negative cross-venue arb bleed to our Taker (`-$31.8k` net flow)** |
+| **Net Strategy Value & PnL** | **`$231.71` total value (`$195.00` bankroll + `+$36.71 USDT` net profit · `+18.83%` RoC = `$227.86` liquid equity + `$3.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |
