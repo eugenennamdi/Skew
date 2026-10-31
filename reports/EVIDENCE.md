@@ -29,9 +29,9 @@ Starting from a **`$195.00 USDT`** initial bankroll on Celo Mainnet (`42220`), *
 
 ---
 
-## 2. Verified Independent Counterparty Maker Fills (`41` External Fills · `$2,111.50` Filled Maker Volume)
+## 2. Verified Independent Counterparty Maker Fills (`41` External Fills · `$2,111.50` Foundational Liquidity Provided)
 
-Every row below is an on-chain `LimitOrderReactor` settlement where an **independent external counterparty** lifted our Stitch Maker quote (`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`), followed by our autonomous Uniswap v3 `0.01%` inventory replenishment or unwind:
+Rather than operating as a single-sided taker, Skew serves as **foundational market-making infrastructure** on Textile FX—streaming continuous `1s` WebSocket depth levels and firm `Permit2` `DutchOrder` RFQ quotes across all 4 corridors (`cNGN`, `wARS`, `wBRL`, `USDC`) to power competing hackathon agents (`#9908 Naira Desk`, `#9991 Kiyoshi`, `#9995 naira-maker`). Every row below is an on-chain `LimitOrderReactor` settlement where an **independent external counterparty** lifted our Stitch Maker quote (`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`), followed by our autonomous Uniswap v3 `0.01%` inventory replenishment or unwind at a positive net margin:
 
 | # | Timestamp (UTC) | Corridor | External Taker (Counterparty) | Maker Out | Maker In | Paired Uniswap v3 Refill / Unwind (`0.01%`) | Net Realized Edge | On-Chain Proof |
 | :-: | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :--- |

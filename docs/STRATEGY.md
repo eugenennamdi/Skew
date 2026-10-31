@@ -2,7 +2,7 @@
 
 This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, arbitrages, and rebalances across the four **Textile FX** corridors on Celo Mainnet (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**), and why a **Dual-Engine (Shielded Maker + Multi-Slice Taker)** architecture is required to stay profitable on both sides of the orderbook.
 
-- **Live Telemetry Dashboard:** [eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)
+- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$36.71 USDT` / `+18.83%` RoC in real time)*
 - **On-Chain Evidence Ledger:** [reports/EVIDENCE.md](../reports/EVIDENCE.md)
 - **Agent EOA Wallet:** [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)
 - **ERC-8021 Attribution Tag:** `celo_7935fb97e273`
