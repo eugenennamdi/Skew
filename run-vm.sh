@@ -55,11 +55,17 @@ fi
 if [ -x "./skew-stitch" ]; then
   echo "[+] Starting Engine 1 (./skew-stitch) in background..."
   cp stitch.toml stitch.runtime.toml
+  # ponytail: resolve relative STITCH_RFQ_API_KEY_FILE from textile-stitch/stitch.env to repo root so ./skew-stitch always finds rfq-api.key
+  if [ -f "$(pwd)/textile-stitch/rfq-api.key" ]; then
+    export STITCH_RFQ_API_KEY_FILE="$(pwd)/textile-stitch/rfq-api.key"
+    cp -f "$(pwd)/textile-stitch/rfq-api.key" "$(pwd)/rfq-api.key"
+    chmod 600 "$(pwd)/rfq-api.key"
+  fi
   STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
   STITCH_RFQ_API_KEY_FILE="${STITCH_RFQ_API_KEY_FILE:-$(pwd)/textile-stitch/rfq-api.key}" \
-  SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-30}" \
+  SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-3}" \
   RUST_LOG=info \
-    setsid nohup ./skew-stitch --config stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
+    setsid nohup ./skew-stitch --config ./stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
   echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
 

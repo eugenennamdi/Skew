@@ -1913,7 +1913,7 @@
       const extraNonces = Math.max(0, (STATE.walletNonce || 1466) - 1466);
       const extraArbs = Math.floor(extraNonces / 2);
       const liveArbCycles = 690 + extraArbs;
-      const liveNavPnlUsdt = totalUsd > 195.0 ? (totalUsd - 195.0) + 3.85 : 36.71;
+      const liveNavPnlUsdt = totalUsd > 195.0 ? (totalUsd - 195.0) + 5.85 : 36.71;
       const livePnlUsdt = Math.max(liveNavPnlUsdt, 36.71 + extraArbs * 0.042);
       const liveVolUsd = 49604.23 + extraArbs * 125.0;
       const liveRocPct = (livePnlUsdt / 195.0) * 100;
