@@ -203,11 +203,15 @@ test('14. stitch.toml matches Celo Mainnet (42220), Agent #9905, and all 4 Texti
   }
 });
 
-test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCurrency, Strategy, and Evidence', () => {
+test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCurrency, mobile responsive layout, and Livestream rubric telemetry', () => {
   const html = renderDashboardHtml();
   assert.ok(html.includes('ERC-8004'));
   assert.ok(html.includes('isMiniPay'));
   assert.ok(html.includes('FEE_CURRENCY_USDT'));
+  assert.ok(html.includes('computeRegionalBankingSession'));
+  assert.ok(html.includes('stitch.runtime.toml'));
+  assert.ok(html.includes('dolarapi.com'));
+  assert.ok(html.includes('@media (max-width: 720px)'));
   assert.ok(fs.existsSync(path.join(repoRoot, 'docs', 'STRATEGY.md')));
   assert.ok(fs.existsSync(path.join(repoRoot, 'reports', 'EVIDENCE.md')));
   assert.ok(fs.existsSync(path.join(repoRoot, 'LICENSE')));
