@@ -209,7 +209,7 @@ test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCu
   assert.ok(html.includes('isMiniPay'));
   assert.ok(html.includes('FEE_CURRENCY_USDT'));
   assert.ok(html.includes('computeRegionalBankingSession'));
-  assert.ok(html.includes('stitch.runtime.toml'));
+  assert.ok(html.includes('Parallel FX &amp; Carry'));
   assert.ok(html.includes('dolarapi.com'));
   assert.ok(html.includes('@media (max-width: 720px)'));
   assert.ok(fs.existsSync(path.join(repoRoot, 'docs', 'STRATEGY.md')));

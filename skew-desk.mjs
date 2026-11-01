@@ -857,7 +857,7 @@ export function computeRiskOfficerDecisions({
       stitchBuyOffsetBps: 3,
       stitchSellOffsetBps: 2 + cngnSession.spreadBufferBps,
       replenishEdgeBps: Number(skewMetrics.replenishEdgeBps.toFixed(1)),
-      reason: `SELL floor anchored to max(P_textile, P_uni) (+${skewMetrics.replenishEdgeBps.toFixed(1)} bps refill margin vs Uniswap v3 0.01%, off-chain NGN ${offChainFx.NGN.toFixed(1)} / session ${cngnSession.session} +${cngnSession.spreadBufferBps} bps / +${(8.5 * cngnSession.carryMultiplier).toFixed(1)} bps carry); BUY tightened to ${skewMetrics.dynamicBuyBps ?? 6} bps on +${skewMetrics.skew.toFixed(2)} USDT skew.`,
+      reason: `Ask anchored above Oracle & Uniswap v3 (+${(skewMetrics.dynamicSellBps ?? 42) + cngnSession.spreadBufferBps} bps), locking +${skewMetrics.replenishEdgeBps.toFixed(1)} bps DEX refill edge.`,
     },
     {
       corridor: 'wARS/USDT',
@@ -880,7 +880,7 @@ export function computeRiskOfficerDecisions({
       stitchBuyOffsetBps: 3,
       stitchSellOffsetBps: 2 + warsSession.spreadBufferBps,
       replenishEdgeBps: 36.9,
-      reason: `98.7% of network wARS depth ($${warsUsd.toFixed(2)} reserve); SELL anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS/USDT vs DolarAPI Cripto ${offChainFx.ARS.toFixed(1)} & BCRA Oficial ${(offChainFx.ARS_OFFICIAL ?? OFFCHAIN_FX_DEFAULTS.ARS_OFFICIAL).toFixed(1)} [+${arsParallelSpreadBps} bps parallel spread], session ${warsSession.session} +${warsSession.spreadBufferBps} bps, +${(13.3 * warsSession.carryMultiplier).toFixed(1)} bps crawl carry).`,
+      reason: `Ask anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS) & DolarAPI Cripto (+${(13.3 * warsSession.carryMultiplier).toFixed(1)} bps crawl buffer).`,
     },
     {
       corridor: 'wBRL/USDT',
@@ -901,7 +901,7 @@ export function computeRiskOfficerDecisions({
       stitchBuyOffsetBps: 3,
       stitchSellOffsetBps: 2 + wbrlSession.spreadBufferBps,
       replenishEdgeBps: 34.0,
-      reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting two-way wBRL (${offChainFx.BRL.toFixed(2)} BRL/USD ref, session ${wbrlSession.session} +${wbrlSession.spreadBufferBps} bps, +${(4.2 * wbrlSession.carryMultiplier).toFixed(1)} bps Selic carry) backed by $${usdt.toFixed(0)} USDT.`,
+      reason: `Uniswap v3 MAX_TICK (17.04M gas) blocked by 800k guard; rebalances via Textile RFQ (~197k gas).`,
     },
     {
       corridor: 'USDC/USDT',
@@ -922,7 +922,7 @@ export function computeRiskOfficerDecisions({
       stitchBuyOffsetBps: 2,
       stitchSellOffsetBps: 1,
       replenishEdgeBps: 10.0,
-      reason: `Peg dispersion < 3 bps against Uniswap v3 0.01% pool (${usdcSession.session}); quoting tight 2/8 bps two-way dollar corridor with $${usdcUsd.toFixed(2)} USDC reserve.`,
+      reason: `Peg within 1.0 bps; quoting 2 / 8 bps two-way with Multi-Slice (100% / 50% / 25%) sizing.`,
     },
   ];
   return {

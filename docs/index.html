@@ -1167,11 +1167,8 @@
       <div class="section-card stagger-item">
         <div class="section-header">
           <div>
-            <div class="section-title">Risk Controls, Parallel FX &amp; Autonomous Stitch Config Rewriter</div>
-            <div class="section-desc">Real-time atomic <span class="mono">stitch.runtime.toml</span> spread rewriting for inventory skew, weekend banking closures, and parallel FX basis</div>
-          </div>
-          <div class="section-header-badges">
-            <span class="badge emerald" id="tomlSyncBadge" title="syncStitchRuntimeConfig() atomically rewrites buy_offset_bps & sell_offset_bps in stitch.runtime.toml">stitch.runtime.toml · Auto-Synced</span>
+            <div class="section-title">Risk Controls &amp; Quote Guardrails</div>
+            <div class="section-desc">Per-corridor pricing mode, parallel FX basis, oracle dispersion, and replenishment logic</div>
           </div>
         </div>
         <div class="table-scroll">
@@ -1179,11 +1176,12 @@
             <thead>
               <tr>
                 <th>Corridor</th>
-                <th>Mode &amp; Session</th>
+                <th>Pricing Mode</th>
+                <th class="num-right">Parallel FX &amp; Carry</th>
                 <th class="num-right">Oracle Gap</th>
                 <th class="num-right">Skew</th>
-                <th class="num-right">Bid / Ask (TOML)</th>
-                <th>Execution &amp; FX Basis Rationale</th>
+                <th class="num-right">Bid / Ask</th>
+                <th>Execution Guardrail</th>
               </tr>
             </thead>
             <tbody id="riskOfficerTableBody">
@@ -2179,66 +2177,66 @@
       };
       const riskRows = STATE.riskOfficer?.corridors || [
         {
-          corridor: 'cNGN/USDT',
+          corridor: 'cNGN / USDT',
           iconKey: 'cNGN',
           regime: 'Dual-Oracle Shield',
-          bankingSession: cngnQ.session.shortLabel,
+          fxBasisCell: `${STATE.offChainFx.NGN.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} NGN <span class="text-subtle">(+${cngnQ.effectiveCarryBps} bps)</span>`,
           oracleDispersionBps: Number(cngnQ.gapBps.toFixed(1)),
           skew: Number(STATE.skew.toFixed(3)),
           bidSpreadBps: cngnQ.buyBps,
           askSpreadBps: cngnQ.sellBps,
-          stitchBuyOffsetBps: cngnQ.stitchBuyBps,
-          stitchSellOffsetBps: cngnQ.stitchSellBps,
-          reason: `Ask anchored to max(P_textile, P_uni) (+${cngnQ.sellBps} bps, off-chain NGN ${STATE.offChainFx.NGN.toFixed(1)}, ${cngnQ.session.session} +${cngnQ.effectiveCarryBps} bps carry), locking +${cngnQ.refillEdgeBps.toFixed(1)} bps DEX refill edge.`,
+          reason: `Ask anchored above Oracle & Uniswap v3 (+${cngnQ.sellBps} bps), locking +${cngnQ.refillEdgeBps.toFixed(1)} bps DEX refill edge.`,
         },
         {
-          corridor: 'wARS/USDT',
+          corridor: 'wARS / USDT',
           iconKey: 'wARS',
           regime: 'Dual-Oracle Shield',
-          bankingSession: warsQ.session.shortLabel,
+          fxBasisCell: `${STATE.offChainFx.ARS.toLocaleString('en-US', { maximumFractionDigits: 0 })} ARS <span class="text-subtle">(+${STATE.offChainFx.ARS_PARALLEL_SPREAD_BPS.toFixed(0)} bps)</span>`,
           oracleDispersionBps: Number(warsQ.gapBps.toFixed(1)),
           skew: Number(warsSkew.toFixed(3)),
           bidSpreadBps: 4,
           askSpreadBps: 38 + warsQ.session.spreadBufferBps,
-          stitchBuyOffsetBps: warsQ.stitchBuyBps,
-          stitchSellOffsetBps: warsQ.stitchSellBps,
-          reason: `Ask anchored above Uniswap v3 (${STATE.corridors.wARS.uniRate.toFixed(1)} wARS/USDT vs DolarAPI Cripto ${STATE.offChainFx.ARS.toFixed(0)} & BCRA Oficial ${STATE.offChainFx.ARS_OFFICIAL.toFixed(0)} [+${STATE.offChainFx.ARS_PARALLEL_SPREAD_BPS.toFixed(0)} bps parallel spread], ${warsQ.session.session} +${warsQ.effectiveCarryBps} bps crawl carry).`,
+          reason: `Ask anchored above Uniswap v3 (${STATE.corridors.wARS.uniRate.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} wARS) & DolarAPI Cripto (+${warsQ.effectiveCarryBps} bps crawl buffer).`,
         },
         {
-          corridor: 'wBRL/USDT',
+          corridor: 'wBRL / USDT',
           iconKey: 'wBRL',
           regime: 'Gas-Shielded RFQ',
-          bankingSession: wbrlQ.session.shortLabel,
+          fxBasisCell: `${STATE.offChainFx.BRL.toFixed(2)} BRL <span class="text-subtle">(+${wbrlQ.effectiveCarryBps} bps)</span>`,
           oracleDispersionBps: Number(wbrlQ.gapBps.toFixed(1)),
           skew: Number(wbrlSkew.toFixed(3)),
           bidSpreadBps: 1,
           askSpreadBps: 34 + wbrlQ.session.spreadBufferBps,
-          stitchBuyOffsetBps: wbrlQ.stitchBuyBps,
-          stitchSellOffsetBps: wbrlQ.stitchSellBps,
-          reason: `Uniswap v3 0.01% pool at MAX_TICK (17.04M gas) blocked by 800k gas guard; rebalances via Textile RFQ (~197k gas, PTAX ${STATE.offChainFx.BRL.toFixed(2)} BRL/USD, ${wbrlQ.session.session} +${wbrlQ.effectiveCarryBps} bps Selic carry).`,
+          reason: `Uniswap v3 MAX_TICK (17.04M gas) blocked by 800k guard; rebalances via Textile RFQ (~197k gas).`,
         },
         {
-          corridor: 'USDC/USDT',
+          corridor: 'USDC / USDT',
           iconKey: 'USDC',
           regime: 'Peg-Tight',
-          bankingSession: usdcQ.session.shortLabel,
+          fxBasisCell: `1.0000 USD <span class="text-subtle">(0 bps)</span>`,
           oracleDispersionBps: 1.0,
           skew: Number(usdcSkew.toFixed(3)),
           bidSpreadBps: 2,
           askSpreadBps: 8,
-          stitchBuyOffsetBps: usdcQ.stitchBuyBps,
-          stitchSellOffsetBps: usdcQ.stitchSellBps,
-          reason: `Stablecoin peg within 1.0 bps (${usdcQ.session.session}); quoting 2 / 8 bps two-way with Multi-Slice (100% / 50% / 25%) execution sizing.`,
+          reason: `Peg within 1.0 bps; quoting 2 / 8 bps two-way with Multi-Slice (100% / 50% / 25%) sizing.`,
         },
       ];
       const roBody = document.getElementById('riskOfficerTableBody');
       if (roBody) {
         roBody.innerHTML = riskRows.map((r) => {
-          const symKey = r.iconKey || r.corridor.split('/')[0];
+          const symKey = (r.iconKey || r.corridor.split('/')[0]).trim();
+          const label = r.corridor.replace(/\s*\/\s*/, ' / ');
           const dispSign = r.oracleDispersionBps >= 0 ? '+' : '';
           const skewSign = r.skew >= 0 ? '+' : '';
-          const tomlTag = r.stitchBuyOffsetBps !== undefined ? ` <span class="text-subtle">(TOML ${r.stitchBuyOffsetBps}/${r.stitchSellOffsetBps})</span>` : '';
-          const sessSub = r.bankingSession ? `<div class="mono text-subtle" style="font-size:11px;margin-top:3px;">${r.bankingSession}</div>` : '';
+          const fxCell = r.fxBasisCell || (
+            symKey === 'cNGN'
+              ? `${STATE.offChainFx.NGN.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} NGN <span class="text-subtle">(+${cngnQ.effectiveCarryBps} bps)</span>`
+              : symKey === 'wARS'
+                ? `${STATE.offChainFx.ARS.toLocaleString('en-US', { maximumFractionDigits: 0 })} ARS <span class="text-subtle">(+${STATE.offChainFx.ARS_PARALLEL_SPREAD_BPS.toFixed(0)} bps)</span>`
+                : symKey === 'wBRL'
+                  ? `${STATE.offChainFx.BRL.toFixed(2)} BRL <span class="text-subtle">(+${wbrlQ.effectiveCarryBps} bps)</span>`
+                  : `1.0000 USD <span class="text-subtle">(0 bps)</span>`
+          );
           return `
             <tr>
               <td>
@@ -2247,14 +2245,15 @@
                     <img class="token-icon" src="${getTokenIcon(symKey)}" alt="${symKey}" />
                     <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
                   </span>
-                  <b>${r.corridor}</b>
+                  <b>${label}</b>
                 </span>
               </td>
-              <td><span class="badge">${formatRegimeLabel(r.regime)}</span>${sessSub}</td>
+              <td><span class="badge">${formatRegimeLabel(r.regime)}</span></td>
+              <td class="num-right mono">${fxCell}</td>
               <td class="num-right mono text-muted">${dispSign}${r.oracleDispersionBps} bps</td>
               <td class="num-right mono">${skewSign}${Number(r.skew).toFixed(3)}</td>
-              <td class="num-right mono">${r.bidSpreadBps} / ${r.askSpreadBps} bps${tomlTag}</td>
-              <td class="text-muted" style="font-size: 12.5px; white-space: normal; min-width: 240px; line-height: 1.4;">${r.reason}</td>
+              <td class="num-right mono">${r.bidSpreadBps} / ${r.askSpreadBps} bps</td>
+              <td class="text-muted" style="font-size: 12.5px; white-space: normal; min-width: 240px; line-height: 1.45;">${r.reason}</td>
             </tr>
           `;
         }).join('');
