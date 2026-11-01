@@ -42,15 +42,18 @@ Given corridor base spreads and risk aversion $\gamma = 30\text{ bps}$:
 
 $$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right), \qquad \text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right)$$
 
-### B. Deterministic Risk Officer: 3-Source Off-Chain FX Triangulation & Daily Crawl Carry
-Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) runs a deterministic, zero-latency quantitative Risk Officer (`buildRiskOfficerReport()`)—avoiding slow external LLM API calls inside the 2-second quoting loop—that triangulates live off-chain FX rates (`open.er-api.com` for `NGN`/`BRL` and `dolarapi.com/v1/dolares/cripto` for `ARS`) and incorporates daily emerging-market currency carry/crawl:
+### B. Deterministic Risk Officer: Official vs. Parallel-Market FX Triangulation & Regional Banking Closures
+Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) runs a deterministic, zero-latency quantitative Risk Officer (`computeRiskOfficerDecisions()`)—avoiding slow external LLM API calls inside the 2-second quoting loop—that combines **4-source off-chain/on-chain FX triangulation** with **regional central-bank settlement calendars** (`computeRegionalBankingSession()`):
 
-| Corridor | Token Decimals | Primary Celo Uniswap v3 Pool (`0.01%`) | Off-Chain Reference Source | Daily Crawl / Carry (`bps/day`) | Target Maker Reserve |
-| :--- | :---: | :--- | :--- | :---: | :---: |
-| **`cNGN / USDT`** | `6` | `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` | `open.er-api.com` (`USD/NGN`) | `8.5 bps/day` | `$18.00 cNGN` + `USDT` |
-| **`wARS / USDT`** | `18` | `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391` | `dolarapi.com` (`ARS cripto`) | `13.3 bps/day` | `$15.00 wARS` + `USDT` |
-| **`wBRL / USDT`** | `18` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` *(shielded)* | `open.er-api.com` (`USD/BRL`) | `4.2 bps/day` | `$15.00 wBRL` + `USDT` |
-| **`USDC / USDT`** | `6` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `$1.00` USD Peg | `0.0 bps/day` | `$15.00 USDC` + `USDT` |
+| Corridor | Decimals | Primary Celo Uniswap v3 Pool (`0.01%`) | Off-Chain Official & Parallel FX Sources | Regional Banking Session (`UTC`) | Overnight / Weekend Buffer | Base Crawl / Carry |
+| :--- | :---: | :--- | :--- | :--- | :---: | :---: |
+| **`cNGN / USDT`** | `6` | `0x6519d56Eb0A69FC0338657784c783B169b8f7d32` | `open.er-api.com` (`USD/NGN`) | **CBN Lagos EFEMS** (`07:00–15:00`) | `+2 bps` / **`+5 bps` (`3.0x`)** | `8.5 bps/day` |
+| **`wARS / USDT`** | `18` | `0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391` | `dolarapi.com` (`cripto` vs `oficial` BCRA) | **BCRA Buenos Aires** (`13:00–18:00`) | `+3 bps` / **`+6 bps` (`3.0x`)** | `13.3 bps/day` |
+| **`wBRL / USDT`** | `18` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` *(shielded)* | `open.er-api.com` (`USD/BRL` PTAX) | **BCB São Paulo** (`12:00–20:00`) | `+1 bps` / **`+4 bps` (`2.5x`)** | `4.2 bps/day` |
+| **`USDC / USDT`** | `6` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `$1.00` USD Peg | **Global USD 24/7** | `0 bps` (`1.0x`) | `0.0 bps/day` |
+
+- **Official vs. Parallel-Market Basis (`arsParallelSpreadBps`):** In emerging markets like Argentina, the 24/7 crypto/blue parallel rate (`dolarapi.com/v1/dolares/cripto`) diverges significantly from the official BCRA wholesale rate (`dolarapi.com/v1/dolares/oficial`). `fetchOffChainFxRates()` tracks both endpoints simultaneously and exposes `arsParallelSpreadBps` alongside on-chain Uniswap v3 `slot0()` dispersion.
+- **Autonomous `stitch.runtime.toml` Config Rewriter (`syncStitchRuntimeConfig`):** Because Stitch reads its per-corridor spread offsets from plain-text TOML, `skew-desk.mjs` atomically rewrites `stitch.runtime.toml` (`buy_offset_bps` and `sell_offset_bps` via `stitch.runtime.toml.tmp` → `fs.renameSync`) whenever the Risk Officer updates corridor spreads for inventory skew, overnight/weekend central-bank closures, or parallel FX basis.
 
 ---
 

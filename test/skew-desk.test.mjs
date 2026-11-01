@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -10,7 +11,9 @@ import {
   appendErc8021Suffix,
   computeSkewAndQuotes,
   computeSliceSizesUsdt,
+  computeRegionalBankingSession,
   computeRiskOfficerDecisions,
+  syncStitchRuntimeConfig,
   isSelfMakerOrder,
   isValidUniQuoteGas,
   renderDashboardHtml,
@@ -237,5 +240,67 @@ test('16. Cross-document snapshot metrics and LaTeX formulas are 100% consistent
     for (const metric of snapshotMetrics) {
       assert.ok(content.includes(metric), `${relPath} must include synchronized snapshot metric ${metric}`);
     }
+  }
+});
+
+test('17. Regional central-bank session clock adjusts spreads and carry for weekday open, overnight, and 72h weekend closures', () => {
+  // Wednesday 14:00 UTC: Lagos (07-15), Buenos Aires (13-18), Sao Paulo (12-20) all OPEN
+  const wedOpen = new Date('2026-10-28T14:00:00Z');
+  assert.equal(computeRegionalBankingSession('cNGN', wedOpen).session, 'CBN_LAGOS_OPEN');
+  assert.equal(computeRegionalBankingSession('cNGN', wedOpen).spreadBufferBps, 0);
+  assert.equal(computeRegionalBankingSession('wARS', wedOpen).session, 'BCRA_BUE_OPEN');
+  assert.equal(computeRegionalBankingSession('wBRL', wedOpen).session, 'BCB_SAO_OPEN');
+  assert.equal(computeRegionalBankingSession('USDC', wedOpen).session, 'GLOBAL_USD_24_7');
+
+  // Wednesday 22:00 UTC: Overnight banking closure
+  const wedNight = new Date('2026-10-28T22:00:00Z');
+  assert.equal(computeRegionalBankingSession('cNGN', wedNight).session, 'CBN_LAGOS_OVERNIGHT');
+  assert.equal(computeRegionalBankingSession('cNGN', wedNight).spreadBufferBps, 2);
+  assert.equal(computeRegionalBankingSession('wARS', wedNight).session, 'BCRA_BUE_OVERNIGHT');
+  assert.equal(computeRegionalBankingSession('wARS', wedNight).spreadBufferBps, 3);
+
+  // Sunday 15:00 UTC: 72-hour weekend banking closure
+  const sunWeekend = new Date('2026-11-01T15:00:00Z');
+  const cngnWknd = computeRegionalBankingSession('cNGN', sunWeekend);
+  const warsWknd = computeRegionalBankingSession('wARS', sunWeekend);
+  const wbrlWknd = computeRegionalBankingSession('wBRL', sunWeekend);
+  assert.equal(cngnWknd.session, 'CBN_LAGOS_WEEKEND_CLOSED');
+  assert.equal(cngnWknd.spreadBufferBps, 5);
+  assert.equal(cngnWknd.carryMultiplier, 3.0);
+  assert.equal(warsWknd.session, 'BCRA_BUE_WEEKEND_CLOSED');
+  assert.equal(warsWknd.spreadBufferBps, 6);
+  assert.equal(wbrlWknd.session, 'BCB_SAO_WEEKEND_CLOSED');
+  assert.equal(wbrlWknd.spreadBufferBps, 4);
+});
+
+test('18. Autonomous stitch.runtime.toml config rewriter atomically updates corridor offsets by banking regime', () => {
+  const skewMetrics = computeSkewAndQuotes({
+    usdtUsd: 164.7,
+    cngnBalance: 24855,
+    textileMid: 0.00072295,
+    uniMid: 0.00072538,
+  });
+  const weekendRisk = computeRiskOfficerDecisions({
+    usdt: 164.7,
+    cngn: 24855,
+    wars: 24728,
+    wbrl: 80.5,
+    usdc: 14.98,
+    uniCngnMid: 0.00072538,
+    uniWarsMid: 0.00060455,
+    skewMetrics,
+    now: new Date('2026-11-01T15:00:00Z'), // Sunday weekend regime
+  });
+
+  const tmpRuntimePath = path.join(os.tmpdir(), `stitch.runtime.${Date.now()}.toml`);
+  try {
+    const syncRes = syncStitchRuntimeConfig(weekendRisk, path.join(repoRoot, 'stitch.toml'), tmpRuntimePath);
+    assert.equal(syncRes.updated, true);
+    const written = fs.readFileSync(tmpRuntimePath, 'utf8');
+    // Sunday weekend closure adds +5 bps to cNGN (2 + 5 = 7) and +6 bps to wARS (2 + 6 = 8)
+    assert.match(written, /sell_offset_bps\s*=\s*7/);
+    assert.match(written, /sell_offset_bps\s*=\s*8/);
+  } finally {
+    if (fs.existsSync(tmpRuntimePath)) fs.unlinkSync(tmpRuntimePath);
   }
 });

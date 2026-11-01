@@ -167,30 +167,96 @@ export function computeSliceSizesUsdt(liquidUsdt, maxSliceUsdt = CONFIG.maxSlice
 export const OFFCHAIN_FX_DEFAULTS = {
   NGN: 1381.5,
   ARS: 1445.0,
+  ARS_OFFICIAL: 1095.0,
+  ARS_PARALLEL_SPREAD_BPS: 3196.3,
   BRL: 5.33,
   USD: 1.0,
-  source: 'open.er-api.com + dolarapi.com',
+  source: 'open.er-api.com + dolarapi.com (cripto & oficial)',
 };
+
+/**
+ * Evaluate regional central-bank settlement hours & weekend banking closures (UTC):
+ * - cNGN: CBN Lagos EFEMS / NAFEM (Mon-Fri 07:00-15:00 UTC / 08:00-16:00 WAT)
+ * - wARS: BCRA / MAE Buenos Aires (Mon-Fri 13:00-18:00 UTC / 10:00-15:00 ART)
+ * - wBRL: BCB PTAX / B3 Sao Paulo (Mon-Fri 12:00-20:00 UTC / 09:00-17:00 BRT)
+ * - USDC: 24/7 Global USD Rail
+ */
+export function computeRegionalBankingSession(symbol, now = new Date()) {
+  const d = now instanceof Date ? now : new Date(now);
+  const day = d.getUTCDay(); // 0 = Sun, 6 = Sat
+  const hour = d.getUTCHours();
+  const isWeekend = day === 0 || day === 6;
+
+  if (symbol === 'cNGN' || symbol === 'cNGN/USDT') {
+    if (isWeekend) {
+      return { session: 'CBN_LAGOS_WEEKEND_CLOSED', isOpen: false, isWeekend: true, spreadBufferBps: 5, carryMultiplier: 3.0 };
+    }
+    const isOpen = hour >= 7 && hour < 15;
+    return {
+      session: isOpen ? 'CBN_LAGOS_OPEN' : 'CBN_LAGOS_OVERNIGHT',
+      isOpen,
+      isWeekend: false,
+      spreadBufferBps: isOpen ? 0 : 2,
+      carryMultiplier: isOpen ? 1.0 : 1.5,
+    };
+  }
+  if (symbol === 'wARS' || symbol === 'wARS/USDT') {
+    if (isWeekend) {
+      return { session: 'BCRA_BUE_WEEKEND_CLOSED', isOpen: false, isWeekend: true, spreadBufferBps: 6, carryMultiplier: 3.0 };
+    }
+    const isOpen = hour >= 13 && hour < 18;
+    return {
+      session: isOpen ? 'BCRA_BUE_OPEN' : 'BCRA_BUE_OVERNIGHT',
+      isOpen,
+      isWeekend: false,
+      spreadBufferBps: isOpen ? 0 : 3,
+      carryMultiplier: isOpen ? 1.0 : 1.5,
+    };
+  }
+  if (symbol === 'wBRL' || symbol === 'wBRL/USDT') {
+    if (isWeekend) {
+      return { session: 'BCB_SAO_WEEKEND_CLOSED', isOpen: false, isWeekend: true, spreadBufferBps: 4, carryMultiplier: 2.5 };
+    }
+    const isOpen = hour >= 12 && hour < 20;
+    return {
+      session: isOpen ? 'BCB_SAO_OPEN' : 'BCB_SAO_OVERNIGHT',
+      isOpen,
+      isWeekend: false,
+      spreadBufferBps: isOpen ? 0 : 1,
+      carryMultiplier: isOpen ? 1.0 : 1.25,
+    };
+  }
+  return { session: 'GLOBAL_USD_24_7', isOpen: true, isWeekend, spreadBufferBps: 0, carryMultiplier: 1.0 };
+}
 
 let cachedOffChainFx = { ...OFFCHAIN_FX_DEFAULTS, fetchedAt: 0 };
 
 export async function fetchOffChainFxRates() {
   if (Date.now() - cachedOffChainFx.fetchedAt < 300_000) return cachedOffChainFx;
   try {
-    const [erRes, arsRes] = await Promise.all([
+    const [erRes, arsCriptoRes, arsOficialRes] = await Promise.all([
       fetchJson('https://open.er-api.com/v6/latest/USD', { timeoutMs: 3500 }).catch(() => null),
       fetchJson('https://dolarapi.com/v1/dolares/cripto', { timeoutMs: 3500 }).catch(() => null),
+      fetchJson('https://dolarapi.com/v1/dolares/oficial', { timeoutMs: 3500 }).catch(() => null),
     ]);
     const rates = erRes?.rates || {};
-    const arsMid = arsRes?.compra && arsRes?.venta
-      ? (Number(arsRes.compra) + Number(arsRes.venta)) / 2
+    const arsMid = arsCriptoRes?.compra && arsCriptoRes?.venta
+      ? (Number(arsCriptoRes.compra) + Number(arsCriptoRes.venta)) / 2
       : Number(rates.ARS || OFFCHAIN_FX_DEFAULTS.ARS);
+    const arsOfficial = arsOficialRes?.compra && arsOficialRes?.venta
+      ? (Number(arsOficialRes.compra) + Number(arsOficialRes.venta)) / 2
+      : Number(rates.ARS || OFFCHAIN_FX_DEFAULTS.ARS_OFFICIAL);
+    const arsParallelSpreadBps = arsOfficial > 0
+      ? Number((((arsMid - arsOfficial) / arsOfficial) * 10000).toFixed(1))
+      : OFFCHAIN_FX_DEFAULTS.ARS_PARALLEL_SPREAD_BPS;
     cachedOffChainFx = {
       NGN: Number(rates.NGN || OFFCHAIN_FX_DEFAULTS.NGN),
       ARS: arsMid,
+      ARS_OFFICIAL: arsOfficial,
+      ARS_PARALLEL_SPREAD_BPS: arsParallelSpreadBps,
       BRL: Number(rates.BRL || OFFCHAIN_FX_DEFAULTS.BRL),
       USD: 1.0,
-      source: erRes?.rates ? 'open.er-api.com + dolarapi.com (live)' : OFFCHAIN_FX_DEFAULTS.source,
+      source: erRes?.rates ? 'open.er-api.com + dolarapi.com (cripto & oficial live)' : OFFCHAIN_FX_DEFAULTS.source,
       fetchedAt: Date.now(),
     };
   } catch {
@@ -749,91 +815,163 @@ export function computeRiskOfficerDecisions({
   uniWarsMid,
   skewMetrics,
   offChainFx = OFFCHAIN_FX_DEFAULTS,
+  now = new Date(),
 }) {
-  const nowIso = new Date().toISOString();
+  const nowDate = now instanceof Date ? now : new Date(now);
+  const nowIso = nowDate.toISOString();
   const cngnUsd = cngn * uniCngnMid;
   const warsUsd = wars * uniWarsMid;
   const wbrlUsd = wbrl / 5.388;
   const usdcUsd = usdc;
   const sliceSizesUsdt = computeSliceSizesUsdt(usdt);
 
+  const cngnSession = computeRegionalBankingSession('cNGN', nowDate);
+  const warsSession = computeRegionalBankingSession('wARS', nowDate);
+  const wbrlSession = computeRegionalBankingSession('wBRL', nowDate);
+  const usdcSession = computeRegionalBankingSession('USDC', nowDate);
+
   const cngnPerUsdOnChain = uniCngnMid > 0 ? 1 / uniCngnMid : OFFCHAIN_FX_DEFAULTS.NGN;
   const warsPerUsdOnChain = uniWarsMid > 0 ? 1 / uniWarsMid : OFFCHAIN_FX_DEFAULTS.ARS;
   const cngnOffChainBasisBps = Number((((cngnPerUsdOnChain - offChainFx.NGN) / offChainFx.NGN) * 10000).toFixed(1));
   const warsOffChainBasisBps = Number((((warsPerUsdOnChain - offChainFx.ARS) / offChainFx.ARS) * 10000).toFixed(1));
   const wbrlOffChainBasisBps = Number((((5.388 - offChainFx.BRL) / offChainFx.BRL) * 10000).toFixed(1));
+  const arsParallelSpreadBps = Number((offChainFx.ARS_PARALLEL_SPREAD_BPS ?? OFFCHAIN_FX_DEFAULTS.ARS_PARALLEL_SPREAD_BPS).toFixed(1));
 
   const decisions = [
     {
       corridor: 'cNGN/USDT',
+      corridorSlug: 'cngn-usdt-celo',
       regime: Math.abs(skewMetrics.oracleGapBps) > 15 ? 'DUAL_ORACLE_SHIELD' : 'SKEW_REBALANCE',
+      bankingSession: cngnSession.session,
+      sessionSpreadBufferBps: cngnSession.spreadBufferBps,
       inventoryUsd: Number(cngnUsd.toFixed(2)),
       skew: Number(skewMetrics.skew.toFixed(3)),
       oracleDispersionBps: Number(skewMetrics.oracleGapBps.toFixed(1)),
       offChainPerUsd: Number(offChainFx.NGN.toFixed(2)),
       offChainBasisBps: cngnOffChainBasisBps,
       dailyCarryBps: 8.5,
+      effectiveCarryBps: Number((8.5 * cngnSession.carryMultiplier).toFixed(1)),
       sliceSizesUsdt,
       bidSpreadBps: skewMetrics.dynamicBuyBps ?? 6,
-      askSpreadBps: skewMetrics.dynamicSellBps ?? 42,
+      askSpreadBps: (skewMetrics.dynamicSellBps ?? 42) + cngnSession.spreadBufferBps,
+      stitchBuyOffsetBps: 3,
+      stitchSellOffsetBps: 2 + cngnSession.spreadBufferBps,
       replenishEdgeBps: Number(skewMetrics.replenishEdgeBps.toFixed(1)),
-      reason: `SELL floor anchored to max(P_textile, P_uni) (+${skewMetrics.replenishEdgeBps.toFixed(1)} bps refill margin vs Uniswap v3 0.01%, off-chain NGN ${offChainFx.NGN.toFixed(1)} / +8.5 bps/day carry); BUY tightened to ${skewMetrics.dynamicBuyBps ?? 6} bps on +${skewMetrics.skew.toFixed(2)} USDT skew.`,
+      reason: `SELL floor anchored to max(P_textile, P_uni) (+${skewMetrics.replenishEdgeBps.toFixed(1)} bps refill margin vs Uniswap v3 0.01%, off-chain NGN ${offChainFx.NGN.toFixed(1)} / session ${cngnSession.session} +${cngnSession.spreadBufferBps} bps / +${(8.5 * cngnSession.carryMultiplier).toFixed(1)} bps carry); BUY tightened to ${skewMetrics.dynamicBuyBps ?? 6} bps on +${skewMetrics.skew.toFixed(2)} USDT skew.`,
     },
     {
       corridor: 'wARS/USDT',
+      corridorSlug: 'wars-usdt-celo',
       regime: 'DUAL_ORACLE_SHIELD',
+      bankingSession: warsSession.session,
+      sessionSpreadBufferBps: warsSession.spreadBufferBps,
       inventoryUsd: Number(warsUsd.toFixed(2)),
       skew: Number(((usdt - warsUsd) / Math.max(1, usdt + warsUsd)).toFixed(3)),
       oracleDispersionBps: 36.9,
       offChainPerUsd: Number(offChainFx.ARS.toFixed(2)),
+      offChainOfficialPerUsd: Number((offChainFx.ARS_OFFICIAL ?? OFFCHAIN_FX_DEFAULTS.ARS_OFFICIAL).toFixed(2)),
+      arsParallelSpreadBps,
       offChainBasisBps: warsOffChainBasisBps,
       dailyCarryBps: 13.3,
+      effectiveCarryBps: Number((13.3 * warsSession.carryMultiplier).toFixed(1)),
       sliceSizesUsdt,
       bidSpreadBps: 4,
-      askSpreadBps: 38,
+      askSpreadBps: 38 + warsSession.spreadBufferBps,
+      stitchBuyOffsetBps: 3,
+      stitchSellOffsetBps: 2 + warsSession.spreadBufferBps,
       replenishEdgeBps: 36.9,
-      reason: `98.7% of network wARS depth ($${warsUsd.toFixed(2)} reserve); SELL anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS/USDT vs DolarAPI ${offChainFx.ARS.toFixed(1)}, +13.3 bps/day crawl carry) locking in +36.9 bps refill edge.`,
+      reason: `98.7% of network wARS depth ($${warsUsd.toFixed(2)} reserve); SELL anchored above Uniswap v3 (${(1 / uniWarsMid).toFixed(1)} wARS/USDT vs DolarAPI Cripto ${offChainFx.ARS.toFixed(1)} & BCRA Oficial ${(offChainFx.ARS_OFFICIAL ?? OFFCHAIN_FX_DEFAULTS.ARS_OFFICIAL).toFixed(1)} [+${arsParallelSpreadBps} bps parallel spread], session ${warsSession.session} +${warsSession.spreadBufferBps} bps, +${(13.3 * warsSession.carryMultiplier).toFixed(1)} bps crawl carry).`,
     },
     {
       corridor: 'wBRL/USDT',
+      corridorSlug: 'wbrl-usdt-celo',
       regime: wbrlUsd >= 5 ? 'TWO_WAY_ACTIVE' : 'GAS_SHIELD_BUY_ACTIVE',
+      bankingSession: wbrlSession.session,
+      sessionSpreadBufferBps: wbrlSession.spreadBufferBps,
       inventoryUsd: Number(wbrlUsd.toFixed(2)),
       skew: Number(((usdt - wbrlUsd) / Math.max(1, usdt + wbrlUsd)).toFixed(3)),
       oracleDispersionBps: 12.8,
       offChainPerUsd: Number(offChainFx.BRL.toFixed(3)),
       offChainBasisBps: wbrlOffChainBasisBps,
       dailyCarryBps: 4.2,
+      effectiveCarryBps: Number((4.2 * wbrlSession.carryMultiplier).toFixed(1)),
       sliceSizesUsdt,
       bidSpreadBps: 1,
-      askSpreadBps: 34,
+      askSpreadBps: 34 + wbrlSession.spreadBufferBps,
+      stitchBuyOffsetBps: 3,
+      stitchSellOffsetBps: 2 + wbrlSession.spreadBufferBps,
       replenishEdgeBps: 34.0,
-      reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting two-way wBRL (${offChainFx.BRL.toFixed(2)} BRL/USD ref, +4.2 bps/day Selic carry) backed by $${usdt.toFixed(0)} USDT.`,
+      reason: `Uniswap v3 wBRL/USDT pool (0x01c3...A40F) has malformed slot0.tick = 887,271 (17.04M gas / 3.45 CELO TickBitmap loop); DEX refill blocked by 800k gas guardrail while quoting two-way wBRL (${offChainFx.BRL.toFixed(2)} BRL/USD ref, session ${wbrlSession.session} +${wbrlSession.spreadBufferBps} bps, +${(4.2 * wbrlSession.carryMultiplier).toFixed(1)} bps Selic carry) backed by $${usdt.toFixed(0)} USDT.`,
     },
     {
       corridor: 'USDC/USDT',
+      corridorSlug: 'usdc-usdt-celo',
       regime: 'PEG_TIGHT_TWO_WAY',
+      bankingSession: usdcSession.session,
+      sessionSpreadBufferBps: 0,
       inventoryUsd: Number(usdcUsd.toFixed(2)),
       skew: Number(((usdt - usdcUsd) / Math.max(1, usdt + usdcUsd)).toFixed(3)),
       oracleDispersionBps: 2.0,
       offChainPerUsd: 1.0,
       offChainBasisBps: 0.0,
       dailyCarryBps: 0.0,
+      effectiveCarryBps: 0.0,
       sliceSizesUsdt,
       bidSpreadBps: 2,
       askSpreadBps: 8,
+      stitchBuyOffsetBps: 2,
+      stitchSellOffsetBps: 1,
       replenishEdgeBps: 10.0,
-      reason: `Peg dispersion < 3 bps against Uniswap v3 0.01% pool; quoting tight 2/8 bps two-way dollar corridor with $${usdcUsd.toFixed(2)} USDC reserve.`,
+      reason: `Peg dispersion < 3 bps against Uniswap v3 0.01% pool (${usdcSession.session}); quoting tight 2/8 bps two-way dollar corridor with $${usdcUsd.toFixed(2)} USDC reserve.`,
     },
   ];
   return {
     enabled: true,
     overallRegime: 'DUAL_ORACLE_SHIELD',
     fxReferenceSource: offChainFx.source || OFFCHAIN_FX_DEFAULTS.source,
+    arsParallelSpreadBps,
     sliceSizesUsdt,
     lastReviewAt: nowIso,
     decisions,
     corridors: decisions,
   };
+}
+
+export const buildRiskOfficerReport = computeRiskOfficerDecisions;
+
+let lastRuntimeTomlHash = '';
+
+/**
+ * Autonomous Stitch Config Rewriter:
+ * Atomically rewrites `stitch.runtime.toml` per-corridor `buy_offset_bps` and `sell_offset_bps`
+ * when the Risk Officer adjusts spreads for inventory skew, regional banking closures, or parallel FX basis.
+ */
+export function syncStitchRuntimeConfig(
+  riskOfficer,
+  baseTomlPath = path.join(__dirname, 'stitch.toml'),
+  runtimeTomlPath = path.join(__dirname, 'stitch.runtime.toml')
+) {
+  if (!riskOfficer?.decisions || !fs.existsSync(baseTomlPath)) return { updated: false };
+  const baseToml = fs.readFileSync(baseTomlPath, 'utf8');
+  const blocks = baseToml.split('[[pools]]');
+  const rewrittenBlocks = blocks.map((block, idx) => {
+    if (idx === 0) return block;
+    const dec = riskOfficer.decisions.find((d) => d.corridorSlug && block.includes(`"${d.corridorSlug}"`));
+    if (!dec) return block;
+    return block
+      .replace(/buy_offset_bps\s*=\s*\d+/, `buy_offset_bps                  = ${dec.stitchBuyOffsetBps}`)
+      .replace(/sell_offset_bps\s*=\s*\d+/, `sell_offset_bps                 = ${dec.stitchSellOffsetBps}`);
+  });
+  const nextToml = rewrittenBlocks.join('[[pools]]');
+  const hash = crypto.createHash('sha256').update(nextToml).digest('hex').slice(0, 16);
+  if (hash === lastRuntimeTomlHash && fs.existsSync(runtimeTomlPath)) {
+    return { updated: false, hash };
+  }
+  const tmpPath = `${runtimeTomlPath}.tmp`;
+  fs.writeFileSync(tmpPath, nextToml, 'utf8');
+  fs.renameSync(tmpPath, runtimeTomlPath);
+  lastRuntimeTomlHash = hash;
+  return { updated: true, hash, syncedAt: new Date().toISOString() };
 }
 
 async function swapOnUniswap(tokenIn, tokenOut, amountInRaw, label, corridor, sizeUsdt, edgeBps = 0) {
@@ -1142,6 +1280,9 @@ export async function runSingleScan() {
       skewMetrics: STATE.skewMetrics,
       offChainFx,
     });
+    if (CONFIG.liveTrading) {
+      STATE.riskOfficer.stitchRuntimeSync = syncStitchRuntimeConfig(STATE.riskOfficer);
+    }
 
     const scanBatches = [];
     for (const t of CONFIG.tokens) {

@@ -60,12 +60,14 @@ Skew runs two coordinated processes against the same Celo Mainnet EOA (`0xe503�
   ┌──────────────────────────────────────────────────────┐
   │ • Textile RFQ (/v2/rfq/preview & WebSocket stream)   │       ┌──────────────────────────────────────────────────────┐
   │ • Celo Uniswap v3 slot0() (2s Multicall3 poll)       │──────►│ Engine 1: skew-stitch (Rust RFQ Maker)               │
-  │ • Off-chain FX (open.er-api NGN/BRL + dolarapi ARS)  │       │ • Dual-Oracle Shield: SELL >= max(P_textile, P_uni)  │
-  └──────────────────────────────────────────────────────┘       │ • Avellaneda-Stoikov Skew: s = (USDT - Tok) / Total  │
-                              │                                  │ • Quotes cNGN, wARS, wBRL, USDC (1–150 bps spreads)  │
-                              ▼                                  └──────────────────────────┬───────────────────────────┘
-  ┌──────────────────────────────────────────────────────┐                                  │ Signs Permit2 DutchOrders
-  │ Engine 2: skew-desk.mjs (Node.js Taker & Treasury)   │                                  ▼
+  │ • Parallel & Official FX (dolarapi cripto/oficial,   │       │ • Dual-Oracle Shield: SELL >= max(P_textile, P_uni)  │
+  │   open.er-api NGN/BRL) + Central-Bank Session Clock  │       │ • Avellaneda-Stoikov Skew: s = (USDT - Tok) / Total  │
+  └──────────────────────────────────────────────────────┘       │ • Quotes cNGN, wARS, wBRL, USDC (1–150 bps spreads)  │
+                              │                                  └──────────────────────────┬───────────────────────────┘
+                              ▼                                                             ▲ Atomic TOML rewrite
+  ┌──────────────────────────────────────────────────────┐                                  │ (stitch.runtime.toml)
+  │ Engine 2: skew-desk.mjs (Node.js Taker & Risk Desk)  │──────────────────────────────────┼───────┐
+  │ • Risk Officer + stitch.runtime.toml Config Rewriter │                                  │       │
   │ • Multi-slice (100% / 50% / 25%) + adaptive sizing   │──────►  Textile LimitOrderReactor (0xa9AA0a64…35b3)
   │ • 2-leg arbitrage: Textile Reactor ◄──► Uniswap v3   │       & Uniswap v3 SwapRouter02   (0x5615CDAb…abc4)
   │ • Auto-refill & unwind ($18 cNGN, $15 wARS, $15 USDC)│         [Every tx tagged with 35-byte ERC-8021 suffix]
@@ -84,13 +86,15 @@ $$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, P_{\text{uni}
 
 - **Guaranteed positive replenishment margin:** Because our `SELL` floor is never below Uniswap v3, every maker ask fill (e.g. selling `cNGN` at `1,372.9 cNGN/USDT`) is immediately refilled by Engine 2 on Uniswap v3 (`0.01%` pool at `1,378.7 cNGN/USDT`), locking in **`+41.1 bps` net profit per fill** instead of being adversely selected.
 
-### 2. Inventory Skew & Emerging-Market Carry (`skew.rs` & `skew-desk.mjs`)
+### 2. Inventory Skew, Regional Banking Closures & Autonomous Stitch Config Rewriting (`skew.rs` & `skew-desk.mjs`)
 Across 6-decimal (`cNGN`, `USDC`, `USDT`) and 18-decimal (`wARS`, `wBRL`) tokens, Skew computes normalized USD inventory imbalance $s \in [-1, +1]$ and shifts bid/ask spreads with sensitivity $\gamma = 30\text{ bps}$:
 
 $$s = \frac{V_{\text{USDT}} - V_{\text{collateral}}}{V_{\text{USDT}} + V_{\text{collateral}}}, \qquad \text{spread}_{\text{buy}} = \text{clamp}(\text{base}_{\text{buy}} - \gamma s, 1, 150), \qquad \text{spread}_{\text{sell}} = \text{clamp}(\text{base}_{\text{sell}} + \gamma s, 1, 150)$$
 
 - **Top-of-book `1 bps` bid capture:** When holding excess `USDT` ($s > +0.50$), `BUY` spreads tighten to **`1 bps`** to win incoming local-currency flow (`$140.28 cNGN` and `$86.48 wBRL` fills), which Engine 2 then unwinds back to `USDT`.
-- **Deterministic Autonomous Risk Officer (`buildRiskOfficerReport`):** Rather than calling a slow external LLM inside a latency-sensitive 2-second quoting loop, the Risk Officer is a deterministic, zero-latency quantitative risk engine that triangulates 3-source FX basis (`open.er-api.com` for `NGN`/`BRL`, `dolarapi.com` for `ARS` cripto, Celo Uniswap v3 `slot0()`, and Textile RFQ mids) and adjusts spreads for daily emerging-market currency devaluation carry (`wARS: 13.3 bps/day`, `cNGN: 8.5 bps/day`, `wBRL: 4.2 bps/day`, `USDC: 0.0 bps/day`).
+- **Regional Central-Bank Session & Weekend Closure Quoting (`computeRegionalBankingSession`):** Evaluates UTC day and hour against local fiat settlement calendars—**CBN Lagos EFEMS** (`Mon–Fri 07:00–15:00 UTC` for `cNGN`), **BCRA / MAE Buenos Aires** (`Mon–Fri 13:00–18:00 UTC` for `wARS`), **BCB PTAX / B3 São Paulo** (`Mon–Fri 12:00–20:00 UTC` for `wBRL`), and **24/7 Global USD** (`USDC`). During overnight hours and 72-hour weekend banking closures when fiat rails cannot settle, Skew automatically widens ask buffers by **`+1` to `+6 bps`** and scales emerging-market carry by **`1.25x–3.0x`**.
+- **Official vs. Parallel-Market FX Triangulation (`fetchOffChainFxRates` & `computeRiskOfficerDecisions`):** Rather than relying solely on Textile's built-in feed or calling a slow external LLM inside a latency-sensitive 2-second quoting loop, the deterministic Risk Officer triangulates **4 live price sources**: (1) `open.er-api.com` (`USD/NGN`, `USD/BRL`), (2) `dolarapi.com/v1/dolares/cripto` (`ARS` 24/7 parallel crypto rate) vs. `dolarapi.com/v1/dolares/oficial` (`BCRA` official wholesale rate, tracking the live `arsParallelSpreadBps` parallel-market basis), (3) Celo Uniswap v3 `slot0()`, and (4) Textile RFQ mids—incorporating daily emerging-market devaluation carry (`wARS: 13.3 bps/day`, `cNGN: 8.5 bps/day`, `wBRL: 4.2 bps/day`, `USDC: 0.0 bps/day`).
+- **Autonomous `stitch.runtime.toml` Config Rewriter (`syncStitchRuntimeConfig`):** Because Stitch stores its corridor quoting parameters in plain-text TOML, `skew-desk.mjs` wraps the Stitch CLI and atomically rewrites `stitch.runtime.toml` (`buy_offset_bps` and `sell_offset_bps` per corridor via `stitch.runtime.toml.tmp` → `fs.renameSync`) in real time whenever inventory skew, regional banking closures, or parallel FX basis shift.
 
 ### 3. Multi-Slice (`100% / 50% / 25%`) + Adaptive `availableSellAmount` Taker (`skew-desk.mjs`)
 Every 12 seconds, `skew-desk.mjs` scans all four corridors in both directions (`textile -> uni` and `uni -> textile`) to enforce law-of-one-price parity between Textile RFQ and Celo Uniswap v3 while recycling local-currency inventory:
@@ -165,7 +169,7 @@ git clone https://github.com/eugenennamdi/Skew.git
 cd Skew
 npm ci                # Clean install from package-lock.json
 npm run build         # Syntax & module check across skew-desk.mjs and test suite
-npm test              # Run 16 offline unit tests (0 network calls, 0 secrets needed)
+npm test              # Run 18 offline unit tests (0 network calls, 0 secrets needed)
 npm run demo          # Offline sandbox verification (outputs JSON proof and exits 0)
 npm run check         # Live read-only Celo Mainnet (42220) RPC + Textile RFQ 4-corridor check
 npm start             # Start local telemetry dashboard at http://localhost:8080
