@@ -22,6 +22,8 @@ import {
   syncStitchRuntimePolicy,
   isSelfMakerOrder,
   isValidUniQuoteGas,
+  verifyFirmArbQuote,
+  sumReceiptTokenTransfers,
   renderDashboardHtml,
   runDryRunVerification,
   validatePrivateKey,
@@ -307,9 +309,9 @@ test('18. Autonomous stitch.runtime.toml config rewriter atomically updates corr
     const syncRes = syncStitchRuntimeConfig(weekendRisk, path.join(repoRoot, 'stitch.toml'), tmpRuntimePath);
     assert.equal(syncRes.updated, true);
     const written = fs.readFileSync(tmpRuntimePath, 'utf8');
-    // Sunday weekend closure adds +5 bps to cNGN (2 + 5 = 7) and +6 bps to wARS (2 + 6 = 8)
-    assert.match(written, /sell_offset_bps\s*=\s*7/);
-    assert.match(written, /sell_offset_bps\s*=\s*8/);
+    // Sunday weekend closure adds +5 bps to cNGN (4 + 5 = 9) and +6 bps to wARS (4 + 6 = 10)
+    assert.match(written, /sell_offset_bps\s*=\s*9/);
+    assert.match(written, /sell_offset_bps\s*=\s*10/);
   } finally {
     if (fs.existsSync(tmpRuntimePath)) fs.unlinkSync(tmpRuntimePath);
   }
@@ -448,4 +450,47 @@ test('22. Zero-restart skew-policy.json hot-reloader writes checksummed per-corr
   } finally {
     if (fs.existsSync(tmpPolicyPath)) fs.unlinkSync(tmpPolicyPath);
   }
+});
+
+test('23. Pre-flight firm-quote guard rejects bait-and-slip & sub-gas trades and receipt parser extracts exact realized USDT', () => {
+  // 1. Historical preview-to-firm bait-and-slip ($132.9032 in -> $132.7805 firm out) must abort with 0 gas
+  const slipped = verifyFirmArbQuote({ inUsdt: 132.9032, firmOutUsdt: 132.7805 });
+  assert.equal(slipped.ok, false);
+  assert.equal(slipped.reason, 'firm_quote_underwater');
+
+  // 2. Sub-gas scratch trade ($136.3100 in -> $136.3150 firm out, +$0.005 gross < $0.006 gas) must abort
+  const scratch = verifyFirmArbQuote({ inUsdt: 136.31, firmOutUsdt: 136.315 });
+  assert.equal(scratch.ok, false);
+  assert.equal(scratch.reason, 'below_min_net_usd');
+
+  // 3. Single-maker $35 top-of-book slice at +10 bps ($35.00 -> $35.035, net +$0.029 / +8.29 bps) passes
+  const topSlice = verifyFirmArbQuote({ inUsdt: 35.0, firmOutUsdt: 35.035 });
+  assert.equal(topSlice.ok, true);
+  assert.ok(topSlice.netEdgeUsd >= 0.028);
+
+  // 4. Full $135 slice at +25 bps ($135.00 -> $135.3375, net +$0.3315) passes
+  const fullSlice = verifyFirmArbQuote({ inUsdt: 135.0, firmOutUsdt: 135.3375 });
+  assert.equal(fullSlice.ok, true);
+  assert.ok(fullSlice.netEdgeBps > 24);
+
+  // 5. Receipt Transfer log parser extracts exact wallet inflows/outflows immune to RPC lag & external fills
+  const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const ourTopic = '0x' + CONFIG.agentWallet.slice(2).toLowerCase().padStart(64, '0');
+  const poolTopic = '0x' + CONFIG.contracts.cngnUsdtPool.slice(2).toLowerCase().padStart(64, '0');
+  const mockReceipt = {
+    logs: [
+      {
+        address: CONFIG.contracts.usdt,
+        topics: [transferTopic, poolTopic, ourTopic],
+        data: '0x' + (135337500n).toString(16).padStart(64, '0'),
+      },
+      {
+        address: CONFIG.contracts.usdt,
+        topics: [transferTopic, poolTopic, '0x' + '99'.repeat(20).padStart(64, '0')],
+        data: '0x' + (999999999n).toString(16).padStart(64, '0'),
+      },
+    ],
+  };
+  const receivedUsdtRaw = sumReceiptTokenTransfers(mockReceipt, CONFIG.contracts.usdt, { toAddr: CONFIG.agentWallet });
+  assert.equal(receivedUsdtRaw, 135337500n);
 });
