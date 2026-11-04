@@ -2529,7 +2529,9 @@ async fn inventory_loop(
                 ),
             }
         }
-        refresh_celo_dex_reference(reader, wallet.rpc()).await;
+        if wallet.chain_id() == 42220 {
+            refresh_celo_dex_reference(reader, wallet.rpc()).await;
+        }
         tokio::time::sleep(std::time::Duration::from_secs(INVENTORY_REFRESH_SECS)).await;
     }
 }

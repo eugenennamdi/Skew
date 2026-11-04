@@ -385,6 +385,10 @@ impl Wallet {
         &self.rpc
     }
 
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Read a uint256 (e.g. an ERC20 allowance/balance) from `to(data)`.
     pub async fn read_uint(&self, to: Address, data: &Bytes) -> anyhow::Result<U256> {
         let out = self.rpc.eth_call(to, data).await?;

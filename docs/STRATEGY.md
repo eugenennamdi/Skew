@@ -1,8 +1,8 @@
 # Skew Strategy & Celo FX Microstructure Deep-Dive
 
-This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, arbitrages, and rebalances across the four **Textile FX** corridors on Celo Mainnet (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**), and why a **Dual-Engine (Shielded Maker + Multi-Slice Taker)** architecture is required to stay profitable on both sides of the orderbook.
+This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, supervises risk, arbitrages, and rebalances across the four **Textile FX** corridors on Celo Mainnet (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**), and why a **Dual-Engine (Shielded Rust Maker + Bounded AI & Multi-Slice Taker)** architecture is required to stay profitable on both sides of the orderbook.
 
-- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$36.71 USDT` / `+18.83%` RoC in real time)*
+- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$63.38 USDT` / `+32.50%` RoC in real time)*
 - **On-Chain Evidence Ledger:** [reports/EVIDENCE.md](../reports/EVIDENCE.md)
 - **Agent EOA Wallet:** [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)
 - **ERC-8021 Attribution Tag:** `celo_7935fb97e273`
@@ -31,16 +31,18 @@ $$P_{\text{mid, eff}}(\text{SELL}) = \max\left(P_{\text{textile}}, P_{\text{uni}
 
 ---
 
-## 2. Multi-Decimal Avellaneda-Stoikov Skew & Emerging-Market Carry
+## 2. Multi-Corridor Normalized Avellaneda-Stoikov Skew & Bounded AI Policy Loop
 
-### A. Inventory Imbalance Across `6` and `18` Decimals
-Because `USDT`, `cNGN`, and `USDC` use `6` decimals while `wARS` and `wBRL` use `18` decimals, `calculate_inventory_skew_with_decimals()` normalizes both balances into USD before computing skew $s \in [-1, +1]$:
+### A. Multi-Decimal, Share-Weighted Inventory Imbalance (`skew.rs`)
+Because `USDT`, `cNGN`, and `USDC` use `6` decimals while `wARS` and `wBRL` use `18` decimals—and all four corridors draw from a single shared `USDT` settlement balance—`apply_corridor_policy_and_skew()` normalizes balances into USD and weights `USDT` by each corridor's target share $w = \min(1, V_{\text{target}} / V_{\text{USDT}})$ (`~$24` per corridor) before computing skew $s \in [-1, +1]$:
 
-$$V_{\text{USDT}} = \frac{\text{bal}_{\text{USDT}}}{10^6}, \qquad V_{\text{tok}} = \frac{\text{bal}_{\text{tok}}}{10^{\text{dec}_{\text{tok}}}} \cdot P_{\text{mid, eff}}, \qquad s = \frac{V_{\text{USDT}} - V_{\text{tok}}}{V_{\text{USDT}} + V_{\text{tok}}}$$
+$$V_{\text{USDT}} = \frac{\text{bal}_{\text{USDT}}}{10^6}, \qquad V_{\text{tok}} = \frac{\text{bal}_{\text{tok}}}{10^{\text{dec}_{\text{tok}}}} \cdot P_{\text{mid, eff}}, \qquad s = \frac{w \cdot V_{\text{USDT}} - V_{\text{tok}}}{w \cdot V_{\text{USDT}} + V_{\text{tok}}}$$
 
-Given corridor base spreads and risk aversion $\gamma = 30\text{ bps}$:
+Given dynamic corridor base offsets ($\text{base}_{\text{buy}}, \text{base}_{\text{sell}}$) and bounded risk aversion $\gamma \in [2, 15]\text{ bps}$ (default $\gamma = 6\text{ bps}$):
 
 $$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right), \qquad \text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right)$$
+
+*(Raw un-weighted $V_{\text{USDT}} < \$1.00$ and $V_{\text{tok}} < \$1.00$ exhaustion guards remain enforced prior to share weighting so depleted sides halt immediately.)*
 
 ### B. Time, Volatility, Markouts, Bounded Gemini LLM & Zero-Restart Rust Hot-Reload
 To combine sub-millisecond RFQ responsiveness with adaptive quantitative and AI supervision, [`skew-desk.mjs`](../skew-desk.mjs) keeps LLM inference strictly **out-of-band** from the 2-second quoting path while streaming clamped policy updates into Rust [`skew.rs`](../textile-stitch/src/pricing/skew.rs) via `skew-policy.json`:
@@ -52,10 +54,10 @@ To combine sub-millisecond RFQ responsiveness with adaptive quantitative and AI 
 | **`wBRL / USDT`** | `18` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` *(shielded)* | `open.er-api.com` (`USD/BRL` PTAX) | **BCB São Paulo** (`12:00–20:00`) | `+1 bps` / **`+4 bps` (`2.5x`)** | `4.2 bps/day` |
 | **`USDC / USDT`** | `6` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `$1.00` USD Peg | **Global USD 24/7** | `0 bps` (`1.0x`) | `0.0 bps/day` |
 
-1. **Multi-Corridor Normalized Skew (`usdt_share_weight`):** Instead of comparing 100% of shared wallet `USDT` against a single corridor's local reserve (which artificially pins $s > +0.80$), `skew-policy.json` assigns each corridor its target `usdt_share_weight` (`~$24` per corridor), centering $s$ symmetrically around $0.0$.
+1. **Multi-Corridor Normalized Skew (`usdt_share_weight`):** Instead of comparing 100% of shared wallet `USDT` against a single corridor's local reserve (which artificially pins $s > +0.80$), `skew-policy.json` assigns each corridor its target `usdt_share_weight` (`~$24` per corridor), centering $s$ symmetrically around $0.0$ and allowing `wBRL` and `wARS` to win split-router top-of-book fills (`$178.61`, `$178.35`, `$176.90`).
 2. **Rolling EWMA Volatility ($\lambda = 0.94$), Structural Basis Shock & 72h Measured Carry (`updateCorridorQuantState`):** Tracks realized log-return variance (`volBufferBps`), slow EWMA off-chain FX basis (`alpha = 0.05`, tolerating structural on-chain premia while widening on sudden `>80 bps` basis shocks), and observed 72h devaluation drift blended with macro priors.
 3. **Post-Fill `+1m` & `+5m` Markout Feedback (`evaluateMarkoutAdjustments`):** Scores external Maker RFQ fills against mid-price 1 and 5 minutes post-settlement—widening spreads up to `+25 bps` on negative markouts (adverse selection) and tightening `-1 bps` on benign positive markouts.
-4. **Bounded Gemini 3.8 Flash Desk Head (`runGeminiRiskSupervisor` + `clampLlmCorridorDecision`):** Reviews objective corridor telemetry every 10 minutes (and immediately on volatility/markout spikes), tuning `addBuyBps` $\in [-2, 25]$, `addSellBps` $\in [-2, 40]$, `gammaBps` $\in [2, 15]$, or bounded `15–45 min` side pauses. Prior LLM rationales are never echoed into future prompts, Rust's Dual-Oracle floor remains unbreakable, and API errors fail open to deterministic quant rules.
+4. **Bounded Gemini 3.8 Flash Desk Head (`runGeminiRiskSupervisor` + `clampLlmCorridorDecision`):** Reviews objective corridor telemetry every 10 minutes (and immediately on volatility/markout spikes), tuning `addBuyBps` $\in [-2, 25]$, `addSellBps` $\in [-2, 40]$, `gammaBps` $\in [2, 15]$, or bounded `15–45 min` side pauses (with deterministic cold-start tightening protection until `warmupSamples >= 3`). Prior LLM rationales are never echoed into future prompts, Rust's Dual-Oracle floor remains unbreakable, and API errors fail open to deterministic quant rules.
 5. **Zero-Restart Rust Hot-Reload (`syncStitchRuntimePolicy` → `get_corridor_runtime_policy`):** Atomically updates `skew-policy.json` (`mtime`-checked every `2s` in Rust) alongside `stitch.runtime.toml` so both indicative WebSocket levels (`levels_for`) and firm RFQ quotes (`decide_quote`) adapt in real time with **zero Stitch process restarts or WebSocket disconnects**.
 
 ---
@@ -66,7 +68,7 @@ In [`skew-desk.mjs`](../skew-desk.mjs), `scanCorridor()` combines two complement
 
 1. **Multi-Slice Dynamic Budget (`computeSliceSizesUsdt`):**
    - Evaluates candidate slices at **`100%`, `50%`, and `25%` of available liquid `USDT`** (up to `$150` max slice, plus a `$25` baseline).
-   - If the `100%` slice (e.g. `$126 USDT`) experiences Uniswap v3 price impact that reduces net `edgeUsd`, the scanner automatically evaluates the `50%` (`$63`) and `25%` (`$31.50`) slices and selects whichever slice maximizes net dollar profit (`edgeUsd`).
+   - If the `100%` slice experiences Uniswap v3 price impact that reduces net `edgeUsd`, the scanner automatically evaluates the `50%` and `25%` slices and selects whichever slice maximizes net dollar profit (`edgeUsd`).
 2. **Adaptive Sub-Slice Resizing (`availableSellAmount`):**
    - When an external maker on Textile has less inventory than our probe slice, Textile's `POST /v2/rfq/preview` returns `status: "no_quote"` along with `availableSellAmount`.
    - Instead of discarding the corridor, `skew-desk.mjs` immediately re-quotes at **`98%` of `availableSellAmount`**, signs an EIP-712 `TakerControl` proof, lifts the maker on `LimitOrderReactor`, and unwinds on Uniswap v3 `SwapRouter02`.
@@ -90,17 +92,17 @@ During live Celo Mainnet operation, we discovered a critical on-chain anomaly on
 ## 5. Empirical Celo Mainnet Microstructure Benchmark
 
 > [!NOTE]
-> **Point-in-Time Floor Snapshot (`2026-10-30 18:33 UTC` · Celo Mainnet Block `#81,484,785`):**
-> All figures below match the synchronized checkpoint in [`README.md`](../README.md) and [`reports/EVIDENCE.md`](../reports/EVIDENCE.md). Because **Agent `#9905`** trades 24/7 on Celo Mainnet (`42220`), live cumulative totals can be verified at **[eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)** (`GET /status`) or **[Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)**.
+> **Point-in-Time Floor Snapshot (`2026-11-04 06:11 UTC` · Celo Mainnet Block `#81,871,867`):**
+> All figures below match the synchronized checkpoint in [`README.md`](../README.md) and [`reports/EVIDENCE.md`](../reports/EVIDENCE.md). Because **Agent `#9905`** trades 24/7 on Celo Mainnet (`42220`), live cumulative totals can be verified at **[eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)** (`GET /status`, `GET /llm`) or **[Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)**.
 
 Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs deployed during the hackathon:
 
-| Dimension | Skew (`Agent #9905` · Dual-Engine) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
+| Dimension | Skew (`Agent #9905` · Dual-Engine + Bounded AI) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
 | :--- | :--- | :--- | :--- |
 | **Market Role** | **4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | Taker-only (`0` Maker fills) | Multi-corridor Maker + DEX Rebalancer |
-| **On-Chain Settlements** | **`1,466` signed EOA txs (`3,714` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
-| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `41` external fills (`$2,111.50` Maker volume)** | `0` fills (`$0` liquidity provided) | `24`–`140+` fills (exposed to cross-venue oracle lag) |
-| **Cross-Venue Arbitrage & Total Volume** | **`690` 2-leg arbs (`$45,096.26` 1-leg arb · `$49,604.23` total 1-leg · `$99,208.47` 2-leg · `254.4x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
-| **Oracle-Lag Defense** | **Hard `SELL >= max(P_textile, P_uni)` shield (`+41.1 bps` refill edge)** | N/A (never quotes Maker orders) | Soft weighted median; exposed when off-chain FX lags DEX |
+| **On-Chain Settlements** | **`2,675` signed EOA txs (`6,860` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
+| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `134` external fills (`$5,208.24` Maker volume)** | `0` fills (`$0` liquidity provided) | Exposed to cross-venue oracle lag & static spreads |
+| **Cross-Venue Arbitrage & Total Volume** | **`1,286` 2-leg arbs (`$125,409.10` 1-leg arb · `$136,490.63` total 1-leg · `$272,981.26` 2-leg · `700.0x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
+| **Oracle-Lag & AI Defense** | **Hard `SELL >= max(P_textile, P_uni)` floor + EWMA/Markouts + Bounded Gemini 3.8 Flash (`2s` hot-reload)** | N/A (never quotes Maker orders) | Soft weighted median; exposed when off-chain FX lags DEX |
 | **`wBRL` `MAX_TICK` Defense** | **`800k gas` `QuoterV2` guard + `197k gas` Textile RFQ fallback** | N/A | Rebalancer stalls on `0x01c3…A40F` (`17.04M gas`) |
-| **Net Strategy Value & PnL** | **`$231.71` total value (`$195.00` bankroll + `+$36.71 USDT` net profit · `+18.83%` RoC = `$227.86` liquid equity + `$3.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |
+| **Net Strategy Value & PnL** | **`$258.38` total value (`$195.00` bankroll + `+$63.38 USDT` net profit · `+32.50%` RoC = `$252.53` liquid equity + `$5.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |

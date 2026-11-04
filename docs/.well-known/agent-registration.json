@@ -1,7 +1,7 @@
 {
   "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
-  "name": "Skew · Autonomous FX Market Maker & Cross-Venue Rebalancer",
-  "description": "Autonomous Avellaneda-Stoikov inventory-skew market maker (Rust RFQ filler) and closed-loop Uniswap v3 rebalancer on Textile FX (Celo mainnet). Quotes two-way liquidity across all 4 official corridors (cNGN/USDT, wARS/USDT, wBRL/USDT, USDC/USDT) with a Dual-Oracle Anti-Arb Shield (SELL >= max(P_textile, P_uni)) and automatic 0.01% DEX inventory refills.",
+  "name": "Skew · Autonomous AI-Supervised FX Market Maker & Cross-Venue Rebalancer",
+  "description": "Autonomous Avellaneda-Stoikov FX market maker (Rust RFQ filler with 2s zero-restart policy hot-reload), bounded Google Gemini 3.8 Flash Desk Head, rolling EWMA volatility & +1m/+5m markout engine, and closed-loop Uniswap v3 cross-venue arbitrageur on Textile FX (Celo mainnet). Quotes two-way liquidity across all 4 official corridors (cNGN/USDT, wARS/USDT, wBRL/USDT, USDC/USDT) above a hard Dual-Oracle Anti-Arb Shield (SELL >= max(P_textile, P_uni)).",
   "image": "https://eugenennamdi.github.io/Skew/icons/skew-logo.svg",
   "active": true,
   "x402Support": false,
@@ -12,17 +12,17 @@
     {
       "name": "web",
       "endpoint": "https://eugenennamdi.github.io/Skew/",
-      "description": "Live institutional telemetry, 4-corridor quote matrix, interactive Avellaneda-Stoikov pricing simulator, and Autonomous Risk Officer log."
+      "description": "Live 24/7 Celo Mainnet RPC telemetry, 4-corridor quote matrix, normalized Avellaneda-Stoikov pricing simulator, MiniPay CIP-64 detection, and bounded Gemini 3.8 Flash Risk Officer log."
     },
     {
       "name": "source",
       "endpoint": "https://github.com/eugenennamdi/Skew",
-      "description": "Source repository (Rust skew-stitch RFQ maker + Node.js skew-desk cross-venue rebalancer) and on-chain evidence report."
+      "description": "Source repository (Rust skew-stitch RFQ maker + Node.js skew-desk quant, LLM supervisor & cross-venue rebalancer) and on-chain evidence report."
     },
     {
       "name": "evidence",
       "endpoint": "https://github.com/eugenennamdi/Skew/blob/main/reports/EVIDENCE.md",
-      "description": "On-chain audit of independent counterparty fills, head-to-head spread capture, and mark-to-market P&L."
+      "description": "On-chain audit of 134 independent counterparty Maker fills, 1,286 cross-venue arbitrages, and +32.50% RoC mark-to-market P&L."
     },
     {
       "name": "agentWallet",

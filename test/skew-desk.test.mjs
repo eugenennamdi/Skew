@@ -227,22 +227,22 @@ test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCu
 test('16. Cross-document snapshot metrics and LaTeX formulas are 100% consistent across README, EVIDENCE, and STRATEGY', () => {
   const docsToCheck = ['README.md', 'reports/EVIDENCE.md', 'docs/STRATEGY.md'];
   const snapshotMetrics = [
-    '#81,484,785',
-    '1,466',
-    '3,714',
-    '41',
-    '2,111.50',
-    '690',
-    '45,096.26',
-    '49,604.23',
-    '99,208.47',
-    '254.4x',
+    '#81,871,867',
+    '2,675',
+    '6,860',
+    '134',
+    '5,208.24',
+    '1,286',
+    '125,409.10',
+    '136,490.63',
+    '272,981.26',
+    '700.0x',
     '195.00',
-    '231.71',
-    '227.86',
-    '36.71',
-    '18.83%',
-    '3.85',
+    '258.38',
+    '252.53',
+    '63.38',
+    '32.50%',
+    '5.85',
   ];
   for (const relPath of docsToCheck) {
     const content = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
