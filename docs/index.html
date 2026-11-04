@@ -1168,8 +1168,11 @@
         <div class="section-header">
           <div>
             <div class="section-title">Risk Controls &amp; Quote Guardrails</div>
-            <div class="section-desc">Per-corridor pricing mode, parallel FX basis, oracle dispersion, and replenishment logic</div>
+            <div class="section-desc">Bounded Gemini LLM Desk Head, EWMA volatility, post-fill markouts, parallel FX basis &amp; zero-restart Rust hot-reload</div>
           </div>
+        </div>
+        <div id="llmSupervisorBar" style="padding: 10px 20px; border-bottom: 1px solid var(--border); background: rgba(16, 185, 129, 0.04); font-size: 12.5px; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;">
+          <span><b style="color: var(--text);">Gemini 3.8 Flash · Bounded Desk Head:</b> <span id="llmSupervisorSummary">Evaluating live EWMA volatility, central-bank session carry, and +1m/+5m markout telemetry (clamped above Dual-Oracle floor).</span></span>
         </div>
         <div class="table-scroll">
           <table>
@@ -2160,21 +2163,36 @@
         `;
       }).join('');
 
-      // Render Risk Controls & Quote Guardrails
-      const warsSkew = (STATE.balances.USDT + warsUsd) > 0 ? (STATE.balances.USDT - warsUsd) / (STATE.balances.USDT + warsUsd) : 0;
-      const wbrlSkew = (STATE.balances.USDT + wbrlUsd) > 0 ? (STATE.balances.USDT - wbrlUsd) / (STATE.balances.USDT + wbrlUsd) : 0;
-      const usdcSkew = (STATE.balances.USDT + usdcUsd) > 0 ? (STATE.balances.USDT - usdcUsd) / (STATE.balances.USDT + usdcUsd) : 0;
+      // Render Risk Controls & Quote Guardrails (normalized per-corridor $24 USDT share matching skew-policy.json)
+      const allocUsdt = Math.min(STATE.balances.USDT, 24);
+      const normPairSkew = (collUsd) => (allocUsdt + collUsd) > 0.05 ? (allocUsdt - collUsd) / (allocUsdt + collUsd) : 0;
+      const cngnNormSkew = normPairSkew(cngnUsd);
+      const warsSkew = normPairSkew(warsUsd);
+      const wbrlSkew = normPairSkew(wbrlUsd);
+      const usdcSkew = normPairSkew(usdcUsd);
       const warsQ = computeQuotes('wARS');
       const wbrlQ = computeQuotes('wBRL');
       const usdcQ = computeQuotes('USDC');
       const formatRegimeLabel = (reg) => {
         const map = {
           DUAL_ORACLE_SHIELD: 'Dual-Oracle Shield',
+          SKEW_REBALANCE: 'Skew Rebalance',
           TWO_WAY_ACTIVE: 'Gas-Shielded RFQ',
+          GAS_SHIELD_BUY_ACTIVE: 'Gas-Shielded Buy',
           PEG_TIGHT_TWO_WAY: 'Peg-Tight',
+          LLM_GUARD_PAUSED: 'LLM Guard Pause',
         };
         return map[reg] || reg;
       };
+      const llmSummaryEl = document.getElementById('llmSupervisorSummary');
+      if (llmSummaryEl) {
+        const llmSup = STATE.riskOfficer?.llmSupervisor;
+        if (llmSup?.marketRegimeSummary) {
+          llmSummaryEl.textContent = `${llmSup.marketRegimeSummary} (${llmSup.model || 'gemini-3.8-flash'} · zero-restart skew-policy.json active)`;
+        } else {
+          llmSummaryEl.textContent = `Active across 4 corridors — clamping spreads & gamma_bps via zero-restart skew-policy.json above Rust Dual-Oracle floor (${cngnQ.session.session}).`;
+        }
+      }
       const riskRows = STATE.riskOfficer?.corridors || [
         {
           corridor: 'cNGN / USDT',
@@ -2182,7 +2200,7 @@
           regime: 'Dual-Oracle Shield',
           fxBasisCell: `${STATE.offChainFx.NGN.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} NGN <span class="text-subtle">(+${cngnQ.effectiveCarryBps} bps)</span>`,
           oracleDispersionBps: Number(cngnQ.gapBps.toFixed(1)),
-          skew: Number(STATE.skew.toFixed(3)),
+          skew: Number(cngnNormSkew.toFixed(3)),
           bidSpreadBps: cngnQ.buyBps,
           askSpreadBps: cngnQ.sellBps,
           reason: `Ask anchored above Oracle & Uniswap v3 (+${cngnQ.sellBps} bps), locking +${cngnQ.refillEdgeBps.toFixed(1)} bps DEX refill edge.`,

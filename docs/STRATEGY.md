@@ -42,8 +42,8 @@ Given corridor base spreads and risk aversion $\gamma = 30\text{ bps}$:
 
 $$\text{spread}_{\text{buy}} = \text{clamp}\left(\text{base}_{\text{buy}} - \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right), \qquad \text{spread}_{\text{sell}} = \text{clamp}\left(\text{base}_{\text{sell}} + \gamma \cdot s, 1\text{ bps}, 150\text{ bps}\right)$$
 
-### B. Deterministic Risk Officer: Official vs. Parallel-Market FX Triangulation & Regional Banking Closures
-Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) runs a deterministic, zero-latency quantitative Risk Officer (`computeRiskOfficerDecisions()`)—avoiding slow external LLM API calls inside the 2-second quoting loop—that combines **4-source off-chain/on-chain FX triangulation** with **regional central-bank settlement calendars** (`computeRegionalBankingSession()`):
+### B. Time, Volatility, Markouts, Bounded Gemini LLM & Zero-Restart Rust Hot-Reload
+To combine sub-millisecond RFQ responsiveness with adaptive quantitative and AI supervision, [`skew-desk.mjs`](../skew-desk.mjs) keeps LLM inference strictly **out-of-band** from the 2-second quoting path while streaming clamped policy updates into Rust [`skew.rs`](../textile-stitch/src/pricing/skew.rs) via `skew-policy.json`:
 
 | Corridor | Decimals | Primary Celo Uniswap v3 Pool (`0.01%`) | Off-Chain Official & Parallel FX Sources | Regional Banking Session (`UTC`) | Overnight / Weekend Buffer | Base Crawl / Carry |
 | :--- | :---: | :--- | :--- | :--- | :---: | :---: |
@@ -52,8 +52,11 @@ Alongside Textile RFQ and Celo Uniswap v3, [`skew-desk.mjs`](../skew-desk.mjs) r
 | **`wBRL / USDT`** | `18` | `0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F` *(shielded)* | `open.er-api.com` (`USD/BRL` PTAX) | **BCB São Paulo** (`12:00–20:00`) | `+1 bps` / **`+4 bps` (`2.5x`)** | `4.2 bps/day` |
 | **`USDC / USDT`** | `6` | `0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846` | `$1.00` USD Peg | **Global USD 24/7** | `0 bps` (`1.0x`) | `0.0 bps/day` |
 
-- **Official vs. Parallel-Market Basis (`arsParallelSpreadBps`):** In emerging markets like Argentina, the 24/7 crypto/blue parallel rate (`dolarapi.com/v1/dolares/cripto`) diverges significantly from the official BCRA wholesale rate (`dolarapi.com/v1/dolares/oficial`). `fetchOffChainFxRates()` tracks both endpoints simultaneously and exposes `arsParallelSpreadBps` alongside on-chain Uniswap v3 `slot0()` dispersion.
-- **Autonomous `stitch.runtime.toml` Config Rewriter (`syncStitchRuntimeConfig`):** Because Stitch reads its per-corridor spread offsets from plain-text TOML, `skew-desk.mjs` atomically rewrites `stitch.runtime.toml` (`buy_offset_bps` and `sell_offset_bps` via `stitch.runtime.toml.tmp` → `fs.renameSync`) whenever the Risk Officer updates corridor spreads for inventory skew, overnight/weekend central-bank closures, or parallel FX basis.
+1. **Multi-Corridor Normalized Skew (`usdt_share_weight`):** Instead of comparing 100% of shared wallet `USDT` against a single corridor's local reserve (which artificially pins $s > +0.80$), `skew-policy.json` assigns each corridor its target `usdt_share_weight` (`~$24` per corridor), centering $s$ symmetrically around $0.0$.
+2. **Rolling EWMA Volatility ($\lambda = 0.94$), Structural Basis Shock & 72h Measured Carry (`updateCorridorQuantState`):** Tracks realized log-return variance (`volBufferBps`), slow EWMA off-chain FX basis (`alpha = 0.05`, tolerating structural on-chain premia while widening on sudden `>80 bps` basis shocks), and observed 72h devaluation drift blended with macro priors.
+3. **Post-Fill `+1m` & `+5m` Markout Feedback (`evaluateMarkoutAdjustments`):** Scores external Maker RFQ fills against mid-price 1 and 5 minutes post-settlement—widening spreads up to `+25 bps` on negative markouts (adverse selection) and tightening `-1 bps` on benign positive markouts.
+4. **Bounded Gemini 3.8 Flash Desk Head (`runGeminiRiskSupervisor` + `clampLlmCorridorDecision`):** Reviews objective corridor telemetry every 10 minutes (and immediately on volatility/markout spikes), tuning `addBuyBps` $\in [-2, 25]$, `addSellBps` $\in [-2, 40]$, `gammaBps` $\in [2, 15]$, or bounded `15–45 min` side pauses. Prior LLM rationales are never echoed into future prompts, Rust's Dual-Oracle floor remains unbreakable, and API errors fail open to deterministic quant rules.
+5. **Zero-Restart Rust Hot-Reload (`syncStitchRuntimePolicy` → `get_corridor_runtime_policy`):** Atomically updates `skew-policy.json` (`mtime`-checked every `2s` in Rust) alongside `stitch.runtime.toml` so both indicative WebSocket levels (`levels_for`) and firm RFQ quotes (`decide_quote`) adapt in real time with **zero Stitch process restarts or WebSocket disconnects**.
 
 ---
 

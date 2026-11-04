@@ -32,7 +32,7 @@ fi
 
 # 3. Run self-check against Celo Mainnet & Textile RFQ
 echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."
-node skew-desk.mjs --check
+SKEW_POLICY_FILE="$(pwd)/skew-policy.json" node skew-desk.mjs --check
 
 # 4. Stop any previous skew-desk or skew-stitch processes
 echo "[+] Stopping any previous instances..."
@@ -66,14 +66,19 @@ if [ -x "./skew-stitch" ]; then
   export STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key"
   STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
   STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key" \
-  SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-3}" \
+  SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \
+  SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-6}" \
   RUST_LOG=info \
     setsid nohup ./skew-stitch --config ./stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
   echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
 
-# 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury & Dashboard)
+# 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
-STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
+STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
+GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}" \
+SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \
+LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.01}" PORT="${PORT:-8080}" \
   setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"

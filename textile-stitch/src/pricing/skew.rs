@@ -5,9 +5,12 @@
 //! Hard constraint: Engineered to run safely under a < $5.00 total capital budget.
 
 use std::collections::HashMap;
+use std::fs;
 use std::sync::{OnceLock, RwLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use alloy_primitives::{Address, U256};
+use serde::Deserialize;
 use crate::pricing::quote::Spread;
 use crate::rfq::wire::RejectReason;
 
@@ -16,6 +19,85 @@ pub const MIN_SPREAD_BPS: u32 = 1;              // Allow tightening down to 1 bp
 pub const MAX_SPREAD_BPS: u32 = 150;            // Never quote wider than 150 bps (unless base_bps > 150)
 pub const EXTREME_IMBALANCE_THRESHOLD: f64 = 0.85; // |s| >= 0.85 triggers one-sided quoting
 pub const MIN_PORTFOLIO_VALUE_USD: f64 = 0.05;  // Under $0.05 total value, fail closed
+const POLICY_CACHE_TTL: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CorridorRuntimePolicy {
+    pub paused: bool,
+    pub pause_buy: bool,
+    pub pause_sell: bool,
+    pub buy_offset_bps: Option<u32>,
+    pub sell_offset_bps: Option<u32>,
+    pub gamma_bps: Option<u32>,
+    /// Share of shared wallet USDT assigned to this corridor in (0.05..=1.0) so multi-corridor skew centers around 0.0
+    pub usdt_share_weight: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct RuntimePolicyFile {
+    corridors: HashMap<String, CorridorRuntimePolicy>,
+}
+
+#[derive(Default)]
+struct RuntimePolicyCache {
+    last_checked: Option<Instant>,
+    last_mtime: Option<SystemTime>,
+    last_path: String,
+    policies: HashMap<Address, CorridorRuntimePolicy>,
+}
+
+static POLICY_CACHE: OnceLock<RwLock<RuntimePolicyCache>> = OnceLock::new();
+
+fn policy_cache() -> &'static RwLock<RuntimePolicyCache> {
+    POLICY_CACHE.get_or_init(|| RwLock::new(RuntimePolicyCache::default()))
+}
+
+/// Zero-restart hot-reload policy reader (ponytail: mtime-gated every 2s; zero blocking I/O on RFQ hot path).
+pub fn get_corridor_runtime_policy(collateral: Address) -> Option<CorridorRuntimePolicy> {
+    let path = std::env::var("SKEW_POLICY_FILE").unwrap_or_else(|_| "./skew-policy.json".to_string());
+    if let Ok(guard) = policy_cache().read() {
+        if guard.last_path == path
+            && guard
+                .last_checked
+                .is_some_and(|t| t.elapsed() < POLICY_CACHE_TTL)
+        {
+            return guard.policies.get(&collateral).cloned();
+        }
+    }
+    let Ok(mut guard) = policy_cache().write() else {
+        return None;
+    };
+    let path_changed = guard.last_path != path;
+    guard.last_checked = Some(Instant::now());
+    guard.last_path = path.clone();
+
+    let Ok(meta) = fs::metadata(&path) else {
+        if path_changed {
+            guard.last_mtime = None;
+            guard.policies.clear();
+        }
+        return guard.policies.get(&collateral).cloned();
+    };
+    let mtime = meta.modified().ok();
+    if !path_changed && mtime.is_some() && mtime == guard.last_mtime {
+        return guard.policies.get(&collateral).cloned();
+    }
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(parsed) = serde_json::from_str::<RuntimePolicyFile>(&raw) {
+            let mut next = HashMap::new();
+            for (k, v) in parsed.corridors {
+                if let Ok(addr) = k.parse::<Address>() {
+                    next.insert(addr, v);
+                }
+            }
+            guard.policies = next;
+            guard.last_mtime = mtime;
+        }
+    }
+    guard.policies.get(&collateral).cloned()
+}
 
 static DEX_MID_CACHE: OnceLock<RwLock<HashMap<Address, f64>>> = OnceLock::new();
 
@@ -243,6 +325,119 @@ pub fn adjust_spread_for_skew(
     adjust_spread_for_skew_with_decimals(base_spread, bid, usdt_balance, 6, cngn_balance, 6, mid)
 }
 
+/// Apply live hot-reloaded corridor policy (`paused`, `pause_buy`, `pause_sell`, dynamic base offsets,
+/// `gamma_bps`, and multi-corridor `usdt_share_weight`) on top of inventory-skew pricing without restarting Stitch.
+pub fn apply_corridor_policy_and_skew(
+    policy: Option<&CorridorRuntimePolicy>,
+    base_spread: Spread,
+    bid: bool,
+    usdt_balance: U256,
+    debt_decimals: u8,
+    collateral_balance: U256,
+    collateral_decimals: u8,
+    mid: f64,
+    default_gamma_bps: u32,
+) -> Result<Spread, RejectReason> {
+    if let Some(p) = policy {
+        if p.paused || (bid && p.pause_buy) || (!bid && p.pause_sell) {
+            return Err(RejectReason::Busy);
+        }
+    }
+
+    let effective_base = match policy {
+        Some(p) if bid && p.buy_offset_bps.is_some() => Spread::Bps(p.buy_offset_bps.unwrap()),
+        Some(p) if !bid && p.sell_offset_bps.is_some() => Spread::Bps(p.sell_offset_bps.unwrap()),
+        _ => base_spread,
+    };
+
+    let gamma_bps = policy
+        .and_then(|p| p.gamma_bps)
+        .unwrap_or(default_gamma_bps);
+
+    let raw_usdt_val = u256_to_f64_decimals(usdt_balance, debt_decimals);
+    let coll_val = u256_to_f64_decimals(collateral_balance, collateral_decimals) * mid;
+    let raw_total_val = raw_usdt_val + coll_val;
+    if raw_total_val < MIN_PORTFOLIO_VALUE_USD {
+        return Err(RejectReason::Inventory);
+    }
+
+    let weight = policy
+        .and_then(|p| p.usdt_share_weight)
+        .filter(|w| w.is_finite() && *w > 0.0)
+        .unwrap_or(1.0)
+        .clamp(0.05, 1.0);
+    let alloc_usdt_val = raw_usdt_val * weight;
+    let alloc_total = alloc_usdt_val + coll_val;
+    let skew = if alloc_total >= MIN_PORTFOLIO_VALUE_USD {
+        ((alloc_usdt_val - coll_val) / alloc_total).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+
+    if skew >= EXTREME_IMBALANCE_THRESHOLD && !bid && coll_val < 1.00 {
+        return Err(RejectReason::Inventory);
+    }
+    if skew <= -EXTREME_IMBALANCE_THRESHOLD && bid && raw_usdt_val < 1.00 {
+        return Err(RejectReason::Inventory);
+    }
+
+    let Spread::Bps(base_bps) = effective_base else {
+        return Ok(effective_base);
+    };
+
+    let delta = (gamma_bps as f64) * skew;
+    let raw_bps = if bid {
+        (base_bps as f64) - delta
+    } else {
+        (base_bps as f64) + delta
+    };
+    let max_bps = MAX_SPREAD_BPS.max(base_bps);
+    let dynamic_bps = (raw_bps.round() as i64).clamp(MIN_SPREAD_BPS as i64, max_bps as i64) as u32;
+
+    eprintln!(
+        "[skew] side={} s={:+.3} base={}bps -> dynamic={}bps (usdt=${:.2}*{:.2}=${:.2}, coll=${:.2})",
+        if bid { "BUY " } else { "SELL" },
+        skew,
+        base_bps,
+        dynamic_bps,
+        raw_usdt_val,
+        weight,
+        alloc_usdt_val,
+        coll_val
+    );
+
+    Ok(Spread::Bps(dynamic_bps))
+}
+
+/// Live RFQ entry point reading `skew-policy.json` (if present) and `SKEW_GAMMA_BPS`.
+pub fn adjust_spread_for_corridor(
+    collateral: Address,
+    base_spread: Spread,
+    bid: bool,
+    usdt_balance: U256,
+    debt_decimals: u8,
+    collateral_balance: U256,
+    collateral_decimals: u8,
+    mid: f64,
+) -> Result<Spread, RejectReason> {
+    let default_gamma = std::env::var("SKEW_GAMMA_BPS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(6);
+    let policy = get_corridor_runtime_policy(collateral);
+    apply_corridor_policy_and_skew(
+        policy.as_ref(),
+        base_spread,
+        bid,
+        usdt_balance,
+        debt_decimals,
+        collateral_balance,
+        collateral_decimals,
+        mid,
+        default_gamma,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +617,84 @@ mod tests {
         // When buying cNGN (bid=true), anchor to the lower mid (Textile) so we never overpay
         let bid_mid = effective_mid_for_side(textile_mid, Some(uniswap_mid), true);
         assert_eq!(bid_mid, textile_mid);
+    }
+
+    #[test]
+    fn test_hot_reload_policy_pause_and_normalized_multicorridor_skew() {
+        // $160 total wallet USDT shared across 4 corridors with weight=0.15 ($24 allocated) vs $24 cNGN -> s = 0.0!
+        let usdt_bal = to_u256_6dp(160.0);
+        let cngn_bal = to_u256_6dp(24.0 / MID_RATE);
+
+        let balanced_policy = CorridorRuntimePolicy {
+            paused: false,
+            pause_buy: false,
+            pause_sell: false,
+            buy_offset_bps: Some(4),
+            sell_offset_bps: Some(9),
+            gamma_bps: Some(8),
+            usdt_share_weight: Some(0.15),
+        };
+        assert_eq!(
+            apply_corridor_policy_and_skew(
+                Some(&balanced_policy),
+                Spread::Bps(3),
+                true,
+                usdt_bal,
+                6,
+                cngn_bal,
+                6,
+                MID_RATE,
+                6,
+            ),
+            Ok(Spread::Bps(4))
+        );
+        assert_eq!(
+            apply_corridor_policy_and_skew(
+                Some(&balanced_policy),
+                Spread::Bps(2),
+                false,
+                usdt_bal,
+                6,
+                cngn_bal,
+                6,
+                MID_RATE,
+                6,
+            ),
+            Ok(Spread::Bps(9))
+        );
+
+        // Per-side pause_sell rejects SELL with Busy while keeping BUY live
+        let sell_paused = CorridorRuntimePolicy {
+            pause_sell: true,
+            ..balanced_policy.clone()
+        };
+        assert_eq!(
+            apply_corridor_policy_and_skew(
+                Some(&sell_paused),
+                Spread::Bps(2),
+                false,
+                usdt_bal,
+                6,
+                cngn_bal,
+                6,
+                MID_RATE,
+                6,
+            ),
+            Err(RejectReason::Busy)
+        );
+        assert_eq!(
+            apply_corridor_policy_and_skew(
+                Some(&sell_paused),
+                Spread::Bps(3),
+                true,
+                usdt_bal,
+                6,
+                cngn_bal,
+                6,
+                MID_RATE,
+                6,
+            ),
+            Ok(Spread::Bps(4))
+        );
     }
 }

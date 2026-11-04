@@ -11,6 +11,9 @@
 **/chain-reads.json
 *.slot-nonces.json
 stitch.runtime.toml
+skew-policy.json
+llm-decisions.jsonl
+markouts.jsonl
 
 # Build artifacts & dependencies
 node_modules/

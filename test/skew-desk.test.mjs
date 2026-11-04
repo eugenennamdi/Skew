@@ -13,7 +13,13 @@ import {
   computeSliceSizesUsdt,
   computeRegionalBankingSession,
   computeRiskOfficerDecisions,
+  updateCorridorQuantState,
+  evaluateMarkoutAdjustments,
+  clampLlmCorridorDecision,
+  buildGeminiSupervisorPrompt,
+  runGeminiRiskSupervisor,
   syncStitchRuntimeConfig,
+  syncStitchRuntimePolicy,
   isSelfMakerOrder,
   isValidUniQuoteGas,
   renderDashboardHtml,
@@ -306,5 +312,140 @@ test('18. Autonomous stitch.runtime.toml config rewriter atomically updates corr
     assert.match(written, /sell_offset_bps\s*=\s*8/);
   } finally {
     if (fs.existsSync(tmpRuntimePath)) fs.unlinkSync(tmpRuntimePath);
+  }
+});
+
+test('19. Rolling EWMA volatility (lambda=0.94), structural FX basis shock detector, and 72h carry blend', () => {
+  const t0 = Date.parse('2026-11-01T00:00:00Z');
+  // Steady structural +300 bps cNGN premium does NOT trigger basis shock buffer
+  let st = updateCorridorQuantState(null, { mid: 1 / 1423.0, offChainPerUsd: 1381.5, priorCarryBps: 8.5, nowMs: t0 });
+  assert.equal(st.basisBufferBps, 0);
+  assert.equal(st.dailyCarryBps, 8.5);
+
+  // Sudden +200 bps devaluation tick triggers EWMA volatility buffer + structural basis shock buffer + measured carry blend
+  st = updateCorridorQuantState(st, {
+    mid: 1 / 1452.0,
+    offChainPerUsd: 1381.5,
+    priorCarryBps: 8.5,
+    nowMs: t0 + 24 * 3600_000,
+  });
+  assert.ok(st.ewmaVolBps > 40);
+  assert.ok(st.volBufferBps > 0);
+  assert.ok(st.basisShockBps > 80);
+  assert.ok(st.basisBufferBps > 0);
+  assert.ok(st.dailyCarryBps > 8.5, 'Depreciation over 24h increases blended daily carry above prior');
+});
+
+test('20. Post-fill +1m/+5m markout loop widens spread on toxic adverse selection and tightens on benign flow', () => {
+  const nowMs = Date.now();
+  const toxicRecords = [
+    { txHash: '0xaaa', tsMs: nowMs - 360_000, symbol: 'cNGN', side: 'SELL', midAtFill: 0.000720, mid1m: null, mid5m: null, markout1mBps: null, markout5mBps: null },
+  ];
+  // Price rose +100 bps against our SELL fill -> negative markout -> positive markoutBufferBps
+  const toxicEval = evaluateMarkoutAdjustments(toxicRecords, { cNGN: 0.0007272, wARS: 0.0006, wBRL: 0.18, USDC: 1.0 }, nowMs);
+  assert.ok(toxicRecords[0].markout5mBps < -90);
+  assert.ok(toxicEval.bySymbol.cNGN.markoutBufferBps >= 15);
+
+  const benignRecords = [
+    { txHash: '0xbbb', tsMs: nowMs - 360_000, symbol: 'USDC', side: 'SELL', midAtFill: 1.0008, mid1m: null, mid5m: null, markout1mBps: null, markout5mBps: null },
+  ];
+  const benignEval = evaluateMarkoutAdjustments(benignRecords, { cNGN: 0.000725, wARS: 0.0006, wBRL: 0.18, USDC: 1.0000 }, nowMs);
+  assert.ok(benignRecords[0].markout5mBps > 5);
+  assert.equal(benignEval.bySymbol.USDC.markoutBufferBps, -1);
+});
+
+test('21. Bounded Gemini LLM Desk Head clamps wild outputs, prevents feedback loops, and fails open on HTTP errors', async () => {
+  const clamped = clampLlmCorridorDecision({
+    corridor: 'wARS/USDT',
+    action: 'PAUSE_SELL',
+    addBuyBps: 999,
+    addSellBps: 999,
+    gammaBps: -50,
+    pauseMinutes: 9999,
+    rationale: 'Extreme BCRA weekend volatility',
+  }, 1000);
+  assert.equal(clamped.addBuyBps, 25);
+  assert.equal(clamped.addSellBps, 40);
+  assert.equal(clamped.gammaBps, 2);
+  assert.equal(clamped.pauseMinutes, 45);
+  assert.equal(clamped.pausedUntilMs, 1000 + 45 * 60_000);
+
+  const prompt = buildGeminiSupervisorPrompt([{ corridor: 'cNGN/USDT', bankingSession: 'CBN_LAGOS_OPEN', inventoryUsd: 24, skew: 0.02, ewmaVolBps: 3.1, oracleDispersionBps: 12, offChainBasisBps: 210, basisShockBps: 8, effectiveCarryBps: 8.5, avgMarkoutBps: 1.4, scoredMarkoutFills: 3, llmRationale: 'DO_NOT_ECHO_PAST_REASON' }]);
+  assert.ok(!prompt.includes('DO_NOT_ECHO_PAST_REASON'), 'Prompt must never feed prior LLM rationale back into itself');
+
+  const okRes = await runGeminiRiskSupervisor({
+    corridors: [{ corridor: 'cNGN/USDT', bankingSession: 'CBN_LAGOS_OPEN', inventoryUsd: 24, skew: 0, oracleDispersionBps: 10, offChainBasisBps: 100, effectiveCarryBps: 8.5 }],
+    apiKey: 'test-gemini-key',
+    persistLog: false,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                marketRegimeSummary: 'Calm CBN Lagos session; tightening cNGN slightly',
+                corridors: [{ corridor: 'cNGN/USDT', action: 'WIDEN', addBuyBps: 2, addSellBps: 6, gammaBps: 9, pauseMinutes: 0, rationale: 'Mild dispersion buffer' }],
+              }),
+            }],
+          },
+        }],
+      }),
+    }),
+  });
+  assert.equal(okRes.status, 'ACTIVE_BOUNDED');
+  assert.equal(okRes.decisions['cNGN/USDT'].addSellBps, 6);
+  assert.equal(okRes.decisions['cNGN/USDT'].gammaBps, 9);
+
+  // Simulated 500 outage must fail open without throwing
+  const degradedRes = await runGeminiRiskSupervisor({
+    corridors: [],
+    apiKey: 'test-gemini-key',
+    persistLog: false,
+    fetchImpl: async () => ({ ok: false, status: 503, text: async () => 'Service Unavailable' }),
+  });
+  assert.equal(degradedRes.status, 'DEGRADED_FAIL_OPEN');
+  assert.deepEqual(degradedRes.decisions, {});
+});
+
+test('22. Zero-restart skew-policy.json hot-reloader writes checksummed per-corridor policy & multi-corridor share weights', () => {
+  const skewMetrics = computeSkewAndQuotes({
+    usdtUsd: 160,
+    cngnBalance: 33000,
+    textileMid: 0.000723,
+    uniMid: 0.000725,
+  });
+  const risk = computeRiskOfficerDecisions({
+    usdt: 160,
+    cngn: 33000,
+    wars: 36000,
+    wbrl: 120,
+    usdc: 20,
+    uniCngnMid: 0.000725,
+    uniWarsMid: 0.000605,
+    skewMetrics,
+    llmOverlay: {
+      status: 'ACTIVE_BOUNDED',
+      model: 'gemini-3.8-flash',
+      reviewedAt: new Date().toISOString(),
+      marketRegimeSummary: 'Weekend protection',
+      decisions: {
+        'wARS/USDT': clampLlmCorridorDecision({ corridor: 'wARS/USDT', action: 'PAUSE_SELL', addSellBps: 12, gammaBps: 10, pauseMinutes: 20, rationale: 'BCRA weekend shock' }),
+      },
+    },
+  });
+  const tmpPolicyPath = path.join(os.tmpdir(), `skew-policy.${Date.now()}.json`);
+  try {
+    const res = syncStitchRuntimePolicy(risk, tmpPolicyPath);
+    assert.equal(res.updated, true);
+    const parsed = JSON.parse(fs.readFileSync(tmpPolicyPath, 'utf8'));
+    const warsEntry = parsed.corridors[CONFIG.tokens[1].address];
+    assert.equal(warsEntry.pause_sell, true);
+    assert.equal(warsEntry.gamma_bps, 10);
+    assert.equal(warsEntry.usdt_share_weight, 0.15);
+    assert.ok(Math.abs(risk.corridors[0].skew) < 0.15, 'Normalized cNGN skew ($24 vs $24 allocated) centers near 0.0');
+  } finally {
+    if (fs.existsSync(tmpPolicyPath)) fs.unlinkSync(tmpPolicyPath);
   }
 });
