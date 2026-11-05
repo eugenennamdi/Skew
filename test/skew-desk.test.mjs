@@ -229,21 +229,21 @@ test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCu
 test('16. Cross-document snapshot metrics and LaTeX formulas are 100% consistent across README, EVIDENCE, and STRATEGY', () => {
   const docsToCheck = ['README.md', 'reports/EVIDENCE.md', 'docs/STRATEGY.md'];
   const snapshotMetrics = [
-    '#81,871,867',
-    '2,675',
-    '6,860',
-    '134',
-    '5,208.24',
-    '1,286',
-    '125,409.10',
-    '136,490.63',
-    '272,981.26',
-    '700.0x',
+    '#81,967,402',
+    '2,839',
+    '7,277',
+    '153',
+    '5,736.29',
+    '1,363',
+    '135,069.12',
+    '146,678.70',
+    '293,357.40',
+    '752.2x',
     '195.00',
-    '258.38',
-    '252.53',
-    '63.38',
-    '32.50%',
+    '261.33',
+    '255.48',
+    '66.33',
+    '34.02%',
     '5.85',
   ];
   for (const relPath of docsToCheck) {
@@ -561,4 +561,16 @@ test('24. Calm-market clamp blocks routine overnight LLM over-widening while pre
   });
   const stressedWars = stressed.corridors.find((c) => c.corridor === 'wARS/USDT');
   assert.ok(stressedWars.stitchSellOffsetBps >= 45, `Expected full stress protection >= 45 bps, got ${stressedWars.stitchSellOffsetBps}`);
+});
+
+test('25. GitHub Pages .nojekyll, ERC-8004 agent-registration.json, and honest live RPC dashboard PnL are intact', () => {
+  assert.ok(fs.existsSync(path.join(repoRoot, 'docs', '.nojekyll')), 'docs/.nojekyll must exist so GitHub Pages serves .well-known/agent-registration.json');
+  const reg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'docs', '.well-known', 'agent-registration.json'), 'utf8'));
+  assert.equal(reg.registrations?.[0]?.agentId, 9905);
+  assert.equal(reg.attribution?.erc8021, 'celo_7935fb97e273');
+
+  const html = fs.readFileSync(path.join(repoRoot, 'docs', 'index.html'), 'utf8');
+  assert.ok(!html.includes('extraArbs * 0.045') && !html.includes('Math.max(liveNavPnlUsdt'), 'docs/index.html must never synthetically extrapolate PnL per nonce');
+  assert.ok(html.includes('BASE_NONCE = 2839'), 'docs/index.html must anchor to verified Block #81,967,402 checkpoint');
+  assert.ok(html.includes('/llm'), 'docs/index.html must poll /llm telemetry when connected to localhost or ?api=');
 });

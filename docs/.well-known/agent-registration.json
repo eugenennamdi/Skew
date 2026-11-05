@@ -22,7 +22,7 @@
     {
       "name": "evidence",
       "endpoint": "https://github.com/eugenennamdi/Skew/blob/main/reports/EVIDENCE.md",
-      "description": "On-chain audit of 134 independent counterparty Maker fills, 1,286 cross-venue arbitrages, and +32.50% RoC mark-to-market P&L."
+      "description": "On-chain audit of 153 independent counterparty Maker fills, 1,363 cross-venue arbitrages, and +34.02% RoC mark-to-market P&L."
     },
     {
       "name": "agentWallet",

@@ -2,7 +2,7 @@
 
 This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, supervises risk, arbitrages, and rebalances across the four **Textile FX** corridors on Celo Mainnet (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**), and why a **Dual-Engine (Shielded Rust Maker + Bounded AI & Multi-Slice Taker)** architecture is required to stay profitable on both sides of the orderbook.
 
-- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$63.38 USDT` / `+32.50%` RoC in real time)*
+- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$66.33 USDT` / `+34.02%` RoC in real time)*
 - **On-Chain Evidence Ledger:** [reports/EVIDENCE.md](../reports/EVIDENCE.md)
 - **Agent EOA Wallet:** [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)
 - **ERC-8021 Attribution Tag:** `celo_7935fb97e273`
@@ -57,19 +57,22 @@ To combine sub-millisecond RFQ responsiveness with adaptive quantitative and AI 
 1. **Multi-Corridor Normalized Skew (`usdt_share_weight`):** Instead of comparing 100% of shared wallet `USDT` against a single corridor's local reserve (which artificially pins $s > +0.80$), `skew-policy.json` assigns each corridor its target `usdt_share_weight` (`~$24` per corridor), centering $s$ symmetrically around $0.0$ and allowing `wBRL` and `wARS` to win split-router top-of-book fills (`$178.61`, `$178.35`, `$176.90`).
 2. **Rolling EWMA Volatility ($\lambda = 0.94$), Structural Basis Shock & 72h Measured Carry (`updateCorridorQuantState`):** Tracks realized log-return variance (`volBufferBps`), slow EWMA off-chain FX basis (`alpha = 0.05`, tolerating structural on-chain premia while widening on sudden `>80 bps` basis shocks), and observed 72h devaluation drift blended with macro priors.
 3. **Post-Fill `+1m` & `+5m` Markout Feedback (`evaluateMarkoutAdjustments`):** Scores external Maker RFQ fills against mid-price 1 and 5 minutes post-settlement—widening spreads up to `+25 bps` on negative markouts (adverse selection) and tightening `-1 bps` on benign positive markouts.
-4. **Bounded Gemini 3.8 Flash Desk Head (`runGeminiRiskSupervisor` + `clampLlmCorridorDecision`):** Reviews objective corridor telemetry every 10 minutes (and immediately on volatility/markout spikes), tuning `addBuyBps` $\in [-2, 25]$, `addSellBps` $\in [-2, 40]$, `gammaBps` $\in [2, 15]$, or bounded `15–45 min` side pauses (with deterministic cold-start tightening protection until `warmupSamples >= 3`). Prior LLM rationales are never echoed into future prompts, Rust's Dual-Oracle floor remains unbreakable, and API errors fail open to deterministic quant rules.
+4. **Bounded Gemini 3.8 Flash Desk Head (`runGeminiRiskSupervisor` + `clampLlmCorridorDecision`):** Reviews objective corridor telemetry every 10 minutes (and immediately on volatility/markout spikes), tuning `addBuyBps` $\in [-2, 25]$, `addSellBps` $\in [-2, 40]$, `gammaBps` $\in [2, 15]$, or bounded `15–45 min` side pauses—with a calm-market top-of-book clamp keeping weekday spreads competitive at `2–6 bps` whenever `ewmaVolBps < 12` and `basisShockBps < 60`, while preserving full `+45 bps` protection under genuine stress. Prior LLM rationales are never echoed into future prompts, Rust's Dual-Oracle floor remains unbreakable, and API errors fail open to deterministic quant rules.
 5. **Zero-Restart Rust Hot-Reload (`syncStitchRuntimePolicy` → `get_corridor_runtime_policy`):** Atomically updates `skew-policy.json` (`mtime`-checked every `2s` in Rust) alongside `stitch.runtime.toml` so both indicative WebSocket levels (`levels_for`) and firm RFQ quotes (`decide_quote`) adapt in real time with **zero Stitch process restarts or WebSocket disconnects**.
 
 ---
 
-## 3. Multi-Slice (`100% / 50% / 25%`) + Adaptive `availableSellAmount` Taker
+## 3. Bidirectional Multi-Slice (`100% / 50% / 25%`) + Zero-Gas Firm-Quote Taker
 
-In [`skew-desk.mjs`](../skew-desk.mjs), `scanCorridor()` combines two complementary sizing mechanisms:
+In [`skew-desk.mjs`](../skew-desk.mjs), `scanCorridor()` and `executeOpportunity()` run every `3.5 seconds` across three complementary mechanisms:
 
-1. **Multi-Slice Dynamic Budget (`computeSliceSizesUsdt`):**
-   - Evaluates candidate slices at **`100%`, `50%`, and `25%` of available liquid `USDT`** (up to `$150` max slice, plus a `$25` baseline).
-   - If the `100%` slice experiences Uniswap v3 price impact that reduces net `edgeUsd`, the scanner automatically evaluates the `50%` and `25%` slices and selects whichever slice maximizes net dollar profit (`edgeUsd`).
-2. **Adaptive Sub-Slice Resizing (`availableSellAmount`):**
+1. **Multi-Slice & Top-of-Book Dynamic Budget (`computeSliceSizesUsdt`):**
+   - Evaluates candidate slices across **`100%`, `50%`, and `25%` of available liquid `USDT`** (up to `$150` max slice, plus single-maker top-of-book probes).
+   - If the `100%` slice experiences Uniswap v3 price impact or blends a wide secondary maker quote, the scanner automatically selects the smaller slice that maximizes net dollar profit (`edgeUsd`).
+2. **Zero-Gas Pre-Broadcast Firm-Quote Guard (`verifyFirmArbQuote`):**
+   - Indicative `/v2/rfq/preview` responses can differ by `1–3 bps` from firm EIP-712 `DutchOrder` calldata when depth shifts mid-second.
+   - Before broadcasting either a `textile -> uni` sweep or an inventory-first `uni -> textile` reverse arbitrage, `skew-desk.mjs` inspects the firm `outputs[0]` amount and aborts at **`0 gas`** unless net post-gas return clears `MIN_FIRM_NET_EDGE_USD` (`$0.018` / `1.2 bps`), and parses exact `Transfer` receipt logs (`sumReceiptTokenTransfers`) post-fill.
+3. **Adaptive Sub-Slice Resizing (`availableSellAmount`):**
    - When an external maker on Textile has less inventory than our probe slice, Textile's `POST /v2/rfq/preview` returns `status: "no_quote"` along with `availableSellAmount`.
    - Instead of discarding the corridor, `skew-desk.mjs` immediately re-quotes at **`98%` of `availableSellAmount`**, signs an EIP-712 `TakerControl` proof, lifts the maker on `LimitOrderReactor`, and unwinds on Uniswap v3 `SwapRouter02`.
 
@@ -92,7 +95,7 @@ During live Celo Mainnet operation, we discovered a critical on-chain anomaly on
 ## 5. Empirical Celo Mainnet Microstructure Benchmark
 
 > [!NOTE]
-> **Point-in-Time Floor Snapshot (`2026-11-04 06:11 UTC` · Celo Mainnet Block `#81,871,867`):**
+> **Point-in-Time Floor Snapshot (`2026-11-05 08:42 UTC` · Celo Mainnet Block `#81,967,402`):**
 > All figures below match the synchronized checkpoint in [`README.md`](../README.md) and [`reports/EVIDENCE.md`](../reports/EVIDENCE.md). Because **Agent `#9905`** trades 24/7 on Celo Mainnet (`42220`), live cumulative totals can be verified at **[eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)** (`GET /status`, `GET /llm`) or **[Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)**.
 
 Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs deployed during the hackathon:
@@ -100,9 +103,9 @@ Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3
 | Dimension | Skew (`Agent #9905` · Dual-Engine + Bounded AI) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
 | :--- | :--- | :--- | :--- |
 | **Market Role** | **4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | Taker-only (`0` Maker fills) | Multi-corridor Maker + DEX Rebalancer |
-| **On-Chain Settlements** | **`2,675` signed EOA txs (`6,860` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
-| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `134` external fills (`$5,208.24` Maker volume)** | `0` fills (`$0` liquidity provided) | Exposed to cross-venue oracle lag & static spreads |
-| **Cross-Venue Arbitrage & Total Volume** | **`1,286` 2-leg arbs (`$125,409.10` 1-leg arb · `$136,490.63` total 1-leg · `$272,981.26` 2-leg · `700.0x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
+| **On-Chain Settlements** | **`2,839` signed EOA txs (`7,277` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
+| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `153` external fills (`$5,736.29` Maker volume)** | `0` fills (`$0` liquidity provided) | Exposed to cross-venue oracle lag & static spreads |
+| **Cross-Venue Arbitrage & Total Volume** | **`1,363` 2-leg arbs (`$135,069.12` 1-leg arb · `$146,678.70` total 1-leg · `$293,357.40` 2-leg · `752.2x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
 | **Oracle-Lag & AI Defense** | **Hard `SELL >= max(P_textile, P_uni)` floor + EWMA/Markouts + Bounded Gemini 3.8 Flash (`2s` hot-reload)** | N/A (never quotes Maker orders) | Soft weighted median; exposed when off-chain FX lags DEX |
 | **`wBRL` `MAX_TICK` Defense** | **`800k gas` `QuoterV2` guard + `197k gas` Textile RFQ fallback** | N/A | Rebalancer stalls on `0x01c3…A40F` (`17.04M gas`) |
-| **Net Strategy Value & PnL** | **`$258.38` total value (`$195.00` bankroll + `+$63.38 USDT` net profit · `+32.50%` RoC = `$252.53` liquid equity + `$5.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |
+| **Net Strategy Value & PnL** | **`$261.33` total value (`$195.00` bankroll + `+$66.33 USDT` net profit · `+34.02%` RoC = `$255.48` liquid equity + `$5.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |

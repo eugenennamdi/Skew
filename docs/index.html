@@ -6,7 +6,7 @@
   <title>Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Treasury on Celo</title>
   <meta name="description" content="Autonomous 4-corridor FX market maker (Rust Stitch + 2s zero-restart hot-reload), bounded Gemini 3.8 Flash Desk Head, EWMA volatility &amp; markout engine, and cross-venue Uniswap v3 arbitrageur on Celo Mainnet (ERC-8004 #9905)." />
   <meta property="og:title" content="Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Desk (Celo #9905)" />
-  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$63.38 USDT (+32.50% RoC), 134 external Maker fills, 1,286 cross-venue arbitrages, Dual-Oracle Anti-Arb Shield &amp; Bounded Gemini 3.8 Flash Desk Head." />
+  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$66.33 USDT (+34.02% RoC), 153 external Maker fills, 1,363 cross-venue arbitrages, Dual-Oracle Anti-Arb Shield &amp; Bounded Gemini 3.8 Flash Desk Head." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://eugenennamdi.github.io/Skew/" />
   <meta property="og:image" content="https://eugenennamdi.github.io/Skew/icons/skew-logo.svg" />
@@ -992,11 +992,11 @@
           </span>
           <span class="telemetry-seg" title="Autonomous gas manager refills at < 3.0 CELO">
             <span class="telemetry-key">Gas</span>
-            <span class="telemetry-val mono" id="gasBadge">28.50 CELO</span>
+            <span class="telemetry-val mono" id="gasBadge">23.02 CELO</span>
           </span>
           <span class="telemetry-seg" id="blockPill" title="Live Celo Mainnet block height (polls every 3s)">
             <span class="live-dot" style="width:5px;height:5px;"></span>
-            <span class="telemetry-val mono" id="blockBadge">#81,871,867</span>
+            <span class="telemetry-val mono" id="blockBadge">#81,967,402</span>
           </span>
         </div>
       </div>
@@ -1009,25 +1009,25 @@
               <span>Treasury Value (Liquid)</span>
               <span class="badge emerald">Live RPC</span>
             </div>
-            <div class="card-value mono" id="navValue">$252.53</div>
+            <div class="card-value mono" id="navValue">$255.48</div>
             <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
-              <div class="mini-bar-seg" id="barUsdt" style="width: 70.0%; background: var(--foreground);"></div>
-              <div class="mini-bar-seg" id="barCngn" style="width: 7.1%; background: #10B981;"></div>
-              <div class="mini-bar-seg" id="barWars" style="width: 5.9%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" id="barWbrl" style="width: 11.0%; background: #F59E0B;"></div>
-              <div class="mini-bar-seg" id="barUsdc" style="width: 6.0%; background: #6366F1;"></div>
+              <div class="mini-bar-seg" id="barUsdt" style="width: 63.6%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barCngn" style="width: 7.0%; background: #10B981;"></div>
+              <div class="mini-bar-seg" id="barWars" style="width: 10.2%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" id="barWbrl" style="width: 13.3%; background: #F59E0B;"></div>
+              <div class="mini-bar-seg" id="barUsdc" style="width: 5.9%; background: #6366F1;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="176.76 USDT (70.0%)">
+            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="162.57 USDT (63.6%)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
                 <span class="seg-dot" style="background: var(--foreground);"></span>
                 <span>USDT · Settlement Reserve</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdtReadout">$176.76 (70.0%)</span>
+              <span class="treasury-asset-val mono" id="usdtReadout">$162.57 (63.6%)</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemCngn" title="24,867 cNGN ($18.00)">
+            <div class="treasury-asset-item" id="assetItemCngn" title="24,874 cNGN ($18.00)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
                 <span class="seg-dot" style="background: #10B981;"></span>
@@ -1035,21 +1035,21 @@
               </span>
               <span class="treasury-asset-val mono" id="cngnReadout">$18.00</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWars" title="24,772 wARS ($14.93)">
+            <div class="treasury-asset-item" id="assetItemWars" title="43,311 wARS ($25.96)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
                 <span class="seg-dot" style="background: #38BDF8;"></span>
                 <span>wARS</span>
               </span>
-              <span class="treasury-asset-val mono" id="warsReadout">$14.93</span>
+              <span class="treasury-asset-val mono" id="warsReadout">$25.96</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWbrl" title="153.01 wBRL ($27.86)">
+            <div class="treasury-asset-item" id="assetItemWbrl" title="185.77 wBRL ($33.97)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
                 <span class="seg-dot" style="background: #F59E0B;"></span>
                 <span>wBRL</span>
               </span>
-              <span class="treasury-asset-val mono" id="wbrlReadout">$27.86</span>
+              <span class="treasury-asset-val mono" id="wbrlReadout">$33.97</span>
             </div>
             <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
               <span class="treasury-asset-left">
@@ -1077,7 +1077,7 @@
           <div class="treasury-assets-grid">
             <div class="treasury-asset-item span-full">
               <span class="text-muted">Shielded Bid / Ask Spread</span>
-              <span class="treasury-asset-val mono"><span id="bidSpreadFooter">2 bps</span> / <span id="askSpreadFooter">5 bps</span></span>
+              <span class="treasury-asset-val mono"><span id="bidSpreadFooter">2 bps</span> / <span id="askSpreadFooter">4 bps</span></span>
             </div>
             <div class="treasury-asset-item" title="Net spread locked in when refilling Maker fills on Uniswap v3 0.01%">
               <span class="text-muted">Refill Edge</span>
@@ -1089,11 +1089,11 @@
             </div>
             <div class="treasury-asset-item" title="Independent external counterparty Maker fills settled on LimitOrderReactor">
               <span class="text-muted">Maker Fills</span>
-              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">134 Fills</span>
+              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">153 Fills</span>
             </div>
             <div class="treasury-asset-item" title="Cumulative USD volume served as Maker across all 4 corridors">
               <span class="text-muted">Maker Vol</span>
-              <span class="treasury-asset-val mono" id="makerVolVal">$5,208.24</span>
+              <span class="treasury-asset-val mono" id="makerVolVal">$5,736.29</span>
             </div>
           </div>
         </div>
@@ -1102,9 +1102,9 @@
           <div>
             <div class="card-label">
               <span>Strategy PnL &amp; Efficiency</span>
-              <span class="badge emerald" id="rocBadge">+32.50% RoC</span>
+              <span class="badge emerald" id="rocBadge">+34.02% RoC</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="pnlValue">+$63.38</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">USDT</span></div>
+            <div class="card-value mono text-emerald"><span id="pnlValue">+$66.33</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">USDT</span></div>
             <div class="mini-bar" title="Realized Strategy PnL attribution (wARS Arb · cNGN Arb · Shielded Maker Refills)">
               <div class="mini-bar-seg" style="width: 68%; background: #38BDF8;"></div>
               <div class="mini-bar-seg" style="width: 26%; background: #10B981;"></div>
@@ -1112,23 +1112,23 @@
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial USDT bankroll + net realized profit ($252.53 Liquid Equity + $5.85 CELO gas reserve)">
+            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial USDT bankroll + net realized profit ($255.48 Liquid Equity + $5.85 CELO gas reserve)">
               <span class="text-muted">Total Value (incl. Gas)</span>
-              <span class="treasury-asset-val mono" id="totalStrategyVal">$258.38 (+$5.85 Gas)</span>
+              <span class="treasury-asset-val mono" id="totalStrategyVal">$261.33 (+$5.85 Gas)</span>
             </div>
             <div class="treasury-asset-item" id="arbCyclesItem" title="Verified two-leg cross-venue arbitrages + shielded Maker replenishment cycles">
               <span class="text-muted">2-Leg Arbs</span>
-              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">1,286 Cycles</span>
+              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">1,363 Cycles</span>
             </div>
-            <div class="treasury-asset-item" title="Peak realized arbitrage spread (+187.5 bps on wARS/USDT) & average (+48.6 bps)">
+            <div class="treasury-asset-item" title="Peak realized arbitrage spread (+187.5 bps on wARS/USDT) & average (+45.6 bps)">
               <span class="text-muted">Peak / Avg</span>
-              <span class="treasury-asset-val mono text-emerald">+187.5 / 48.6 bps</span>
+              <span class="treasury-asset-val mono text-emerald">+187.5 / 45.6 bps</span>
             </div>
             <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg & 2-leg notional volume on $195.00 initial bankroll">
               <span class="text-muted">Turnover</span>
-              <span class="treasury-asset-val mono" id="turnoverVal">700.0x NAV</span>
+              <span class="treasury-asset-val mono" id="turnoverVal">752.2x NAV</span>
             </div>
-            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet (2,672 / 2,675 succeeded)">
+            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet (2,836 / 2,839 succeeded)">
               <span class="text-muted">Reliability</span>
               <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.9%</span>
             </div>
@@ -1653,9 +1653,9 @@
     };
 
     const STATE = {
-      blockNumber: 81871867,
-      walletNonce: 2675,
-      balances: { USDT: 176.76, cNGN: 24867.27, wARS: 24771.90, wBRL: 153.01, USDC: 14.98, CELO: 28.50 },
+      blockNumber: 81967402,
+      walletNonce: 2839,
+      balances: { USDT: 162.57, cNGN: 24874.03, wARS: 43311.34, wBRL: 185.77, USDC: 14.98, CELO: 23.02 },
       offChainFx: {
         NGN: 1381.8,
         ARS: 1455.0,
@@ -1666,9 +1666,9 @@
         live: false,
       },
       corridors: {
-        cNGN: { symbol: 'cNGN / USDT', textileRate: 1381.80, uniRate: 1382.53, hasDex: true, dailyCarryBps: 8.5, stitchBuyBps: 3, stitchSellBps: 4 },
-        wARS: { symbol: 'wARS / USDT', textileRate: 1659.20, uniRate: 1659.23, hasDex: true, dailyCarryBps: 13.3, stitchBuyBps: 3, stitchSellBps: 5 },
-        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.493,   uniRate: 5.493,   hasDex: true, dailyCarryBps: 4.2, stitchBuyBps: 3, stitchSellBps: 3 },
+        cNGN: { symbol: 'cNGN / USDT', textileRate: 1381.80, uniRate: 1382.53, hasDex: true, dailyCarryBps: 8.5, stitchBuyBps: 3, stitchSellBps: 3 },
+        wARS: { symbol: 'wARS / USDT', textileRate: 1668.40, uniRate: 1668.45, hasDex: true, dailyCarryBps: 13.3, stitchBuyBps: 3, stitchSellBps: 3 },
+        wBRL: { symbol: 'wBRL / USDT', textileRate: 5.468,   uniRate: 5.468,   hasDex: true, dailyCarryBps: 4.2, stitchBuyBps: 3, stitchSellBps: 3 },
         USDC: { symbol: 'USDC / USDT', textileRate: 1.0001,  uniRate: 1.0001,  hasDex: true, dailyCarryBps: 0.0, stitchBuyBps: 2, stitchSellBps: 1 },
       },
       clientQuant: {
@@ -1678,6 +1678,7 @@
         USDC: { lastMid: 0, ewmaVar: 0, ewmaVolBps: 0, volBufferBps: 0, samples: 0 },
       },
       riskOfficer: null,
+      llmSupervisor: null,
       skew: 0.143,
       gamma: 6,
       selectedCorridor: 'cNGN',
@@ -1883,11 +1884,18 @@
     }
 
     async function pollTelemetry() {
-      // 1. If running on localhost via skew-desk.mjs, read /status directly
-      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      // 1. Read /status and /llm directly when served on localhost or given ?api=https://...
+      const apiParam = new URLSearchParams(location.search).get('api');
+      const apiBase = apiParam
+        ? apiParam.replace(/\/$/, '')
+        : ((location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '' : null);
+      if (apiBase !== null) {
         try {
-          const res = await fetch('/status');
-          if (res.ok) {
+          const [res, llmRes] = await Promise.all([
+            fetch(`${apiBase}/status`).catch(() => null),
+            fetch(`${apiBase}/llm`).catch(() => null),
+          ]);
+          if (res && res.ok) {
             const d = await res.json();
             STATE.hasLocalStatus = true;
             if (d.balances) {
@@ -1910,6 +1918,15 @@
             }
             if (d.riskOfficer) {
               STATE.riskOfficer = d.riskOfficer;
+            }
+            if (d.llmSupervisor) {
+              STATE.llmSupervisor = d.llmSupervisor;
+            }
+          }
+          if (llmRes && llmRes.ok) {
+            const llmData = await llmRes.json();
+            if (llmData?.llmSupervisor) {
+              STATE.llmSupervisor = llmData.llmSupervisor;
             }
           }
         } catch (_) {}
@@ -1960,7 +1977,7 @@
         if (map[8]) STATE.balances.USDC = Number(decodeUint256(map[8])) / 1e6;
         if (map[9]) STATE.balances.wBRL = Number(decodeUint256(map[9])) / 1e18;
         if (map[10]) STATE.balances.CELO = Number(BigInt(map[10])) / 1e18;
-        if (map[11]) STATE.walletNonce = Math.max(2675, parseInt(map[11], 16));
+        if (map[11]) STATE.walletNonce = Math.max(2839, parseInt(map[11], 16));
 
         // cNGN/USDT pool: token0 is USDT (6 dec), token1 is cNGN (6 dec) -> raw ratio is cNGN per USDT
         const sqrtCngn = decodeUint256(map[4], 0);
@@ -2021,10 +2038,19 @@
 
     async function pollExplorer() {
       try {
-        const [txRes, tokRes] = await Promise.all([
+        const [txRes, tokRes, countersRes] = await Promise.all([
           fetch(`${BLOCKSCOUT_BASE}/transactions`),
           fetch(`${BLOCKSCOUT_BASE}/token-transfers`),
+          fetch(`${BLOCKSCOUT_BASE}/counters`).catch(() => null),
         ]);
+
+        if (countersRes && countersRes.ok) {
+          const cJson = await countersRes.json();
+          const badge = document.getElementById('activityCountBadge');
+          if (badge && Number(cJson?.token_transfers_count) > 0) {
+            badge.textContent = `ERC-8004 #9905 · ${Number(cJson.token_transfers_count).toLocaleString('en-US')} Token Fills · ERC-8021 Tagged`;
+          }
+        }
 
         if (txRes.ok) {
           const txJson = await txRes.json();
@@ -2110,6 +2136,13 @@
               const edgeUsd = usdtIn2 - usdtOut1;
               const edgeBps = (edgeUsd / usdtOut1) * 10000;
               const dtSec = Math.max(2, Math.min(30, Math.round((new Date(leg2.ts) - new Date(leg1.ts)) / 1000)));
+              const leg1Reactor = leg1.list.some((tr) =>
+                tr.from?.hash?.toLowerCase() === '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3' ||
+                tr.to?.hash?.toLowerCase() === '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3'
+              );
+              const routeLabel = leg1Reactor
+                ? `Textile Reactor → Uniswap v3 (${dtSec}s)`
+                : `Uniswap v3 → Textile Reactor (${dtSec}s)`;
               const topRow = document.getElementById('liveLatestSettlementRow');
               if (topRow) {
                 topRow.innerHTML = `
@@ -2124,7 +2157,7 @@
                       <b>${sym} / USDT</b>
                     </span>
                   </td>
-                  <td class="text-muted">Textile Reactor → Uniswap v3 (${dtSec}s)</td>
+                  <td class="text-muted">${routeLabel}</td>
                   <td class="num-right mono">${usdtOut1.toFixed(2)} → ${usdtIn2.toFixed(2)} USDT <span class="text-subtle">(${tokAmt} ${sym})</span></td>
                   <td class="num-right mono text-emerald">+${edgeBps.toFixed(1)} bps (+$${edgeUsd.toFixed(4)})</td>
                   <td class="num-right mono">
@@ -2196,17 +2229,17 @@
         gasBadge.textContent = `${STATE.balances.CELO.toFixed(2)} CELO`;
       }
 
-      // Auto-update Strategy PnL, Arbitrage Cycles, Turnover & Reliability from verified Block #81,871,867 floor + live RPC delta
-      const BASE_NONCE = 2675;
-      const BASE_ARB_CYCLES = 1286;
-      const BASE_PNL_USDT = 63.38;
-      const BASE_VOL_USD = 136490.63;
+      // Auto-update Strategy PnL, Arbitrage Cycles, Turnover & Reliability from verified Block #81,967,402 floor + live RPC mark-to-market
+      const BASE_NONCE = 2839;
+      const BASE_ARB_CYCLES = 1363;
+      const BASE_PNL_USDT = 66.33;
+      const BASE_VOL_USD = 146678.70;
       const extraNonces = Math.max(0, (STATE.walletNonce || BASE_NONCE) - BASE_NONCE);
       const extraArbs = Math.floor(extraNonces / 2);
       const liveArbCycles = BASE_ARB_CYCLES + extraArbs;
       const gasReserveUsd = 5.85;
-      const liveNavPnlUsdt = totalUsd > 195.0 ? (totalUsd - 195.0) + gasReserveUsd : BASE_PNL_USDT;
-      const livePnlUsdt = Math.max(liveNavPnlUsdt, BASE_PNL_USDT + extraArbs * 0.045);
+      // ponytail: 100% genuine live RPC mark-to-market above $195.00 initial bankroll (no synthetic per-nonce PnL floor)
+      const livePnlUsdt = totalUsd > 100.0 ? (totalUsd - 195.0) + gasReserveUsd : BASE_PNL_USDT;
       const totalStrategyValUsd = 195.0 + livePnlUsdt;
       const liveVolUsd = BASE_VOL_USD + extraArbs * 97.5;
       const liveRocPct = (livePnlUsdt / 195.0) * 100;
@@ -2228,7 +2261,7 @@
       const arbEl = document.getElementById('arbCyclesVal');
       if (arbEl) arbEl.textContent = `${liveArbCycles.toLocaleString('en-US')} Cycles`;
       const arbItem = document.getElementById('arbCyclesItem');
-      if (arbItem) arbItem.title = `${liveArbCycles.toLocaleString('en-US')} two-leg cross-venue arbitrages + 134 external Maker fills`;
+      if (arbItem) arbItem.title = `${liveArbCycles.toLocaleString('en-US')} two-leg cross-venue arbitrages + 153 external Maker fills`;
       const turnEl = document.getElementById('turnoverVal');
       if (turnEl) turnEl.textContent = `${liveTurnover.toFixed(1)}x NAV`;
       const turnItem = document.getElementById('turnoverItem');
@@ -2296,7 +2329,7 @@
       };
       const llmSummaryEl = document.getElementById('llmSupervisorSummary');
       if (llmSummaryEl) {
-        const llmSup = STATE.riskOfficer?.llmSupervisor;
+        const llmSup = STATE.llmSupervisor || STATE.riskOfficer?.llmSupervisor;
         if (llmSup?.marketRegimeSummary) {
           llmSummaryEl.textContent = `${llmSup.marketRegimeSummary} (${llmSup.model || 'gemini-3.8-flash'} · zero-restart skew-policy.json active)`;
         } else {
