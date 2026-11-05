@@ -71,8 +71,9 @@ export const CONFIG = {
   minEdgeUsd: Math.max(0.02, Number(process.env.MIN_EDGE_USD || '0.024')),
   minFirmNetEdgeUsd: Number(process.env.MIN_FIRM_NET_EDGE_USD || '0.018'),
   minFirmNetEdgeBps: Number(process.env.MIN_FIRM_NET_EDGE_BPS || '1.2'),
+  minUniToTextileDexFirstBps: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS || '6.5'),
   estimatedArbGasUsd: Number(process.env.EST_ARB_GAS_USD || '0.006'),
-  scanIntervalMs: Number(process.env.SCAN_INTERVAL_MS || '12000'),
+  scanIntervalMs: Number(process.env.SCAN_INTERVAL_MS || '3500'),
   llmIntervalMs: Number(process.env.LLM_INTERVAL_MS || '600000'),
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   targetCorridorUsd: Number(process.env.TARGET_CORRIDOR_USD || '24'),
@@ -292,15 +293,24 @@ const erc20Iface = new ethers.Interface(ERC20_ABI);
 const privKey = validatePrivateKey(process.env.STITCH_PRIVATE_KEY || process.env.AGENT_PRIVATE_KEY || '');
 const wallet = privKey ? new ethers.Wallet(privKey, provider) : null;
 
+let cachedGasPrice = { value: null, ts: 0 };
+
 export async function sendTagged(txReq) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
   const tagged = { ...txReq, data: appendErc8021Suffix(txReq.data || '0x') };
   if (!tagged.gasPrice && !tagged.maxFeePerGas) {
-    const fd = await provider.getFeeData().catch(() => null);
-    if (fd?.gasPrice) tagged.gasPrice = fd.gasPrice;
+    if (cachedGasPrice.value && Date.now() - cachedGasPrice.ts < 15_000) {
+      tagged.gasPrice = cachedGasPrice.value;
+    } else {
+      const fd = await provider.getFeeData().catch(() => null);
+      if (fd?.gasPrice) {
+        cachedGasPrice = { value: fd.gasPrice, ts: Date.now() };
+        tagged.gasPrice = fd.gasPrice;
+      }
+    }
   }
   if (!tagged.gasLimit) {
-    const est = await provider.estimateGas({ ...tagged, from: wallet.address }).catch(() => 200000n);
+    const est = await provider.estimateGas({ ...tagged, from: wallet.address }).catch(() => 220000n);
     tagged.gasLimit = (est * 125n) / 100n;
   }
   const resp = await wallet.sendTransaction(tagged);
@@ -524,8 +534,40 @@ async function scanCorridor(token, maxUsdtBudget) {
       }
 
       if (preview && preview.status === 'preview' && preview.buyAmount) {
-        const usdtInNum = Number(actualUsdtInRaw) / 1e6;
-        const usdtOutNum = Number(preview.buyAmount) / 1e6;
+        let bestInRaw = actualUsdtInRaw;
+        let bestTokenRaw = actualTokenRaw;
+        let bestOutRaw = BigInt(preview.buyAmount);
+        let bestFee = uniBuy.fee;
+        let bestEdgeUsd = Number(bestOutRaw) / 1e6 - Number(bestInRaw) / 1e6;
+        let noteLabel = actualUsdtInRaw < usdtInRaw
+          ? `Adaptive size ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)} max depth)`
+          : `100% slice ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)})`;
+
+        // ponytail: 25% top-of-book probe on uni->textile — isolates external Maker bids (#9929/#9908) without spilling into our own Maker
+        if (actualUsdtInRaw >= 40000000n) {
+          const topInRaw = actualUsdtInRaw / 4n;
+          const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
+          if (topUni.amountOut > 0n) {
+            const topPrev = await textilePreview(token.address, CONFIG.contracts.usdt, topUni.amountOut).catch(() => null);
+            if (topPrev && topPrev.status === 'preview' && topPrev.buyAmount) {
+              const topOutRaw = BigInt(topPrev.buyAmount);
+              const topEdgeUsd = Number(topOutRaw) / 1e6 - Number(topInRaw) / 1e6;
+              const topBps = (topEdgeUsd / (Number(topInRaw) / 1e6)) * 10000;
+              const fullBps = (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000;
+              if (topEdgeUsd > bestEdgeUsd || (topEdgeUsd >= CONFIG.minEdgeUsd && topBps > fullBps + 2.0)) {
+                bestInRaw = topInRaw;
+                bestTokenRaw = topUni.amountOut;
+                bestOutRaw = topOutRaw;
+                bestFee = topUni.fee;
+                bestEdgeUsd = topEdgeUsd;
+                noteLabel = `25% top-of-book ($${(Number(topInRaw) / 1e6).toFixed(2)})`;
+              }
+            }
+          }
+        }
+
+        const usdtInNum = Number(bestInRaw) / 1e6;
+        const usdtOutNum = Number(bestOutRaw) / 1e6;
         const edgeUsd = usdtOutNum - usdtInNum;
         const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
         rows.push({
@@ -535,14 +577,14 @@ async function scanCorridor(token, maxUsdtBudget) {
           decimals: token.decimals,
           direction: 'uni->textile',
           sizeUsdt: usdtInNum,
-          amountInRaw: actualUsdtInRaw.toString(),
-          midTokenRaw: actualTokenRaw.toString(),
+          amountInRaw: bestInRaw.toString(),
+          midTokenRaw: bestTokenRaw.toString(),
           expectedOutUsdt: usdtOutNum,
-          uniFee: uniBuy.fee,
+          uniFee: bestFee,
           edgeUsd,
           edgeBps,
-          status: edgeUsd >= CONFIG.minEdgeUsd ? 'ACTIONABLE' : 'WATCH',
-          note: actualUsdtInRaw < usdtInRaw ? `Adaptive size ($${usdtInNum.toFixed(2)} max depth)` : 'Full probe depth',
+          status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= 1.8 ? 'ACTIONABLE' : 'WATCH',
+          note: noteLabel,
         });
       } else {
         rows.push({
@@ -575,15 +617,24 @@ async function scanCorridor(token, maxUsdtBudget) {
   return rows;
 }
 
+const approvedMaxCache = new Set();
+
 async function ensureAllowance(tokenAddr, spender, minAmount) {
+  const key = `${tokenAddr.toLowerCase()}:${spender.toLowerCase()}`;
+  if (approvedMaxCache.has(key)) return;
   const c = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
   const current = BigInt(await c.allowance(wallet.address, spender));
+  if (current >= 10n ** 30n) {
+    approvedMaxCache.add(key);
+    return;
+  }
   if (current < BigInt(minAmount)) {
     if (current > 0n) {
       await sendTagged({ to: tokenAddr, data: erc20Iface.encodeFunctionData('approve', [spender, 0n]) });
     }
     const data = erc20Iface.encodeFunctionData('approve', [spender, ethers.MaxUint256]);
     await sendTagged({ to: tokenAddr, data });
+    approvedMaxCache.add(key);
   }
 }
 
@@ -777,7 +828,7 @@ async function executeOpportunity(opp) {
     }
 
     const r1 = await sendTagged({ to: toAddr, data: calldata });
-    await textileSubmitTx(q.rfqId, q.claimToken, r1.hash);
+    textileSubmitTx(q.rfqId, q.claimToken, r1.hash).catch(() => {});
     const receivedFromLogs = sumReceiptTokenTransfers(r1, opp.tokenAddress, { toAddr: wallet.address });
     const spentUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || amountInRaw;
     const receivedRaw = receivedFromLogs > 0n ? receivedFromLogs : firmBuyRaw;
@@ -824,11 +875,98 @@ async function executeOpportunity(opp) {
   }
 
   if (opp.direction === 'uni->textile') {
-    // ponytail: our Maker holds 75%+ of network USDT at tight BUY spread; skip low-edge uni->textile to avoid self-matching
-    if (opp.edgeBps < 30) return null;
+    const tokenContract = new ethers.Contract(opp.tokenAddress, ERC20_ABI, provider);
+    const walletTokRaw = BigInt(await tokenContract.balanceOf(wallet.address));
+    const unitScale = 10 ** opp.decimals;
+    const approxMidUsd = opp.sizeUsdt / Math.max(1e-12, Number(BigInt(opp.midTokenRaw)) / unitScale);
+    const walletTokUsd = (Number(walletTokRaw) / unitScale) * approxMidUsd;
+
+    // Mode 1: Zero-Risk Inventory-First Reverse Arb (Sell existing wallet tokens FIRM on Textile -> Refill on Uniswap v3 2s later)
+    if (walletTokUsd >= 10.0 && (opp.sizeUsdt <= walletTokUsd * 1.05 || opp.edgeBps < CONFIG.minUniToTextileDexFirstBps)) {
+      let sellTokRaw = BigInt(opp.midTokenRaw) <= (walletTokRaw * 98n) / 100n
+        ? BigInt(opp.midTokenRaw)
+        : (walletTokRaw * 96n) / 100n;
+      await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellTokRaw);
+      let q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellTokRaw);
+      let toAddr = q?.transactions?.swap?.to;
+      let calldata = q?.transactions?.swap?.data;
+      if (calldata && isSelfMakerOrder(calldata) && walletTokUsd >= 20.0) {
+        sellTokRaw = sellTokRaw / 2n;
+        q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellTokRaw);
+        toAddr = q?.transactions?.swap?.to;
+        calldata = q?.transactions?.swap?.data;
+      }
+      if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
+        throw new Error(`Invalid Textile quote response on inventory-first uni->textile: ${JSON.stringify(q).slice(0, 140)}`);
+      }
+      if (isSelfMakerOrder(calldata)) {
+        console.log(`[ANTI-SELF-TRADE] Skipping ${opp.corridor} inventory-first uni->textile matched against our own Maker`);
+        return null;
+      }
+      const firmOutUsdtRaw = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
+      if (firmOutUsdtRaw <= 0n) return null;
+
+      const probeUniBuy = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, firmOutUsdtRaw);
+      if (probeUniBuy.amountOut <= sellTokRaw) {
+        console.log(`[FIRM-GUARD] Aborted ${opp.corridor} inventory-first uni->textile (0 gas): Uniswap refill <= sold tokens`);
+        return null;
+      }
+      const refillUsdtRaw = (firmOutUsdtRaw * sellTokRaw) / probeUniBuy.amountOut + 2000n;
+      const firmOutUsdt = Number(firmOutUsdtRaw) / 1e6;
+      const refillInUsdt = Number(refillUsdtRaw) / 1e6;
+      const firmCheck = verifyFirmArbQuote({ inUsdt: refillInUsdt, firmOutUsdt });
+      if (!firmCheck.ok) {
+        console.log(
+          `[FIRM-GUARD] Aborted ${opp.corridor} inventory-first uni->textile (0 gas): firmGross=${firmCheck.grossEdgeUsd >= 0 ? '+' : ''}$${firmCheck.grossEdgeUsd.toFixed(4)} (${firmCheck.reason})`
+        );
+        return null;
+      }
+
+      const r1 = await sendTagged({ to: toAddr, data: calldata });
+      textileSubmitTx(q.rfqId, q.claimToken, r1.hash).catch(() => {});
+      const receivedUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { toAddr: wallet.address }) || firmOutUsdtRaw;
+
+      await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, refillUsdtRaw);
+      const minRefillTok = (sellTokRaw * 998n) / 1000n;
+      const swapData = routerIface.encodeFunctionData('exactInputSingle', [{
+        tokenIn: CONFIG.contracts.usdt,
+        tokenOut: opp.tokenAddress,
+        fee: probeUniBuy.fee || opp.uniFee,
+        recipient: wallet.address,
+        amountIn: refillUsdtRaw,
+        amountOutMinimum: minRefillTok,
+        sqrtPriceLimitX96: 0n,
+      }]);
+      const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+      const spentRefillRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || refillUsdtRaw;
+      const actualInUsdt = Number(spentRefillRaw) / 1e6;
+      const actualOutUsdt = Number(receivedUsdtRaw) / 1e6;
+      const realizedEdgeUsd = actualOutUsdt - actualInUsdt;
+      const realizedEdgeBps = actualInUsdt > 0 ? (realizedEdgeUsd / actualInUsdt) * 10000 : 0;
+      console.log(
+        `[EXEC-OK] ${opp.corridor} (uni->textile inv-first) refill=$${actualInUsdt.toFixed(4)} -> firmOut=$${actualOutUsdt.toFixed(4)} realizedEdge=${realizedEdgeUsd >= 0 ? '+' : ''}$${realizedEdgeUsd.toFixed(4)} (${realizedEdgeBps.toFixed(2)} bps)`
+      );
+      const rec = {
+        timestamp: startedAt,
+        type: 'CROSS_VENUE_ARB',
+        corridor: opp.corridor,
+        direction: opp.direction,
+        sizeUsdt: actualInUsdt,
+        edgeUsd: Number(realizedEdgeUsd.toFixed(6)),
+        edgeBps: Number(realizedEdgeBps.toFixed(2)),
+        txHash1: r1.hash,
+        txHash2: r2.hash,
+        attributionTag: CONFIG.attributionTag,
+      };
+      fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+      return rec;
+    }
+
+    // Mode 2: Full-Size DEX-First Sweep ($65-$135 clips when dislocation >= 6.5 bps & >= $0.045)
+    if (opp.edgeBps < CONFIG.minUniToTextileDexFirstBps || opp.edgeUsd < 0.045) return null;
     const amountInRaw = BigInt(opp.amountInRaw);
     await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, amountInRaw);
-    const minTokenOut = (BigInt(opp.midTokenRaw) * 995n) / 1000n;
+    const minTokenOut = (BigInt(opp.midTokenRaw) * 998n) / 1000n;
     const swapData = routerIface.encodeFunctionData('exactInputSingle', [{
       tokenIn: CONFIG.contracts.usdt,
       tokenOut: opp.tokenAddress,
@@ -841,12 +979,19 @@ async function executeOpportunity(opp) {
     const r1 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
     const boughtFromLogs = sumReceiptTokenTransfers(r1, opp.tokenAddress, { toAddr: wallet.address });
     const spentUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || amountInRaw;
-    const boughtRaw = boughtFromLogs > 0n ? boughtFromLogs : BigInt(opp.midTokenRaw);
+    const initialBoughtRaw = boughtFromLogs > 0n ? boughtFromLogs : BigInt(opp.midTokenRaw);
+    let sellRaw = initialBoughtRaw;
 
-    await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, boughtRaw);
-    const q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, boughtRaw);
-    const toAddr = q?.transactions?.swap?.to;
-    const calldata = q?.transactions?.swap?.data;
+    await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellRaw);
+    let q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellRaw);
+    let toAddr = q?.transactions?.swap?.to;
+    let calldata = q?.transactions?.swap?.data;
+    if (calldata && isSelfMakerOrder(calldata)) {
+      sellRaw = sellRaw / 2n;
+      q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellRaw);
+      toAddr = q?.transactions?.swap?.to;
+      calldata = q?.transactions?.swap?.data;
+    }
     if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
       throw new Error(`Invalid Textile quote response on leg 2: ${JSON.stringify(q).slice(0, 140)}`);
     }
@@ -854,14 +999,26 @@ async function executeOpportunity(opp) {
       console.log(`[ANTI-SELF-TRADE] Skipping uni->textile leg 2 matched against our own Maker (${CONFIG.agentWallet})`);
       return null;
     }
+    const leg2CostUsdt = sellRaw === initialBoughtRaw
+      ? Number(spentUsdtRaw) / 1e6
+      : (Number(spentUsdtRaw) / 1e6) * 0.5;
+    const quotedOutUsdt = Number(q?.quote?.buyAmount || 0) / 1e6;
+    if (quotedOutUsdt > 0 && quotedOutUsdt < leg2CostUsdt * 0.9985) {
+      console.log(`[FIRM-GUARD] Skipping uni->textile leg 2 underwater quote ($${quotedOutUsdt.toFixed(4)} vs $${leg2CostUsdt.toFixed(4)})`);
+      return null;
+    }
     const r2 = await sendTagged({ to: toAddr, data: calldata });
-    await textileSubmitTx(q.rfqId, q.claimToken, r2.hash);
+    textileSubmitTx(q.rfqId, q.claimToken, r2.hash).catch(() => {});
     const returnedUsdtRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { toAddr: wallet.address });
-    const actualInUsdt = Number(spentUsdtRaw) / 1e6;
+    const actualInUsdt = leg2CostUsdt;
     const actualOutUsdt = returnedUsdtRaw > 0n
       ? Number(returnedUsdtRaw) / 1e6
-      : (q?.quote?.buyAmount ? Number(q.quote.buyAmount) / 1e6 : opp.expectedOutUsdt);
+      : (quotedOutUsdt || opp.expectedOutUsdt);
     const realizedEdgeUsd = actualOutUsdt - actualInUsdt;
+    const realizedEdgeBps = actualInUsdt > 0 ? (realizedEdgeUsd / actualInUsdt) * 10000 : 0;
+    console.log(
+      `[EXEC-OK] ${opp.corridor} (uni->textile full) in=$${actualInUsdt.toFixed(4)} -> out=$${actualOutUsdt.toFixed(4)} realizedEdge=${realizedEdgeUsd >= 0 ? '+' : ''}$${realizedEdgeUsd.toFixed(4)} (${realizedEdgeBps.toFixed(2)} bps)`
+    );
     const rec = {
       timestamp: startedAt,
       type: 'CROSS_VENUE_ARB',
@@ -869,7 +1026,7 @@ async function executeOpportunity(opp) {
       direction: opp.direction,
       sizeUsdt: actualInUsdt,
       edgeUsd: Number(realizedEdgeUsd.toFixed(6)),
-      edgeBps: Number(((realizedEdgeUsd / actualInUsdt) * 10000).toFixed(2)),
+      edgeBps: Number(realizedEdgeBps.toFixed(2)),
       txHash1: r1.hash,
       txHash2: r2.hash,
       attributionTag: CONFIG.attributionTag,
@@ -1122,14 +1279,14 @@ export function buildGeminiSupervisorPrompt(corridors = []) {
   }));
   return [
     'You are the bounded quantitative FX Risk & Spread Desk Head for Skew (#9905) on Celo Mainnet.',
-    'Note: Rust Dual-Oracle Anti-Arb Guard (min/max of Textile & Uniswap v3) is enforced below you in hardware/code.',
+    'Note: Rust Dual-Oracle Anti-Arb Guard (min/max of Textile & Uniswap v3) AND central-bank session buffers are ALREADY enforced below you in deterministic code.',
     'Evaluate ONLY the objective real-time corridor metrics below (no prior LLM state).',
     'Rules:',
-    '- Prefer NORMAL or modest WIDEN/TIGHTEN over pausing so two-way RFQ liquidity stays live.',
-    '- Cold-start guard: if warmupSamples < 3, EWMA volatility is still warming up — use NORMAL (addBuyBps=0, addSellBps=0) unless Math.abs(oracleDispersionBps) > 40 or effectiveCarryBps > 15 (then WIDEN). Never TIGHTEN when warmupSamples < 3.',
-    '- Use TIGHTEN (addBuyBps/addSellBps -1 or -2) ONLY when warmupSamples >= 3, ewmaVolBps < 5, basisShockBps < 25, Math.abs(oracleDispersionBps) < 20, effectiveCarryBps < 12, and avgMarkoutBps >= 0.',
-    '- Use WIDEN (addSellBps 4..25, gammaBps 8..14) when ewmaVolBps > 10, basisShockBps > 60, Math.abs(oracleDispersionBps) > 40, weekend/overnight carry > 15, or avgMarkoutBps < -4.',
-    '- Only use PAUSE_SELL / PAUSE_BUY / PAUSE_ALL (15..45 min) on severe dislocation (basisShockBps > 150 or ewmaVolBps > 35).',
+    '- Default to NORMAL (addBuyBps=0, addSellBps=0, gammaBps=6) whenever ewmaVolBps <= 12, basisShockBps <= 80, and avgMarkoutBps >= -4 so our Maker wins top-of-book RFQ flow. Do NOT widen solely for routine overnight/weekend carry.',
+    '- Cold-start guard: if warmupSamples < 3, output NORMAL (addBuyBps=0, addSellBps=0) unless basisShockBps > 80. Never TIGHTEN when warmupSamples < 3.',
+    '- Use TIGHTEN (addBuyBps/addSellBps -1) ONLY when warmupSamples >= 3, ewmaVolBps < 4, basisShockBps < 20, and avgMarkoutBps >= 0.',
+    '- Use WIDEN (addSellBps 4..20, gammaBps 8..12) ONLY on active market stress: ewmaVolBps > 12, basisShockBps > 80, or toxic avgMarkoutBps < -4.',
+    '- Only use PAUSE_SELL / PAUSE_BUY / PAUSE_ALL (15..45 min) on severe dislocation (basisShockBps > 160 or ewmaVolBps > 35).',
     'Return strict JSON: {"marketRegimeSummary":"string","corridors":[{"corridor":"cNGN/USDT","action":"NORMAL|WIDEN|TIGHTEN|PAUSE_SELL|PAUSE_BUY|PAUSE_ALL","addBuyBps":0,"addSellBps":0,"gammaBps":6,"pauseMinutes":0,"rationale":"concise quant reason"}]}',
     `Telemetry: ${JSON.stringify(payload)}`,
   ].join('\n');
@@ -1292,27 +1449,35 @@ export function computeRiskOfficerDecisions({
   const wbrlDispersionBps = wbrlOffChainBasisBps;
   const usdcDispersionBps = Number((((usdcMidUsd - 1.0) / 1.0) * 10000).toFixed(1));
 
-  const resolveAdjustments = (sym, corridorName, baseBuy, baseSell, sessionBuf, priorCarry) => {
+  const resolveAdjustments = (sym, corridorName, baseBuy, baseSell, sessionObj, priorCarry) => {
     const q = quantBySymbol[sym] || {};
     const m = markoutBySymbol[sym] || {};
     const llmRaw = llmOverlay?.decisions?.[corridorName];
     const llmActive = llmRaw && (!llmRaw.pausedUntilMs || llmRaw.pausedUntilMs > nowMs) ? llmRaw : null;
     const pauseActive = Boolean(llmRaw && llmRaw.pausedUntilMs > nowMs);
 
+    // Full central-bank buffer on 72h weekend closures; capped at +1 bps on routine weekday overnights (24/7 DEX hedge open)
+    const isWeekend = String(sessionObj?.session || '').includes('WEEKEND');
+    const rawSessionBuf = sessionObj?.spreadBufferBps ?? 0;
+    const effectiveSessionBuf = isWeekend ? rawSessionBuf : Math.min(1, rawSessionBuf);
+
     const volBuf = q.volBufferBps || 0;
     const basisBuf = q.basisBufferBps || 0;
     const markoutBuf = m.markoutBufferBps || 0;
-    // ponytail: block LLM spread tightening until EWMA volatility has >= 3 samples; upgrade path: persist quant state across restarts
     const warmedUp = (q.samples ?? 0) >= 3;
-    const llmBuy = llmActive ? (warmedUp ? llmActive.addBuyBps : Math.max(0, llmActive.addBuyBps)) : 0;
-    const llmSell = llmActive ? (warmedUp ? llmActive.addSellBps : Math.max(0, llmActive.addSellBps)) : 0;
+    // ponytail: deterministic calm-market clamp prevents LLM over-caution from pricing Maker out of top-of-book when vol/basis/markouts are benign
+    const calmMarket = (q.ewmaVolBps ?? 0) <= 12 && (q.basisShockBps ?? 0) <= 80 && (m.avgMarkoutBps ?? 0) >= -4;
+    const rawLlmBuy = llmActive ? (warmedUp ? llmActive.addBuyBps : Math.max(0, llmActive.addBuyBps)) : 0;
+    const rawLlmSell = llmActive ? (warmedUp ? llmActive.addSellBps : Math.max(0, llmActive.addSellBps)) : 0;
+    const llmBuy = calmMarket && !pauseActive ? Math.min(0, rawLlmBuy) : rawLlmBuy;
+    const llmSell = calmMarket && !pauseActive ? Math.min(1, rawLlmSell) : rawLlmSell;
     const gammaBps = llmActive?.gammaBps ?? Number(process.env.SKEW_GAMMA_BPS || 6);
     const dailyCarry = q.dailyCarryBps ?? priorCarry;
 
     const stitchBuyOffsetBps = Math.max(1, Math.min(120, baseBuy + Math.max(0, Math.round(volBuf * 0.5)) + llmBuy));
     const stitchSellOffsetBps = Math.max(
       1,
-      Math.min(150, baseSell + sessionBuf + volBuf + basisBuf + markoutBuf + llmSell)
+      Math.min(150, baseSell + effectiveSessionBuf + volBuf + basisBuf + markoutBuf + llmSell)
     );
     return {
       warmupSamples: q.samples ?? 0,
@@ -1332,10 +1497,10 @@ export function computeRiskOfficerDecisions({
     };
   };
 
-  const cngnAdj = resolveAdjustments('cNGN', 'cNGN/USDT', 5, 4, cngnSession.spreadBufferBps, 8.5);
-  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', 5, 4, warsSession.spreadBufferBps, 13.3);
-  const wbrlAdj = resolveAdjustments('wBRL', 'wBRL/USDT', 4, 4, wbrlSession.spreadBufferBps, 4.2);
-  const usdcAdj = resolveAdjustments('USDC', 'USDC/USDT', 2, 2, 0, 0.0);
+  const cngnAdj = resolveAdjustments('cNGN', 'cNGN/USDT', 3, 3, cngnSession, 8.5);
+  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', 3, 3, warsSession, 13.3);
+  const wbrlAdj = resolveAdjustments('wBRL', 'wBRL/USDT', 3, 3, wbrlSession, 4.2);
+  const usdcAdj = resolveAdjustments('USDC', 'USDC/USDT', 2, 1, usdcSession, 0.0);
 
   const cngnNormSkew = normSkew(cngnUsd);
   const warsNormSkew = normSkew(warsUsd);
@@ -1656,7 +1821,7 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, c
   const wbrlUsd = wbrl * liveWbrlMid;
   const usdcUsd = usdc;
 
-  // 1. AUTO-UNWIND EXCESS MAKER/TAKER FILLS TO USDT (Keeping ~$24 cNGN, ~$22 wARS, ~$24 wBRL, ~$20 USDC Maker reserves)
+  // 1. AUTO-UNWIND EXCESS MAKER/TAKER FILLS TO USDT (Keeping ~$26 cNGN, ~$26 wARS, ~$24 wBRL, ~$20 USDC working reserves)
   if (wbrlUsd > 36.0) {
     const unwindUsd = Math.min(wbrlUsd - 24.0, 30.0);
     const sellWbrlRaw = ethers.parseUnits(Math.floor(unwindUsd / liveWbrlMid).toString(), 18);
@@ -1664,8 +1829,8 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, c
     if (uniUnwind) return uniUnwind;
     return unwindViaTextile(wbrlAddr, sellWbrlRaw, 'wBRL/USDT', unwindUsd);
   }
-  if (warsUsd > 30.0) {
-    const excessUsd = warsUsd - 22.0;
+  if (warsUsd > 38.0) {
+    const excessUsd = warsUsd - 26.0;
     const sellWarsRaw = ethers.parseUnits(Math.floor(excessUsd / uniWarsMid).toString(), 18);
     return swapOnUniswap(warsAddr, CONFIG.contracts.usdt, sellWarsRaw, 'AUTO_TREASURY_UNWIND', 'wARS/USDT', excessUsd, 0);
   }
@@ -1674,20 +1839,20 @@ async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, c
     const sellUsdcRaw = ethers.parseUnits(excessUsd.toFixed(6), 6);
     return swapOnUniswap(usdcAddr, CONFIG.contracts.usdt, sellUsdcRaw, 'AUTO_TREASURY_UNWIND', 'USDC/USDT', excessUsd, 0);
   }
-  if (cngnUsd > 32.0) {
-    const excessUsd = cngnUsd - 24.0;
+  if (cngnUsd > 38.0) {
+    const excessUsd = cngnUsd - 26.0;
     const sellCngnRaw = ethers.parseUnits(Math.floor(excessUsd / uniCngnMid).toString(), 6);
     return swapOnUniswap(cngnAddr, CONFIG.contracts.usdt, sellCngnRaw, 'AUTO_TREASURY_UNWIND', 'cNGN/USDT', excessUsd, 0);
   }
 
-  // 2. AUTO-REFILL DEPLETED MAKER RESERVES SO MAKER ANSWERS LARGER TWO-WAY FLOW ACROSS ALL 4 CORRIDORS
-  if (cngnUsd < 14.0 && usdt >= 45.0) {
-    const buyUsd = Math.min(24.0 - cngnUsd, 24.0);
+  // 2. AUTO-REFILL DEPLETED MAKER & REVERSE-ARB RESERVES ACROSS ALL 4 CORRIDORS
+  if (cngnUsd < 17.0 && usdt >= 45.0) {
+    const buyUsd = Math.min(26.0 - cngnUsd, 26.0);
     const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
     return swapOnUniswap(CONFIG.contracts.usdt, cngnAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'cNGN/USDT', buyUsd, 0);
   }
-  if (warsUsd < 12.0 && usdt >= 45.0) {
-    const buyUsd = Math.min(22.0 - warsUsd, 22.0);
+  if (warsUsd < 17.0 && usdt >= 45.0) {
+    const buyUsd = Math.min(26.0 - warsUsd, 26.0);
     const amountInRaw = ethers.parseUnits(buyUsd.toFixed(6), 6);
     return swapOnUniswap(CONFIG.contracts.usdt, warsAddr, amountInRaw, 'AUTO_INVENTORY_REFILL', 'wARS/USDT', buyUsd, 0);
   }
@@ -1972,12 +2137,25 @@ export async function runSingleScan() {
       nowMs - STATE.lastLlmReviewMs >= CONFIG.llmIntervalMs ||
       (urgentSpike && nowMs - STATE.lastLlmReviewMs >= 90_000);
 
-    if (llmDue) {
+    if (llmDue && !STATE.llmInFlight) {
       STATE.lastLlmReviewMs = nowMs;
-      STATE.llmSupervisor = await runGeminiRiskSupervisor({
-        corridors: baseRisk.corridors,
-        nowMs,
-      });
+      if (STATE.scanCount === 0) {
+        STATE.llmSupervisor = await runGeminiRiskSupervisor({
+          corridors: baseRisk.corridors,
+          nowMs,
+        });
+      } else {
+        // ponytail: non-blocking background LLM refresh so 3.5s Taker arbitrage scans never stall on HTTP latency
+        STATE.llmInFlight = true;
+        runGeminiRiskSupervisor({ corridors: baseRisk.corridors, nowMs })
+          .then((res) => {
+            STATE.llmSupervisor = res;
+          })
+          .catch(() => {})
+          .finally(() => {
+            STATE.llmInFlight = false;
+          });
+      }
     }
 
     STATE.riskOfficer = computeRiskOfficerDecisions({
@@ -2004,10 +2182,8 @@ export async function runSingleScan() {
       STATE.riskOfficer.stitchPolicySync = syncStitchRuntimePolicy(STATE.riskOfficer);
     }
 
-    const scanBatches = [];
-    for (const t of CONFIG.tokens) {
-      scanBatches.push(await scanCorridor(t, Math.min(CONFIG.maxSliceUsdt, Math.max(1, usdt * 0.9))));
-    }
+    const probeBudget = Math.min(CONFIG.maxSliceUsdt, Math.max(1, usdt * 0.9));
+    const scanBatches = await Promise.all(CONFIG.tokens.map((t) => scanCorridor(t, probeBudget)));
     const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : 2);
     const allRows = scanBatches
       .flat()

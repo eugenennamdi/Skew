@@ -79,6 +79,6 @@ STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
 GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}" \
 SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \
-LIVE=1 AUTO_REFILL=1 MIN_EDGE_USD="${MIN_EDGE_USD:-0.024}" PORT="${PORT:-8080}" \
+LIVE=1 AUTO_REFILL=1 SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-3500}" MIN_EDGE_USD="${MIN_EDGE_USD:-0.024}" PORT="${PORT:-8080}" \
   setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI: http://localhost:${PORT:-8080}"

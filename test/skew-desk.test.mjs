@@ -309,9 +309,9 @@ test('18. Autonomous stitch.runtime.toml config rewriter atomically updates corr
     const syncRes = syncStitchRuntimeConfig(weekendRisk, path.join(repoRoot, 'stitch.toml'), tmpRuntimePath);
     assert.equal(syncRes.updated, true);
     const written = fs.readFileSync(tmpRuntimePath, 'utf8');
-    // Sunday weekend closure adds +5 bps to cNGN (4 + 5 = 9) and +6 bps to wARS (4 + 6 = 10)
+    // Sunday weekend closure adds +5 bps to cNGN (3 + 5 = 8) and +6 bps to wARS (3 + 6 = 9)
+    assert.match(written, /sell_offset_bps\s*=\s*8/);
     assert.match(written, /sell_offset_bps\s*=\s*9/);
-    assert.match(written, /sell_offset_bps\s*=\s*10/);
   } finally {
     if (fs.existsSync(tmpRuntimePath)) fs.unlinkSync(tmpRuntimePath);
   }
@@ -493,4 +493,72 @@ test('23. Pre-flight firm-quote guard rejects bait-and-slip & sub-gas trades and
   };
   const receivedUsdtRaw = sumReceiptTokenTransfers(mockReceipt, CONFIG.contracts.usdt, { toAddr: CONFIG.agentWallet });
   assert.equal(receivedUsdtRaw, 135337500n);
+});
+
+test('24. Calm-market clamp blocks routine overnight LLM over-widening while preserving real stress protection', () => {
+  const skewMetrics = computeSkewAndQuotes({
+    usdtUsd: 160,
+    cngnBalance: 35000,
+    textileMid: 0.000723,
+    uniMid: 0.000725,
+  });
+
+  // 1. Weekday overnight (Wednesday 23:00 UTC) + aggressive LLM WIDEN (+10/+15 bps) in calm market (ewmaVol=2.1, shock=9):
+  //    cNGN & wARS stay competitive at top-of-book (buy=3, sell=3 + 1 overnight + 1 clamped LLM = 5 bps)
+  const calmOvernight = computeRiskOfficerDecisions({
+    usdt: 160,
+    cngn: 35000,
+    wars: 42000,
+    wbrl: 130,
+    usdc: 20,
+    uniCngnMid: 0.000725,
+    uniWarsMid: 0.000605,
+    skewMetrics,
+    now: new Date('2026-11-04T23:00:00Z'), // Wednesday overnight
+    quantBySymbol: {
+      cNGN: { samples: 5, ewmaVolBps: 2.1, basisShockBps: 9, volBufferBps: 0, basisBufferBps: 0, dailyCarryBps: 8.5 },
+      wARS: { samples: 5, ewmaVolBps: 3.4, basisShockBps: 14, volBufferBps: 0, basisBufferBps: 0, dailyCarryBps: 13.3 },
+    },
+    llmOverlay: {
+      status: 'ACTIVE_BOUNDED',
+      model: 'gemini-3.8-flash',
+      reviewedAt: '2026-11-04T23:00:00Z',
+      decisions: {
+        'cNGN/USDT': clampLlmCorridorDecision({ corridor: 'cNGN/USDT', action: 'WIDEN', addBuyBps: 10, addSellBps: 15, gammaBps: 6, rationale: 'Overnight carry' }),
+        'wARS/USDT': clampLlmCorridorDecision({ corridor: 'wARS/USDT', action: 'WIDEN', addBuyBps: 12, addSellBps: 18, gammaBps: 6, rationale: 'Overnight carry' }),
+      },
+    },
+  });
+  const calmCngn = calmOvernight.corridors.find((c) => c.corridor === 'cNGN/USDT');
+  const calmWars = calmOvernight.corridors.find((c) => c.corridor === 'wARS/USDT');
+  assert.equal(calmCngn.stitchBuyOffsetBps, 3);
+  assert.equal(calmCngn.stitchSellOffsetBps, 5);
+  assert.equal(calmWars.stitchBuyOffsetBps, 3);
+  assert.equal(calmWars.stitchSellOffsetBps, 5);
+
+  // 2. Genuine volatility shock (ewmaVol=24 bps > 12 bps) unlocks full LLM + EWMA widening
+  const stressed = computeRiskOfficerDecisions({
+    usdt: 160,
+    cngn: 35000,
+    wars: 42000,
+    wbrl: 130,
+    usdc: 20,
+    uniCngnMid: 0.000725,
+    uniWarsMid: 0.000605,
+    skewMetrics,
+    now: new Date('2026-11-04T23:00:00Z'),
+    quantBySymbol: {
+      wARS: { samples: 5, ewmaVolBps: 24.0, basisShockBps: 95, volBufferBps: 18, basisBufferBps: 8, dailyCarryBps: 18.0 },
+    },
+    llmOverlay: {
+      status: 'ACTIVE_BOUNDED',
+      model: 'gemini-3.8-flash',
+      reviewedAt: '2026-11-04T23:00:00Z',
+      decisions: {
+        'wARS/USDT': clampLlmCorridorDecision({ corridor: 'wARS/USDT', action: 'WIDEN', addBuyBps: 10, addSellBps: 18, gammaBps: 9, rationale: 'BCRA volatility shock' }),
+      },
+    },
+  });
+  const stressedWars = stressed.corridors.find((c) => c.corridor === 'wARS/USDT');
+  assert.ok(stressedWars.stitchSellOffsetBps >= 45, `Expected full stress protection >= 45 bps, got ${stressedWars.stitchSellOffsetBps}`);
 });
