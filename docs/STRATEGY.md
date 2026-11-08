@@ -2,7 +2,7 @@
 
 This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, supervises risk, arbitrages, and rebalances across the four **Textile FX** corridors on Celo Mainnet (**`cNGN`**, **`wARS`**, **`wBRL`**, and **`USDC`** against **`USDT`**), and why a **Dual-Engine (Shielded Rust Maker + Bounded AI & Multi-Slice Taker)** architecture is required to stay profitable on both sides of the orderbook.
 
-- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$66.33 USDT` / `+34.02%` RoC in real time)*
+- **Live 24/7 RPC Telemetry Dashboard:** **[https://eugenennamdi.github.io/Skew/](https://eugenennamdi.github.io/Skew/)** *(verify active Maker uptime, live Celo RPC balances, 4-corridor `slot0()` spreads, and `+$95.58 USDT` / `+49.02%` net liquid RoC in real time)*
 - **On-Chain Evidence Ledger:** [reports/EVIDENCE.md](../reports/EVIDENCE.md)
 - **Agent EOA Wallet:** [`0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)
 - **ERC-8021 Attribution Tag:** `celo_7935fb97e273`
@@ -95,17 +95,17 @@ During live Celo Mainnet operation, we discovered a critical on-chain anomaly on
 ## 5. Empirical Celo Mainnet Microstructure Benchmark
 
 > [!NOTE]
-> **Point-in-Time Floor Snapshot (`2026-11-05 08:42 UTC` · Celo Mainnet Block `#81,967,402`):**
+> **Synchronized Mainnet Audit Checkpoint (`2026-11-08 19:01 UTC` · Celo Mainnet Block `#82,263,550`):**
 > All figures below match the synchronized checkpoint in [`README.md`](../README.md) and [`reports/EVIDENCE.md`](../reports/EVIDENCE.md). Because **Agent `#9905`** trades 24/7 on Celo Mainnet (`42220`), live cumulative totals can be verified at **[eugenennamdi.github.io/Skew](https://eugenennamdi.github.io/Skew/)** (`GET /status`, `GET /llm`) or **[Celoscan](https://celoscan.io/address/0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324)**.
 
-Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs deployed during the hackathon:
+Auditing transactions on Celo Mainnet `LimitOrderReactor` (`0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`) highlights the structural trade-offs between the three agent designs operating across the ecosystem:
 
 | Dimension | Skew (`Agent #9905` · Dual-Engine + Bounded AI) | Single-Sided Taker Bots | Unshielded Off-Chain FX Makers |
 | :--- | :--- | :--- | :--- |
 | **Market Role** | **4-Corridor Maker (`8/8` sides) + Cross-Venue Taker** | Taker-only (`0` Maker fills) | Multi-corridor Maker + DEX Rebalancer |
-| **On-Chain Settlements** | **`2,839` signed EOA txs (`7,277` ERC-20 transfers)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
-| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `153` external fills (`$5,736.29` Maker volume)** | `0` fills (`$0` liquidity provided) | Exposed to cross-venue oracle lag & static spreads |
-| **Cross-Venue Arbitrage & Total Volume** | **`1,363` 2-leg arbs (`$135,069.12` 1-leg arb · `$146,678.70` total 1-leg · `$293,357.40` 2-leg · `752.2x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
+| **On-Chain Settlements** | **`3,911` signed EOA txs (`9,996` ERC-20 transfers · `99.82%` reliability)** | Taker-only settlement legs | Maker-only fills & periodic DEX swaps |
+| **Maker Liquidity Served** | **24/7 `1s` WS quotes + `179` external fills (`$6,527.97` Maker volume)** | `0` fills (`$0` liquidity provided) | Exposed to cross-venue oracle lag & static spreads |
+| **Cross-Venue Arbitrage & Total Volume** | **`1,794` 2-leg arbs (`$193,344.64` 1-leg arb · `$207,057.11` total 1-leg · `$414,114.22` 2-leg · `$828,228.43` 2-way · `1,061.8x` turnover)** | Single-venue Taker sweeps | `0` Taker arbitrages |
 | **Oracle-Lag & AI Defense** | **Hard `SELL >= max(P_textile, P_uni)` floor + EWMA/Markouts + Bounded Gemini 3.8 Flash (`2s` hot-reload)** | N/A (never quotes Maker orders) | Soft weighted median; exposed when off-chain FX lags DEX |
 | **`wBRL` `MAX_TICK` Defense** | **`800k gas` `QuoterV2` guard + `197k gas` Textile RFQ fallback** | N/A | Rebalancer stalls on `0x01c3…A40F` (`17.04M gas`) |
-| **Net Strategy Value & PnL** | **`$261.33` total value (`$195.00` bankroll + `+$66.33 USDT` net profit · `+34.02%` RoC = `$255.48` liquid equity + `$5.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |
+| **Net Strategy Value & PnL (`$195.00` Initial Capital)** | **`$290.58` liquid stablecoins (`+$95.58 USDT` net liquid · `+49.02%` RoC) · `$296.43` total strategy value (`+$101.43` · `+52.02%` RoC incl. `$5.85` `CELO` gas reserve)** | Positive Taker PnL, `$0` Maker PnL | Negative cross-venue basis drift when off-chain FX lags Uniswap v3 |

@@ -6,7 +6,7 @@
   <title>Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Treasury on Celo</title>
   <meta name="description" content="Autonomous 4-corridor FX market maker (Rust Stitch + 2s zero-restart hot-reload), bounded Gemini 3.8 Flash Desk Head, EWMA volatility &amp; markout engine, and cross-venue Uniswap v3 arbitrageur on Celo Mainnet (ERC-8004 #9905)." />
   <meta property="og:title" content="Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Desk (Celo #9905)" />
-  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$66.33 USDT (+34.02% RoC), 153 external Maker fills, 1,363 cross-venue arbitrages, Dual-Oracle Anti-Arb Shield &amp; Bounded Gemini 3.8 Flash Desk Head." />
+  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$95.58 USDT liquid (+49.02% RoC · $296.43 total strategy value +52.02% RoC), 179 external Maker fills, 1,794 cross-venue arbitrages, Dual-Oracle Anti-Arb Shield &amp; Bounded Gemini 3.8 Flash Desk Head." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://eugenennamdi.github.io/Skew/" />
   <meta property="og:image" content="https://eugenennamdi.github.io/Skew/icons/skew-logo.svg" />
@@ -986,17 +986,17 @@
             <span class="telemetry-key">ERC-8004</span>
             <span class="telemetry-val mono">#9905<span class="telemetry-arrow">↗</span></span>
           </a>
-          <span class="telemetry-seg" title="ERC-8021 Celo Hackathon Calldata Attribution Suffix">
+          <span class="telemetry-seg" title="ERC-8021 On-Chain Calldata Attribution Suffix">
             <span class="telemetry-key">ERC-8021</span>
             <span class="telemetry-val mono">celo_7935fb97e273</span>
           </span>
           <span class="telemetry-seg" title="Autonomous gas manager refills at < 3.0 CELO">
             <span class="telemetry-key">Gas</span>
-            <span class="telemetry-val mono" id="gasBadge">23.02 CELO</span>
+            <span class="telemetry-val mono" id="gasBadge">18.20 CELO</span>
           </span>
           <span class="telemetry-seg" id="blockPill" title="Live Celo Mainnet block height (polls every 3s)">
             <span class="live-dot" style="width:5px;height:5px;"></span>
-            <span class="telemetry-val mono" id="blockBadge">#81,967,402</span>
+            <span class="telemetry-val mono" id="blockBadge">#82,263,550</span>
           </span>
         </div>
       </div>
@@ -1009,55 +1009,55 @@
               <span>Treasury Value (Liquid)</span>
               <span class="badge emerald">Live RPC</span>
             </div>
-            <div class="card-value mono" id="navValue">$255.48</div>
+            <div class="card-value mono" id="navValue">$290.58</div>
             <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
-              <div class="mini-bar-seg" id="barUsdt" style="width: 63.6%; background: var(--foreground);"></div>
-              <div class="mini-bar-seg" id="barCngn" style="width: 7.0%; background: #10B981;"></div>
-              <div class="mini-bar-seg" id="barWars" style="width: 10.2%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" id="barWbrl" style="width: 13.3%; background: #F59E0B;"></div>
-              <div class="mini-bar-seg" id="barUsdc" style="width: 5.9%; background: #6366F1;"></div>
+              <div class="mini-bar-seg" id="barUsdt" style="width: 67.0%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barCngn" style="width: 8.9%; background: #10B981;"></div>
+              <div class="mini-bar-seg" id="barWars" style="width: 8.9%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" id="barWbrl" style="width: 8.3%; background: #F59E0B;"></div>
+              <div class="mini-bar-seg" id="barUsdc" style="width: 6.9%; background: #6366F1;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="162.57 USDT (63.6%)">
+            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="194.58 USDT (67.0%)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
                 <span class="seg-dot" style="background: var(--foreground);"></span>
                 <span>USDT · Settlement Reserve</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdtReadout">$162.57 (63.6%)</span>
+              <span class="treasury-asset-val mono" id="usdtReadout">$194.58 (67.0%)</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemCngn" title="24,874 cNGN ($18.00)">
+            <div class="treasury-asset-item" id="assetItemCngn" title="35,768 cNGN ($25.92)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
                 <span class="seg-dot" style="background: #10B981;"></span>
                 <span>cNGN</span>
               </span>
-              <span class="treasury-asset-val mono" id="cngnReadout">$18.00</span>
+              <span class="treasury-asset-val mono" id="cngnReadout">$25.92</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWars" title="43,311 wARS ($25.96)">
+            <div class="treasury-asset-item" id="assetItemWars" title="42,917 wARS ($25.95)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
                 <span class="seg-dot" style="background: #38BDF8;"></span>
                 <span>wARS</span>
               </span>
-              <span class="treasury-asset-val mono" id="warsReadout">$25.96</span>
+              <span class="treasury-asset-val mono" id="warsReadout">$25.95</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWbrl" title="185.77 wBRL ($33.97)">
+            <div class="treasury-asset-item" id="assetItemWbrl" title="134.36 wBRL ($24.13)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
                 <span class="seg-dot" style="background: #F59E0B;"></span>
                 <span>wBRL</span>
               </span>
-              <span class="treasury-asset-val mono" id="wbrlReadout">$33.97</span>
+              <span class="treasury-asset-val mono" id="wbrlReadout">$24.13</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemUsdc" title="14.98 USDC ($14.98)">
+            <div class="treasury-asset-item" id="assetItemUsdc" title="20.00 USDC ($20.00)">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdc.svg" alt="USDC" />
                 <span class="seg-dot" style="background: #6366F1;"></span>
                 <span>USDC</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdcReadout">$14.98</span>
+              <span class="treasury-asset-val mono" id="usdcReadout">$20.00</span>
             </div>
           </div>
         </div>
@@ -1068,16 +1068,16 @@
               <span>Inventory Skew &amp; Maker Book</span>
               <span class="mono text-muted" id="skewRegimeTag">Balanced</span>
             </div>
-            <div class="card-value mono" id="skewValue">+0.143</div>
+            <div class="card-value mono" id="skewValue">-0.038</div>
             <div class="mini-bar" title="Normalized per-corridor Avellaneda-Stoikov balance ($24 USDT share vs Local FX)">
-              <div class="mini-bar-seg" id="barSkewUsdt" style="width: 57.1%; background: var(--foreground);"></div>
-              <div class="mini-bar-seg" id="barSkewLocal" style="width: 42.9%; background: #10B981;"></div>
+              <div class="mini-bar-seg" id="barSkewUsdt" style="width: 48.1%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barSkewLocal" style="width: 51.9%; background: #10B981;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
             <div class="treasury-asset-item span-full">
               <span class="text-muted">Shielded Bid / Ask Spread</span>
-              <span class="treasury-asset-val mono"><span id="bidSpreadFooter">2 bps</span> / <span id="askSpreadFooter">4 bps</span></span>
+              <span class="treasury-asset-val mono"><span id="bidSpreadFooter">3 bps</span> / <span id="askSpreadFooter">3 bps</span></span>
             </div>
             <div class="treasury-asset-item" title="Net spread locked in when refilling Maker fills on Uniswap v3 0.01%">
               <span class="text-muted">Refill Edge</span>
@@ -1089,11 +1089,11 @@
             </div>
             <div class="treasury-asset-item" title="Independent external counterparty Maker fills settled on LimitOrderReactor">
               <span class="text-muted">Maker Fills</span>
-              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">153 Fills</span>
+              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">179 Fills</span>
             </div>
             <div class="treasury-asset-item" title="Cumulative USD volume served as Maker across all 4 corridors">
               <span class="text-muted">Maker Vol</span>
-              <span class="treasury-asset-val mono" id="makerVolVal">$5,736.29</span>
+              <span class="treasury-asset-val mono" id="makerVolVal">$6,527.97</span>
             </div>
           </div>
         </div>
@@ -1102,23 +1102,23 @@
           <div>
             <div class="card-label">
               <span>Strategy PnL &amp; Efficiency</span>
-              <span class="badge emerald" id="rocBadge">+34.02% RoC</span>
+              <span class="badge emerald" id="rocBadge">+52.02% RoC</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="pnlValue">+$66.33</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">USDT</span></div>
+            <div class="card-value mono text-emerald"><span id="pnlValue">+$101.43</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">USDT</span></div>
             <div class="mini-bar" title="Realized Strategy PnL attribution (wARS Arb · cNGN Arb · Shielded Maker Refills)">
               <div class="mini-bar-seg" style="width: 68%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" style="width: 26%; background: #10B981;"></div>
-              <div class="mini-bar-seg" style="width: 6%; background: #F59E0B;"></div>
+              <div class="mini-bar-seg" style="width: 27%; background: #10B981;"></div>
+              <div class="mini-bar-seg" style="width: 5%; background: #F59E0B;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial USDT bankroll + net realized profit ($255.48 Liquid Equity + $5.85 CELO gas reserve)">
+            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial USDT bankroll + net realized profit ($290.58 Liquid Equity + $5.85 CELO gas reserve)">
               <span class="text-muted">Total Value (incl. Gas)</span>
-              <span class="treasury-asset-val mono" id="totalStrategyVal">$261.33 (+$5.85 Gas)</span>
+              <span class="treasury-asset-val mono" id="totalStrategyVal">$296.43 (+$5.85 Gas)</span>
             </div>
             <div class="treasury-asset-item" id="arbCyclesItem" title="Verified two-leg cross-venue arbitrages + shielded Maker replenishment cycles">
               <span class="text-muted">2-Leg Arbs</span>
-              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">1,363 Cycles</span>
+              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">1,794 Cycles</span>
             </div>
             <div class="treasury-asset-item" title="Peak realized arbitrage spread (+187.5 bps on wARS/USDT) & average (+45.6 bps)">
               <span class="text-muted">Peak / Avg</span>
@@ -1126,11 +1126,11 @@
             </div>
             <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg & 2-leg notional volume on $195.00 initial bankroll">
               <span class="text-muted">Turnover</span>
-              <span class="treasury-asset-val mono" id="turnoverVal">752.2x NAV</span>
+              <span class="treasury-asset-val mono" id="turnoverVal">1,061.8x NAV</span>
             </div>
-            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet (2,836 / 2,839 succeeded)">
+            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet (3,904 / 3,911 succeeded)">
               <span class="text-muted">Reliability</span>
-              <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.9%</span>
+              <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.8%</span>
             </div>
           </div>
         </div>
@@ -1242,6 +1242,25 @@
                 <td class="num-right mono">
                   <a class="link-subtle" href="https://celoscan.io/tx/0xd0855bf83154261c63c9939e14164501aa9c3f1d74a15bc8f92a35cf215a4a1b" target="_blank">Leg 1 ↗</a> ·
                   <a class="link-subtle" href="https://celoscan.io/tx/0xb4a0071e8b077e1297ec306b21a5b0855f0ef01d07a49bf90b6ca3bd2787425d" target="_blank">Leg 2 ↗</a>
+                </td>
+              </tr>
+              <tr>
+                <td class="mono text-muted"><span class="text-subtle">Nov 08 ·</span> 12:12:41</td>
+                <td><span class="badge emerald">Institutional Maker Fill</span></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
+                      <img class="token-icon" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
+                    </span>
+                    <b>wBRL / USDT</b>
+                  </span>
+                </td>
+                <td class="text-muted">LimitOrderReactor Maker Fill (1,077.42 wBRL)</td>
+                <td class="num-right mono">192.77 USDT ← 1,077.42 wBRL <span class="text-subtle">($193.47)</span></td>
+                <td class="num-right mono text-emerald">Top-of-Book Win</td>
+                <td class="num-right mono">
+                  <a class="link-subtle" href="https://celoscan.io/tx/0xe0f685a58f07ac76a07a1fc05e1b27a71cb560a3480eb45f6623dd1de5909786" target="_blank">0xe0f6...9786 ↗</a>
                 </td>
               </tr>
               <tr>
@@ -1599,7 +1618,7 @@
     </section>
 
     <footer class="footer">
-      <div>Skew v2.0 · Celo Agents on Open Rails (Textile FX Track)</div>
+      <div>Skew v2.0 · Autonomous FX Market Maker &amp; Cross-Venue Treasury on Celo</div>
       <div class="mono">
         <a class="link-subtle" href="https://github.com/eugenennamdi/Skew" target="_blank">GitHub</a> ·
         <a class="link-subtle" href="https://github.com/eugenennamdi/Skew/blob/main/docs/STRATEGY.md" target="_blank">Strategy</a> ·
@@ -1653,9 +1672,9 @@
     };
 
     const STATE = {
-      blockNumber: 81967402,
-      walletNonce: 2839,
-      balances: { USDT: 162.57, cNGN: 24874.03, wARS: 43311.34, wBRL: 185.77, USDC: 14.98, CELO: 23.02 },
+      blockNumber: 82263550,
+      walletNonce: 3911,
+      balances: { USDT: 194.58, cNGN: 35768.44, wARS: 42917.15, wBRL: 134.36, USDC: 20.00, CELO: 18.20 },
       offChainFx: {
         NGN: 1381.8,
         ARS: 1455.0,
@@ -1977,7 +1996,7 @@
         if (map[8]) STATE.balances.USDC = Number(decodeUint256(map[8])) / 1e6;
         if (map[9]) STATE.balances.wBRL = Number(decodeUint256(map[9])) / 1e18;
         if (map[10]) STATE.balances.CELO = Number(BigInt(map[10])) / 1e18;
-        if (map[11]) STATE.walletNonce = Math.max(2839, parseInt(map[11], 16));
+        if (map[11]) STATE.walletNonce = Math.max(3911, parseInt(map[11], 16));
 
         // cNGN/USDT pool: token0 is USDT (6 dec), token1 is cNGN (6 dec) -> raw ratio is cNGN per USDT
         const sqrtCngn = decodeUint256(map[4], 0);
@@ -2229,11 +2248,11 @@
         gasBadge.textContent = `${STATE.balances.CELO.toFixed(2)} CELO`;
       }
 
-      // Auto-update Strategy PnL, Arbitrage Cycles, Turnover & Reliability from verified Block #81,967,402 floor + live RPC mark-to-market
-      const BASE_NONCE = 2839;
-      const BASE_ARB_CYCLES = 1363;
-      const BASE_PNL_USDT = 66.33;
-      const BASE_VOL_USD = 146678.70;
+      // Auto-update Strategy PnL, Arbitrage Cycles, Turnover & Reliability from verified Block #82,263,550 floor + live RPC mark-to-market
+      const BASE_NONCE = 3911;
+      const BASE_ARB_CYCLES = 1794;
+      const BASE_PNL_USDT = 101.43;
+      const BASE_VOL_USD = 207057.11;
       const extraNonces = Math.max(0, (STATE.walletNonce || BASE_NONCE) - BASE_NONCE);
       const extraArbs = Math.floor(extraNonces / 2);
       const liveArbCycles = BASE_ARB_CYCLES + extraArbs;
@@ -2245,7 +2264,7 @@
       const liveRocPct = (livePnlUsdt / 195.0) * 100;
       const liveTurnover = liveVolUsd / 195.0;
       const totalSent = Math.max(BASE_NONCE, STATE.walletNonce || BASE_NONCE);
-      const totalOk = totalSent - 3;
+      const totalOk = totalSent - 7;
       const liveRelPct = (totalOk / totalSent) * 100;
 
       const pnlEl = document.getElementById('pnlValue');
@@ -2261,7 +2280,7 @@
       const arbEl = document.getElementById('arbCyclesVal');
       if (arbEl) arbEl.textContent = `${liveArbCycles.toLocaleString('en-US')} Cycles`;
       const arbItem = document.getElementById('arbCyclesItem');
-      if (arbItem) arbItem.title = `${liveArbCycles.toLocaleString('en-US')} two-leg cross-venue arbitrages + 153 external Maker fills`;
+      if (arbItem) arbItem.title = `${liveArbCycles.toLocaleString('en-US')} two-leg cross-venue arbitrages + 179 external Maker fills`;
       const turnEl = document.getElementById('turnoverVal');
       if (turnEl) turnEl.textContent = `${liveTurnover.toFixed(1)}x NAV`;
       const turnItem = document.getElementById('turnoverItem');

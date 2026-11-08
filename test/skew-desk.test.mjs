@@ -229,21 +229,23 @@ test('15. Dashboard HTML & documentation include MiniPay detection, CIP-64 feeCu
 test('16. Cross-document snapshot metrics and LaTeX formulas are 100% consistent across README, EVIDENCE, and STRATEGY', () => {
   const docsToCheck = ['README.md', 'reports/EVIDENCE.md', 'docs/STRATEGY.md'];
   const snapshotMetrics = [
-    '#81,967,402',
-    '2,839',
-    '7,277',
-    '153',
-    '5,736.29',
-    '1,363',
-    '135,069.12',
-    '146,678.70',
-    '293,357.40',
-    '752.2x',
+    '#82,263,550',
+    '3,911',
+    '9,996',
+    '179',
+    '6,527.97',
+    '1,794',
+    '193,344.64',
+    '207,057.11',
+    '414,114.22',
+    '1,061.8x',
     '195.00',
-    '261.33',
-    '255.48',
-    '66.33',
-    '34.02%',
+    '296.43',
+    '290.58',
+    '95.58',
+    '49.02%',
+    '101.43',
+    '52.02%',
     '5.85',
   ];
   for (const relPath of docsToCheck) {
@@ -571,6 +573,6 @@ test('25. GitHub Pages .nojekyll, ERC-8004 agent-registration.json, and honest l
 
   const html = fs.readFileSync(path.join(repoRoot, 'docs', 'index.html'), 'utf8');
   assert.ok(!html.includes('extraArbs * 0.045') && !html.includes('Math.max(liveNavPnlUsdt'), 'docs/index.html must never synthetically extrapolate PnL per nonce');
-  assert.ok(html.includes('BASE_NONCE = 2839'), 'docs/index.html must anchor to verified Block #81,967,402 checkpoint');
+  assert.ok(html.includes('BASE_NONCE = 3911'), 'docs/index.html must anchor to verified Block #82,263,550 checkpoint');
   assert.ok(html.includes('/llm'), 'docs/index.html must poll /llm telemetry when connected to localhost or ?api=');
 });
