@@ -242,6 +242,49 @@ pub fn dex_shield_telemetry_counts() -> (u64, u64) {
     )
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CorridorRfqFunnel {
+    pub quotes_answered: u64,
+    pub quotes_competitive: u64,
+    pub quotes_filled: u64,
+}
+
+static CORRIDOR_RFQ_FUNNEL: OnceLock<RwLock<HashMap<Address, CorridorRfqFunnel>>> = OnceLock::new();
+
+fn funnel_cache() -> &'static RwLock<HashMap<Address, CorridorRfqFunnel>> {
+    CORRIDOR_RFQ_FUNNEL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Record per-corridor RFQ funnel counts (quotes answered & competitive top-of-book share).
+pub fn record_corridor_rfq_quote(
+    collateral: Address,
+    applied_spread: Spread,
+) -> CorridorRfqFunnel {
+    let is_competitive = match applied_spread {
+        Spread::Bps(bps) => bps <= 6,
+        _ => true,
+    };
+    if let Ok(mut map) = funnel_cache().write() {
+        let entry = map.entry(collateral).or_default();
+        entry.quotes_answered += 1;
+        if is_competitive {
+            entry.quotes_competitive += 1;
+        }
+        return *entry;
+    }
+    CorridorRfqFunnel::default()
+}
+
+/// Record a settled on-chain fill for a corridor in the RFQ funnel.
+pub fn record_corridor_rfq_fill(collateral: Address) -> CorridorRfqFunnel {
+    if let Ok(mut map) = funnel_cache().write() {
+        let entry = map.entry(collateral).or_default();
+        entry.quotes_filled += 1;
+        return *entry;
+    }
+    CorridorRfqFunnel::default()
+}
+
 /// Feed the corridor's live oracle observation into its rolling 120s step-function [`Twap`]
 /// (`crate::pricing::twap::Twap`) and return the smoothed TWAP mid.
 pub fn observe_rfq_twap_mid(collateral: Address, oracle_mid: f64, now_secs: u64) -> f64 {

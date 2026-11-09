@@ -229,6 +229,17 @@ pub fn decide_quote(
         book.collateral_decimals,
         effective_mid,
     )?;
+    let funnel = crate::pricing::skew::record_corridor_rfq_quote(book.collateral, spread);
+    tracing::info!(
+        "[rfq-funnel] corridor={:?} quotes_answered={} quotes_competitive={} quotes_filled={} spread={:?} dex_mid={:?} eff_mid={:.6}",
+        book.collateral,
+        funnel.quotes_answered,
+        funnel.quotes_competitive,
+        funnel.quotes_filled,
+        spread,
+        dex_mid,
+        effective_mid
+    );
 
     let price = if bid {
         bid_price(effective_mid, spread)

@@ -11,9 +11,9 @@ This document explains how **Skew (`ERC-8004 Agent #9905`)** prices, quotes, sup
 
 ## 1. Core Insight: Why Unshielded Makers Lose Money on Celo FX
 
-On Celo Mainnet, local stablecoins (`cNGN`, `wARS`, `wBRL`, `USDC`) trade simultaneously on:
-1. **Textile FX RFQ (`LimitOrderReactor` `0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`):** Makers stream indicative levels and sign firm `Permit2` `DutchOrder` quotes around a periodic FX reference rate $P_{\text{textile}}$.
-2. **Celo Uniswap v3 (`SwapRouter02` `0x5615CDAb10dc425a742d643d949a7F474C01abc4`):** Concentrated-liquidity `0.01%` (`100` bps fee tier) pools trade continuously at on-chain mid $P_{\text{uni}}$.
+On Celo Mainnet, local stablecoins (`cNGN`, `wARS`, `wBRL`, `USDC`) trade simultaneously on two separate mechanisms *(note: Textile FX settles all RFQ trades atomically via `LimitOrderReactor` `0xa9AA0a64…35b3` and `Permit2` `0x00000000…78BA3`, and **never** routes RFQ trades through Uniswap; Celo Uniswap v3 `slot0()` serves strictly as an external on-chain reference price for Engine 1's Dual-Oracle shield and as an external rebalance/arbitrage pool for Engine 2)*:
+1. **Textile FX RFQ (`LimitOrderReactor` `0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3`):** Makers answer exact-size RFQ solicitations with firm, signed, all-or-nothing `Permit2` `DutchOrder` quotes (~60s expiry) around an off-chain FX reference rate $P_{\text{textile}}$.
+2. **Celo Uniswap v3 (`SwapRouter02` `0x5615CDAb10dc425a742d643d949a7F474C01abc4`):** Separate concentrated-liquidity `0.01%` (`100` bps fee tier) pools whose `slot0()` on-chain mid $P_{\text{uni}}$ provides an external arbitrage-floor reference price.
 
 Whenever $P_{\text{textile}} < P_{\text{uni}}$ (i.e. Textile's off-chain FX reference values the local currency cheaper than Uniswap v3), any maker quoting a symmetric spread around $P_{\text{textile}}$ (or around a weighted average of off-chain FX feeds) will quote a `SELL` price below $P_{\text{uni}}$. Arbitrage bots immediately buy the maker's local currency on Textile and sell it into Uniswap v3.
 

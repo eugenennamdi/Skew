@@ -37,8 +37,9 @@ Starting from a single **`$195.00 USDT`** initial bankroll on Celo Mainnet (`422
 | :--- | :---: | :---: | :--- | :--- |
 | **1. Independent External Maker Fills (`skew-stitch`)** | **`179` external fills** (`0` self-trades) | **`$6,527.97`** | **`+$4.85 USDT` (`+7.43 bps` net)** | Net of Textile `sellAmount` protocol fee (`$0.65`) & Uniswap v3 refill cost (`$0.66`) |
 | **2. Self-Initiated 2-Leg Cross-Venue Taker Arbs (`skew-desk.mjs`)** | `1,794` 2-leg arbs (`3,588` txs) | `$193,344.64` | **`+$91.12 USDT` (`+4.71 bps` net)** | Net of Uniswap v3 / protocol fees (`$2.86`) & Celo gas (`$2.62`); `0` self-fills |
-| **3. Autonomous Treasury Rebalance & Unrealized FX MTM** | `280` swaps (`+36` setup / `7` reverted) | `$7,184.50` | **`$0.00` realized** (`-$0.39` MTM) | `-$0.39 USDT` unrealized FX delta on `$96.00` local reserves + `$5.85` `CELO` gas reserve |
-| **Total Verified Mainnet Floor (`Block #82,263,550`)** | **`3,911` signed EOA txs (`9,996` transfers)** | **`$207,057.11`** (`$414,114.22` 2-leg · `1,061.8x`) | **`+$95.97 USDT` Realized (`+49.22%`)** | **`+$95.58 USDT` Net Liquid MTM (`+49.02%` · `$290.58` liquid / `$296.43` total value)** |
+| **Subtotal: Settled Trade Volume (Excl. Treasury Refills)** | **`1,973` settled trade events** | **`$199,872.61` 1-leg trade volume** | **`+$95.97 USDT` Realized (`+49.22%`)** | **`$6,527.97` Independent Maker Fills + `$193,344.64` 1-Leg Cross-Venue Arbs (`0` treasury refills included)** |
+| **3. Memo: Non-Fill Treasury Rebalances & Unrealized FX MTM** | `280` swaps (`+36` setup / `7` reverted) | `$7,184.50` *(non-fill rebalance)* | **`$0.00` realized** (`-$0.39` MTM) | `-$0.39 USDT` unrealized FX delta on `$96.00` local reserves + `$5.85` `CELO` gas reserve |
+| **Total Verified Wallet Activity (`Block #82,263,550`)** | **`3,911` signed EOA txs (`9,996` transfers)** | **`$199,872.61` trade (`$207,057.11` gross · `$414,114.22` 2-leg · `1,061.8x`)** | **`+$95.97 USDT` Realized (`+49.22%`)** | **`+$95.58 USDT` Net Liquid MTM (`+49.02%` · `$290.58` liquid / `$296.43` total value)** |
 
 ### RFQ Quote Funnel, External Maker Counterparties & Fixed-Spread Baseline (`node scripts/verify-onchain-pnl.mjs`)
 
