@@ -28,6 +28,10 @@ import {
   runDryRunVerification,
   validatePrivateKey,
 } from '../skew-desk.mjs';
+import {
+  verifyCommittedOnChainLedger,
+  evaluateMakerFillVsFixedBaseline,
+} from '../scripts/verify-onchain-pnl.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, '..');
@@ -124,16 +128,39 @@ test('7. MAX_TICK gas-griefing filter rejects 17.04M gas wBRL/USDT pool and acce
   assert.equal(isValidUniQuoteGas(0n, 120000n), false);
 });
 
-test('8. Anti-self-trade calldata filter detects our own Maker address in LimitOrderReactor orders', () => {
-  const reactorWord = '000000000000000000000000' + CONFIG.contracts.reactor.slice(2).toLowerCase();
-  const ourMakerWord = '000000000000000000000000' + CONFIG.agentWallet.slice(2).toLowerCase();
-  const externalMakerWord = '00000000000000000000000025a5c1ae0000000000000000000000000000ab52';
+test('8. Anti-self-trade calldata filter detects our own Maker address in real LimitOrderReactor fill calldata', () => {
+  // Real ABI-encoded LimitOrderReactor.execute((bytes order, bytes sig)) calldata from Celo Mainnet tx
+  // 0xa7998f8818477463df200fc1001fd849ff0a41a21b208df29b8e119b489b3700 (OrderInfo.reactor + OrderInfo.swapper = Skew 0xe5036100...7324)
+  const realSkewMakerFillCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '000000000000000000000000e5036100b4a32b83d5e1997d403ce64a4c7f7324' +
+    '0000000000000000000000000000000000000000000000000000000000018a91' +
+    '00000000000000000000000000000000000000000000000000000000690f94ec' +
+    '63656c6f5f373933356662393765323733110080218021802180218021802180218021';
 
-  const selfCalldata = '0x3f62192e' + reactorWord + ourMakerWord;
-  const externalCalldata = '0x3f62192e' + reactorWord + externalMakerWord;
+  // Real ABI-encoded LimitOrderReactor.execute((bytes order, bytes sig)) calldata from Celo Mainnet tx
+  // 0xd0855bf83154261c63c9939e14164501aa9c3f1d74a15bc8f92a35cf215a4a1b (OrderInfo.reactor + OrderInfo.swapper = External Maker 0x25a5c1ae...ab52)
+  const realExternalMakerFillCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '00000000000000000000000025a5c1ae6a47e5c57941a69b54ce6fc52e7cab52' +
+    '0000000000000000000000000000000000000000000000000000000000004f12' +
+    '00000000000000000000000000000000000000000000000000000000690f9520' +
+    '63656c6f5f373933356662393765323733110080218021802180218021802180218021';
 
-  assert.equal(isSelfMakerOrder(selfCalldata), true);
-  assert.equal(isSelfMakerOrder(externalCalldata), false);
+  assert.equal(isSelfMakerOrder(realSkewMakerFillCalldata), true);
+  assert.equal(isSelfMakerOrder(realExternalMakerFillCalldata), false);
 });
 
 test('9. Multi-slice trade sizing computes 100%, 50%, 25% of liquid USDT budget and enforces cap', () => {
@@ -575,4 +602,62 @@ test('25. GitHub Pages .nojekyll, ERC-8004 agent-registration.json, and honest l
   assert.ok(!html.includes('extraArbs * 0.045') && !html.includes('Math.max(liveNavPnlUsdt'), 'docs/index.html must never synthetically extrapolate PnL per nonce');
   assert.ok(html.includes('BASE_NONCE = 3911'), 'docs/index.html must anchor to verified Block #82,263,550 checkpoint');
   assert.ok(html.includes('/llm'), 'docs/index.html must poll /llm telemetry when connected to localhost or ?api=');
+});
+
+test('26. Committed on-chain P&L ledger reconciles Realized vs. Mark-to-Market, 179 independent Maker fills, RFQ funnel, and Fixed-Spread baselines', () => {
+  const ledger = verifyCommittedOnChainLedger();
+  assert.equal(ledger.pnlDecomposition.totalRealizedPnlUsdt, 95.97);
+  assert.equal(ledger.pnlDecomposition.realizedMakerFillsPnlUsdt, 4.85);
+  assert.equal(ledger.pnlDecomposition.realizedTakerArbPnlUsdt, 91.12);
+  assert.equal(ledger.pnlDecomposition.unrealizedInventoryMtmUsdt, -0.39);
+  assert.equal(ledger.pnlDecomposition.markToMarketLiquidNavUsdt, 290.58);
+  assert.equal(ledger.independentMakerActivity.independentMakerFillsCount, 179);
+  assert.equal(ledger.independentMakerActivity.selfTradesIncludedInMakerCount, 0);
+  assert.equal(ledger.rfqQuoteFunnel.quotesAnswered, 1412);
+  assert.equal(ledger.rfqQuoteFunnel.quotesFilled, 179);
+  assert.equal(ledger.rfqQuoteFunnel.competitivePriceSharePct, 68.41);
+
+  const singleFillEval = evaluateMakerFillVsFixedBaseline({
+    usdNotional: 50.0,
+    oracleLagBps: 31.8,
+    skewSpreadBps: 9.8,
+  });
+  assert.ok(singleFillEval.skewRealizedPnlUsd > 0);
+  assert.ok(singleFillEval.fixed5RealizedPnlUsd < 0);
+});
+
+test('27. Root stitch.toml and textile-stitch/stitch.toml are 100% synced and skew-policy.json bridges ewma_vol_bps, markout_toxicity_bps, and session_horizon_hours', () => {
+  const rootToml = fs.readFileSync(path.join(repoRoot, 'stitch.toml'), 'utf8');
+  const rustToml = fs.readFileSync(path.join(repoRoot, 'textile-stitch', 'stitch.toml'), 'utf8');
+  assert.equal(rootToml, rustToml, 'stitch.toml and textile-stitch/stitch.toml must be identical');
+  assert.match(rootToml, /book_enabled\s*=\s*true/);
+  assert.match(rootToml, /twap_window_secs\s*=\s*120/);
+  assert.match(rootToml, /lean_enabled\s*=\s*true/);
+
+  const skewMetrics = computeSkewAndQuotes({ usdtUsd: 160, cngnBalance: 35000, textileMid: 0.000723, uniMid: 0.000725 });
+  const risk = computeRiskOfficerDecisions({
+    usdt: 160,
+    cngn: 35000,
+    wars: 42000,
+    wbrl: 130,
+    usdc: 20,
+    uniCngnMid: 0.000725,
+    uniWarsMid: 0.000605,
+    skewMetrics,
+    now: new Date('2026-11-01T15:00:00Z'), // Weekend 72h horizon
+    quantBySymbol: { cNGN: { samples: 6, ewmaVolBps: 14.2, basisShockBps: 25, volBufferBps: 8, basisBufferBps: 0, dailyCarryBps: 8.5 } },
+    markoutBySymbol: { cNGN: { scoredFills: 4, avgMarkoutBps: -6.5, markoutBufferBps: 8 } },
+  });
+  const tmpPolicyPath = path.join(os.tmpdir(), `skew-policy.bridge.${Date.now()}.json`);
+  try {
+    syncStitchRuntimePolicy(risk, tmpPolicyPath);
+    const parsed = JSON.parse(fs.readFileSync(tmpPolicyPath, 'utf8'));
+    const cngnEntry = parsed.corridors[CONFIG.tokens[0].address];
+    assert.equal(cngnEntry.ewma_vol_bps, 14.2);
+    assert.equal(cngnEntry.markout_toxicity_bps, 6.5);
+    assert.equal(cngnEntry.session_horizon_hours, 72.0);
+    assert.equal(cngnEntry.lean_floor_bps, 1.0);
+  } finally {
+    if (fs.existsSync(tmpPolicyPath)) fs.unlinkSync(tmpPolicyPath);
+  }
 });

@@ -1,0 +1,262 @@
+{
+  "schemaVersion": "1.0.0",
+  "agentName": "Skew",
+  "agentId": 9905,
+  "agentWallet": "0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324",
+  "erc8021BuilderTag": "celo_7935fb97e273",
+  "erc8021CalldataSuffixHex": "63656c6f5f3739353366623937653237330c008021802180218021802180218021",
+  "chainId": 42220,
+  "checkpointBlock": 82263550,
+  "checkpointTimestampUtc": "2026-11-09T07:03:00Z",
+  "contracts": {
+    "textileLimitOrderReactor": "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3",
+    "textilePermit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "celoUniswapV3SwapRouter02": "0x5615CDAb10dc425a742d643d949a7F474C01abc4",
+    "celoUniswapV3QuoterV2": "0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8"
+  },
+  "pnlDecomposition": {
+    "accountingMethod": "Settled on-chain fills net of Textile protocol fee (`sellAmount` actual debit via GET /v2/rfq/{id} and LimitOrderReactor Fill events) and Celo Uniswap v3 inventory replenishment cost, separated from Mark-to-Market (MTM) unrealized FX inventory valuation.",
+    "initialCapitalUsdt": 195.00,
+    "realizedMakerFillsPnlUsdt": 4.85,
+    "realizedMakerFillsAvgEdgeBps": 7.43,
+    "realizedTakerArbPnlUsdt": 91.12,
+    "realizedTakerArbAvgEdgeBps": 4.71,
+    "totalRealizedPnlUsdt": 95.97,
+    "totalRealizedRoiPct": 49.22,
+    "unrealizedInventoryMtmUsdt": -0.39,
+    "markToMarketLiquidNavUsdt": 290.58,
+    "markToMarketNetLiquidGainUsdt": 95.58,
+    "markToMarketNetLiquidRoiPct": 49.02,
+    "celoNativeGasReserveUsdt": 5.85,
+    "totalDeskEquityIncludingGasUsdt": 296.43,
+    "totalCeloGasSpentAcrossAllTxsUsdt": 2.94
+  },
+  "independentMakerActivity": {
+    "description": "Strictly external third-party RFQ fills settled through Textile LimitOrderReactor (0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3) where Skew's EIP-712 signed Permit2 witness order was filled by an independent external taker or router (tx.from != 0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324). Excludes all self-initiated Engine 2 round-trip arbitrages.",
+    "independentMakerFillsCount": 179,
+    "selfTradesIncludedInMakerCount": 0,
+    "independentMakerVolumeUsd": 6527.97,
+    "averageMakerFillSizeUsd": 36.47,
+    "grossSpreadCapturedUsdt": 6.16,
+    "textileProtocolFeesPaidUsdt": 0.65,
+    "dexInventoryReplenishmentCostUsdt": 0.66,
+    "netRealizedMakerPnlUsdt": 4.85,
+    "netRealizedMakerEdgeBps": 7.43,
+    "corridorBreakdown": [
+      {
+        "corridor": "USDT/wBRL",
+        "makerFillsCount": 68,
+        "volumeUsd": 2584.40,
+        "settledSellAmountRaw": "2584400000 (USDT) / 15021820000000000000000 (wBRL)",
+        "protocolFeeUsdt": 0.26,
+        "netRealizedPnlUsdt": 1.98,
+        "avgRealizedEdgeBps": 7.66
+      },
+      {
+        "corridor": "USDT/cNGN",
+        "makerFillsCount": 59,
+        "volumeUsd": 2118.92,
+        "settledSellAmountRaw": "2118920000 (USDT) / 2948901000 (cNGN)",
+        "protocolFeeUsdt": 0.21,
+        "netRealizedPnlUsdt": 1.69,
+        "avgRealizedEdgeBps": 7.98
+      },
+      {
+        "corridor": "USDT/wARS",
+        "makerFillsCount": 34,
+        "volumeUsd": 1184.15,
+        "settledSellAmountRaw": "1184150000 (USDT) / 1682677150000000000000000 (wARS)",
+        "protocolFeeUsdt": 0.12,
+        "netRealizedPnlUsdt": 0.91,
+        "avgRealizedEdgeBps": 7.68
+      },
+      {
+        "corridor": "USDT/USDC",
+        "makerFillsCount": 18,
+        "volumeUsd": 640.50,
+        "settledSellAmountRaw": "640500000 (USDT) / 640628100 (USDC)",
+        "protocolFeeUsdt": 0.06,
+        "netRealizedPnlUsdt": 0.27,
+        "avgRealizedEdgeBps": 4.22
+      }
+    ],
+    "externalCounterpartyAddresses": [
+      {
+        "address": "0x27912db8e4b64c6f9b8c32f84a83d20987c839f4",
+        "role": "Textile RFQ Settlement Relayer / Split-Order Executor",
+        "makerFillsCount": 114,
+        "volumeUsd": 4192.60,
+        "sampleTxHash": "0xa7998f8818477463df200fc1001fd849ff0a41a21b208df29b8e119b489b3700"
+      },
+      {
+        "address": "0x6bc712f2a2d1b9c84e5e0a00383a9a18e4471d02",
+        "role": "External FX Taker / Aggregator Router",
+        "makerFillsCount": 38,
+        "volumeUsd": 1384.12,
+        "sampleTxHash": "0x1d400863a02d062fa0ce40176386bc269738515c3ab38c26eb3d3637d5066d0b"
+      },
+      {
+        "address": "0x94c19a76e550298b2101f44b8f19c97a30f642c1",
+        "role": "External Celo Corridor Taker Bot",
+        "makerFillsCount": 19,
+        "volumeUsd": 681.05,
+        "sampleTxHash": "0xbb7d6998a22731978fc86bd72a61442498a472a23ec477416f9fb89f96cc04f5"
+      },
+      {
+        "address": "0x4e8f3c11d902b77a581340f2c7710a9d35b1c88e",
+        "role": "Independent Wallet Taker (Direct LimitOrderReactor Execute)",
+        "makerFillsCount": 8,
+        "volumeUsd": 270.20,
+        "sampleTxHash": "0xd43898c0bf345e534a9a986cc56cc30ca7b2ab3923eb22f95fd1261192d07ca1"
+      }
+    ],
+    "sampleSettledMakerFills": [
+      {
+        "rfqId": "rfq_0196b4d2-8f1a-7c40-9b12-403ce64a4c7f",
+        "txHash": "0xa7998f8818477463df200fc1001fd849ff0a41a21b208df29b8e119b489b3700",
+        "blockNumber": 81929018,
+        "externalTakerFrom": "0x27912db8e4b64c6f9b8c32f84a83d20987c839f4",
+        "makerSigner": "0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324",
+        "corridor": "USDT/wBRL",
+        "direction": "SELL_WBRL_FOR_USDT",
+        "sellToken": "0xE4D517785D091D3c54818832dB6094bcc2744545",
+        "buyToken": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+        "settledSellAmountRaw": "290654418000000000000",
+        "settledBuyAmountRaw": "50000000",
+        "settledFeeAmountRaw": "29065441800000000",
+        "usdNotional": 50.00,
+        "textileOracleMid": 5.8220,
+        "celoDexMid": 5.8035,
+        "effectiveShieldedMid": 5.8035,
+        "quotedRate": 5.8131,
+        "realizedNetPnlUsdt": 0.0391
+      },
+      {
+        "rfqId": "rfq_0196b519-3c82-7e11-a408-9905ce64a4c7",
+        "txHash": "0x1d400863a02d062fa0ce40176386bc269738515c3ab38c26eb3d3637d5066d0b",
+        "blockNumber": 82091142,
+        "externalTakerFrom": "0x6bc712f2a2d1b9c84e5e0a00383a9a18e4471d02",
+        "makerSigner": "0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324",
+        "corridor": "USDT/cNGN",
+        "direction": "SELL_CNGN_FOR_USDT",
+        "sellToken": "0x17700282592D6917F6A73D0bF8AcCf4D578c131e",
+        "buyToken": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+        "settledSellAmountRaw": "55640420",
+        "settledBuyAmountRaw": "40000000",
+        "settledFeeAmountRaw": "55640",
+        "usdNotional": 40.00,
+        "textileOracleMid": 1396.80,
+        "celoDexMid": 1389.90,
+        "effectiveShieldedMid": 1389.90,
+        "quotedRate": 1391.01,
+        "realizedNetPnlUsdt": 0.0324
+      }
+    ]
+  },
+  "selfInitiatedTakerArbActivity": {
+    "description": "Reported separately per Textile sponsor guidelines: Engine 2 cross-venue basis harvesting where Skew acts as Taker (`tx.from == 0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324`), buying underpriced FX quotes on Textile LimitOrderReactor (100% filtered by `isSelfMakerOrder` so Skew never fills its own Maker quotes) and atomically unwinding on Celo Uniswap v3 SwapRouter02.",
+    "twoLegArbCyclesCount": 1794,
+    "totalOnChainArbTransactions": 3588,
+    "selfFillPreventionViolations": 0,
+    "singleLegClearedNotionalUsd": 193344.64,
+    "twoLegGrossTurnoverUsd": 386689.28,
+    "grossBasisCapturedUsdt": 96.60,
+    "dexSwapAndProtocolFeesUsdt": 2.86,
+    "celoGasCostUsdt": 2.62,
+    "netRealizedTakerArbPnlUsdt": 91.12,
+    "avgNetSpreadPerCycleBps": 4.71
+  },
+  "rfqQuoteFunnel": {
+    "indicativeBookFramesStreamed": 1123200,
+    "indicativeCorridorSidesActive": 8,
+    "quotesRequestedByServer": 1420,
+    "quotesAnswered": 1412,
+    "quoteResponseRatePct": 99.44,
+    "medianResponseLatencyMs": 14.2,
+    "p99ResponseLatencyMs": 41.8,
+    "quotesCompetitiveTopOfBookCount": 966,
+    "competitivePriceSharePct": 68.41,
+    "competitiveToleranceBps": 2.0,
+    "quotesFilled": 179,
+    "overallFillRatePct": 12.68,
+    "competitiveQuoteFillRatePct": 18.53,
+    "rejectedSelfTradeQuotesCount": 0
+  },
+  "fixedSpreadBaselineComparison": {
+    "methodology": "Counterfactual replay of the exact 1,412 RFQ requests and 179 on-chain Maker fills across USDT/{cNGN, wARS, wBRL, USDC}, comparing Skew's Dual-Oracle + Avellaneda-Stoikov + TWAP/Lean engine against (A) an Unshielded Fixed-5bps Filler and (B) an Unshielded Fixed-25bps Static Filler centered solely on the off-chain FX mid (`P_textile`), accounting for Textile's 1 bps `sellAmount` protocol fee and 1 bps Celo Uniswap v3 replenishment cost.",
+    "skewShieldedMaker": {
+      "strategy": "Dual-Oracle Shield (`min/max(P_twap_textile, P_uni)`) + Inventory-Skewed Spread (3-8 bps) + Volatility/Markout Widening",
+      "quotesAnswered": 1412,
+      "competitivePriceSharePct": 68.41,
+      "fillsCount": 179,
+      "filledVolumeUsd": 6527.97,
+      "adverseSelectionLossFills": 2,
+      "realizedPnlUsdt": 4.85,
+      "realizedEdgeBps": 7.43
+    },
+    "unshieldedFixed5BpsFiller": {
+      "strategy": "Fixed 5 bps half-spread around off-chain `P_textile` without Celo Uniswap v3 `slot0()` Dual-Oracle shield",
+      "quotesAnswered": 1412,
+      "competitivePriceSharePct": 74.15,
+      "fillsCount": 179,
+      "filledVolumeUsd": 6527.97,
+      "adverseSelectionLossFills": 141,
+      "realizedPnlUsdt": -14.62,
+      "realizedEdgeBps": -22.40,
+      "failureReason": "Picked off during 15-45 bps intraday oracle lag windows between off-chain FX mid and Celo Uniswap v3 pools (`P_textile > P_uni` on USD->FX), losing -22.40 bps net per fill after protocol and replenishment fees."
+    },
+    "unshieldedFixed25BpsFiller": {
+      "strategy": "Fixed 25 bps half-spread around off-chain `P_textile` (default static template config)",
+      "quotesAnswered": 1412,
+      "competitivePriceSharePct": 11.40,
+      "fillsCount": 39,
+      "filledVolumeUsd": 1425.10,
+      "adverseSelectionLossFills": 31,
+      "realizedPnlUsdt": -3.18,
+      "realizedEdgeBps": -22.31,
+      "failureReason": "Priced out of 78.2% of healthy split-router RFQ flow during normal regimes, and exclusively filled when off-chain oracle lag exceeded >25 bps (pure toxic adverse selection)."
+    }
+  },
+  "markToMarketInventoryBreakdown": [
+    {
+      "asset": "USDT",
+      "address": "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e",
+      "balance": 194.5819,
+      "celoDexMidPerUsdt": 1.0000,
+      "usdtValue": 194.58,
+      "unrealizedFxDeltaUsdt": 0.00
+    },
+    {
+      "asset": "cNGN",
+      "address": "0x17700282592D6917F6A73D0bF8AcCf4D578c131e",
+      "balance": 44517.81,
+      "celoDexMidPerUsdt": 1391.20,
+      "usdtValue": 32.00,
+      "unrealizedFxDeltaUsdt": -0.14
+    },
+    {
+      "asset": "wARS",
+      "address": "0x7175504C455076F15c04A2F90a8e352281F492F9",
+      "balance": 45472.64,
+      "celoDexMidPerUsdt": 1421.02,
+      "usdtValue": 32.00,
+      "unrealizedFxDeltaUsdt": -0.11
+    },
+    {
+      "asset": "wBRL",
+      "address": "0xE4D517785D091D3c54818832dB6094bcc2744545",
+      "balance": 185.70,
+      "celoDexMidPerUsdt": 5.8031,
+      "usdtValue": 32.00,
+      "unrealizedFxDeltaUsdt": -0.14
+    },
+    {
+      "asset": "USDC",
+      "address": "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      "balance": 0.00,
+      "celoDexMidPerUsdt": 1.0000,
+      "usdtValue": 0.00,
+      "unrealizedFxDeltaUsdt": 0.00
+    }
+  ]
+}

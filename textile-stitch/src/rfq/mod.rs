@@ -2543,25 +2543,13 @@ async fn refresh_celo_dex_reference(reader: Batcher, rpc: &Rpc) {
     let Ok(cngn_pool) = "0x6519d56Eb0A69FC0338657784c783B169b8f7d32".parse::<Address>() else {
         return;
     };
-    let Ok(cngn_token) = "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f".parse::<Address>() else {
-        return;
-    };
     let Ok(wars_pool) = "0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391".parse::<Address>() else {
-        return;
-    };
-    let Ok(wars_token) = "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D".parse::<Address>() else {
         return;
     };
     let Ok(usdc_pool) = "0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846".parse::<Address>() else {
         return;
     };
-    let Ok(usdc_token) = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C".parse::<Address>() else {
-        return;
-    };
     let Ok(wbrl_pool) = "0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F".parse::<Address>() else {
-        return;
-    };
-    let Ok(wbrl_token) = "0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0".parse::<Address>() else {
         return;
     };
 
@@ -2574,55 +2562,12 @@ async fn refresh_celo_dex_reference(reader: Batcher, rpc: &Rpc) {
     let Ok(results) = reader.read(rpc, &calls).await else {
         return;
     };
-    let q96 = 2f64.powi(96);
-    if let Some(Some(bytes)) = results.first() {
-        if bytes.len() >= 32 {
-            let sqrt_x96 = U256::from_be_slice(&bytes[..32]);
-            if let Ok(v) = sqrt_x96.to_string().parse::<f64>() {
-                let sqrt_p = v / q96;
-                let cngn_per_usdt = sqrt_p * sqrt_p;
-                if cngn_per_usdt > 100.0 && cngn_per_usdt < 10_000.0 {
-                    crate::pricing::skew::set_dex_reference_price(cngn_token, 1.0 / cngn_per_usdt);
-                }
-            }
-        }
-    }
-    if let Some(Some(bytes)) = results.get(1) {
-        if bytes.len() >= 32 {
-            let sqrt_x96 = U256::from_be_slice(&bytes[..32]);
-            if let Ok(v) = sqrt_x96.to_string().parse::<f64>() {
-                let sqrt_p = v / q96;
-                let usdt_per_wars = sqrt_p * sqrt_p * 1e12;
-                if usdt_per_wars > 0.00005 && usdt_per_wars < 0.05 {
-                    crate::pricing::skew::set_dex_reference_price(wars_token, usdt_per_wars);
-                }
-            }
-        }
-    }
-    if let Some(Some(bytes)) = results.get(2) {
-        if bytes.len() >= 32 {
-            let sqrt_x96 = U256::from_be_slice(&bytes[..32]);
-            if let Ok(v) = sqrt_x96.to_string().parse::<f64>() {
-                let sqrt_p = v / q96;
-                let usdc_per_usdt = sqrt_p * sqrt_p;
-                if usdc_per_usdt > 0.80 && usdc_per_usdt < 1.20 {
-                    crate::pricing::skew::set_dex_reference_price(usdc_token, 1.0 / usdc_per_usdt);
-                }
-            }
-        }
-    }
-    if let Some(Some(bytes)) = results.get(3) {
-        if bytes.len() >= 32 {
-            let sqrt_x96 = U256::from_be_slice(&bytes[..32]);
-            if let Ok(v) = sqrt_x96.to_string().parse::<f64>() {
-                let sqrt_p = v / q96;
-                let wbrl_per_usdt = (sqrt_p * sqrt_p) / 1e12;
-                if wbrl_per_usdt > 2.0 && wbrl_per_usdt < 20.0 {
-                    crate::pricing::skew::set_dex_reference_price(wbrl_token, 1.0 / wbrl_per_usdt);
-                }
-            }
-        }
-    }
+    crate::pricing::skew::decode_and_cache_celo_dex_slot0(
+        results.first().and_then(|r| r.as_ref().map(|b| b.as_ref())),
+        results.get(1).and_then(|r| r.as_ref().map(|b| b.as_ref())),
+        results.get(2).and_then(|r| r.as_ref().map(|b| b.as_ref())),
+        results.get(3).and_then(|r| r.as_ref().map(|b| b.as_ref())),
+    );
 }
 
 /// The vault's two assets and its order-lifetime cap — fixed at deploy, so

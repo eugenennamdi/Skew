@@ -1,4 +1,4 @@
-# Textile Stitch — Skew v2 Dual-Oracle & Inventory-Skew Market Maker
+# Textile Stitch — Skew v2 Dual-Oracle, TWAP/Lean & Inventory-Skew Market Maker
 # Multi-Corridor FX Maker: cNGN/USDT, wARS/USDT, wBRL/USDT, USDC/USDT on Celo Mainnet (Chain 42220)
 
 chain_id           = 42220
@@ -7,7 +7,7 @@ indexer_url        = "https://api.textilecredit.com"
 permit2            = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
 reactor            = "0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3"
 tick_interval_secs = 5
-book_enabled       = false
+book_enabled       = true
 
 [feed]
 url                = "https://api.textilecredit.com/price?chainId=42220&pair=cngn-usdt&corridor=cmtcq1gbl0003ykyl5n2laol9"
@@ -36,6 +36,12 @@ sell_min_slice_debt             = "1000000"
 sell_max_orders                 = 40
 ttl_secs                        = 60
 refresh_threshold_bps           = 0
+twap_window_secs                = 120
+twap_max_deviation_bps          = 15
+lean_enabled                    = true
+lean_base_bps                   = 3.0
+lean_wide_bps                   = 6.0
+lean_floor_bps                  = 1.0
 
 # 2. wARS / USDT (18dp / 6dp)
 [[pools]]
@@ -59,6 +65,12 @@ sell_min_slice_debt             = "1000000"
 sell_max_orders                 = 40
 ttl_secs                        = 60
 refresh_threshold_bps           = 0
+twap_window_secs                = 120
+twap_max_deviation_bps          = 15
+lean_enabled                    = true
+lean_base_bps                   = 3.0
+lean_wide_bps                   = 6.0
+lean_floor_bps                  = 1.0
 
 # 3. wBRL / USDT (18dp / 6dp)
 [[pools]]
@@ -82,6 +94,12 @@ sell_min_slice_debt             = "1000000"
 sell_max_orders                 = 40
 ttl_secs                        = 60
 refresh_threshold_bps           = 0
+twap_window_secs                = 120
+twap_max_deviation_bps          = 15
+lean_enabled                    = true
+lean_base_bps                   = 3.0
+lean_wide_bps                   = 6.0
+lean_floor_bps                  = 1.0
 
 # 4. USDC / USDT (6dp / 6dp)
 [[pools]]
@@ -105,6 +123,12 @@ sell_min_slice_debt             = "1000000"
 sell_max_orders                 = 40
 ttl_secs                        = 60
 refresh_threshold_bps           = 0
+twap_window_secs                = 120
+twap_max_deviation_bps          = 10
+lean_enabled                    = true
+lean_base_bps                   = 1.5
+lean_wide_bps                   = 3.0
+lean_floor_bps                  = 1.0
 
 [rfq]
 enabled             = true

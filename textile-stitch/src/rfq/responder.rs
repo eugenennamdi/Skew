@@ -214,11 +214,11 @@ pub fn decide_quote(
         return Err(RejectReason::Inventory);
     };
 
-    // --- SKEW ADAPTIVE PRICING + DUAL-ORACLE ANTI-ARB SHIELD + ZERO-RESTART POLICY ---
+    // --- SKEW ADAPTIVE PRICING + DUAL-ORACLE ANTI-ARB SHIELD + TWAP/LEAN + ZERO-RESTART POLICY ---
     let funded_debt = inventory.funded(book.debt).unwrap_or(U256::ZERO);
     let funded_collateral = inventory.funded(book.collateral).unwrap_or(U256::ZERO);
     let dex_mid = crate::pricing::skew::get_dex_reference_price(book.collateral);
-    let effective_mid = crate::pricing::skew::effective_mid_for_side(mid, dex_mid, bid);
+    let effective_mid = crate::pricing::skew::effective_mid_for_corridor(book.collateral, mid, dex_mid, bid);
     let spread = crate::pricing::skew::adjust_spread_for_corridor(
         book.collateral,
         spread,
@@ -380,7 +380,7 @@ pub fn levels_for(
             None => remaining,
         }),
     ) {
-        let effective_mid = crate::pricing::skew::effective_mid_for_side(mid, dex_mid, true);
+        let effective_mid = crate::pricing::skew::effective_mid_for_corridor(book.collateral, mid, dex_mid, true);
         if let Ok(spread) = crate::pricing::skew::adjust_spread_for_corridor(
             book.collateral,
             base_spread,
@@ -424,7 +424,7 @@ pub fn levels_for(
             None => remaining,
         }),
     ) {
-        let effective_mid = crate::pricing::skew::effective_mid_for_side(mid, dex_mid, false);
+        let effective_mid = crate::pricing::skew::effective_mid_for_corridor(book.collateral, mid, dex_mid, false);
         if let Ok(spread) = crate::pricing::skew::adjust_spread_for_corridor(
             book.collateral,
             base_spread,

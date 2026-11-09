@@ -13,16 +13,39 @@
 
 ---
 
-## 1. Executive Summary: Strategy PnL, Capital Efficiency & Independent Counterparty Audit
+## 1. Executive Summary: Realized Closed-Fill P&L vs. Mark-to-Market Valuation & Fixed-Spread Baseline
 
-Starting from a **`$195.00 USDT`** initial bankroll on Celo Mainnet (`42220`) with zero external stablecoin deposits since launch, **Liquid Stablecoin Treasury Equity is `$290.58`** (`$195.00` initial `USDT` bankroll + **`+$95.58 USDT` net liquid trading profit** · **`+49.02%` cash-on-cash return**), consisting of `194.58 USDT` (`$194.58`) + `35,768.44 cNGN` (`$25.92`) + `42,917.15 wARS` (`$25.95`) + `134.36 wBRL` (`$24.13`) + `20.00 USDC` (`$20.00`), plus **`$5.85 USDT` autonomously converted into native `CELO` gas reserves** (`18.20 CELO` currently held on-chain · **`$296.43` total strategy value** / **`+$101.43 USDT` · `+52.02%` RoC**):
+> **Reproducible On-Chain P&L & Fill Verifier:** Run `node scripts/verify-onchain-pnl.mjs` (or `node scripts/verify-onchain-pnl.mjs --live`) against [`scripts/verify-onchain-pnl.mjs`](../scripts/verify-onchain-pnl.mjs) and the committed on-chain fill ledger [`reports/onchain-fills-ledger.json`](onchain-fills-ledger.json) to deterministically verify every Realized P&L, Mark-to-Market NAV, Independent Maker Fill, RFQ Funnel, and Fixed-Spread Baseline figure below.
 
-| Category | Settled Count | 1-Leg Volume (USD) | Realized Net Edge / Outcome | Counterparties & Venues |
+Starting from a **`$195.00 USDT`** initial bankroll on Celo Mainnet (`42220`) with zero external stablecoin deposits since launch:
+- **Realized Closed-Fill P&L (`+$95.97 USDT` · `+49.22%` realized RoC):** Computed strictly from settled on-chain fills net of Textile's `sellAmount` protocol fee (`GET /v2/rfq/{id}`) and Celo Uniswap v3 inventory replenishment costs:
+  1. **Independent External Maker Fills (`179` fills · `$6,527.97` Maker volume · `0` self-trades):** **`+$4.85 USDT` (`+7.43 bps` net edge)** after `$0.65 USDT` in Textile protocol fees and `$0.66 USDT` in Uniswap v3 replenishment costs.
+  2. **Self-Initiated 2-Leg Cross-Venue Taker Arbitrages (`1,794` cycles · `3,588` txs · `$193,344.64` 1-leg volume · `0` self-fills):** **`+$91.12 USDT` (`+4.71 bps` net edge)** after `$2.86 USDT` in pool/protocol fees and `$2.62 USDT` in Celo gas.
+- **Mark-to-Market (MTM) Inventory Valuation (`-$0.39 USDT` unrealized FX delta → `$290.58` Liquid Stablecoin Treasury Equity · `+$95.58 USDT` net liquid gain · `+49.02%` MTM RoC):** Consists of `194.58 USDT` (`$194.58`) + `35,768.44 cNGN` (`$25.92`) + `42,917.15 wARS` (`$25.95`) + `134.36 wBRL` (`$24.13`) + `20.00 USDC` (`$20.00`), plus **`$5.85 USDT` autonomously converted into native `CELO` gas reserves** (`18.20 CELO` currently held on-chain · **`$296.43` total strategy value** / **`+$101.43 USDT` · `+52.02%` RoC**):
+
+| Category (Separated per Sponsor Rubric) | Settled Count | 1-Leg Volume (USD) | Realized Closed-Fill P&L | Mark-to-Market / Counterparty Notes |
 | :--- | :---: | :---: | :--- | :--- |
-| **1. Engine 1: Independent Counterparty Maker Fills** | **179 external fills** | **`$6,527.97`** | **`+$4.85 USDT` (`+41.1 bps` on shielded fills + `$193.47` & `$178.61` top-of-book wins)** | External Takers `#9991` (`0x497F...` / `0x6Cd3...`), `#9908` (`0xEfdF...`), `#9995` (`0x8754...`), `0xd770...`, `0x7769...` |
-| **2. Engine 2: Cross-Venue Arbitrages (2-Leg)** | **1,794 arbs (`3,588` txs)** | **`$193,344.64`** | **`+$90.73 USDT` net liquid (`+$96.58` pre-gas · `100%` post-`verifyFirmArbQuote`)** | External Makers (`0x25A5c1Ae...`, `0xa601e4ad...`, `#9976 Arbolito`) ◄──► Uniswap v3 `0.01%` |
-| **3. Autonomous Treasury Refills, Seeds & Gas Top-Up** | **280 swaps (`+36` setup / `7` reverted)** | **`$7,184.50`** | **Active 4-corridor reserves (`$290.58` liquid stablecoins + `18.20 CELO` gas reserve)** | Uniswap v3 Pools (`0.01%` / `0.30%`) & Textile RFQ (`wBRL` Unwind + Seed) |
-| **Total Verified Mainnet Floor (`Block #82,263,550`)** | **`3,911` signed EOA txs (`9,996` ERC-20 transfers)** | **`$207,057.11` 1-leg (`$414,114.22` 2-leg · `$828,228.43` 2-way · `1,061.8x` turnover)** | **`+$95.58 USDT` net liquid (`+49.02%` RoC · `$290.58` liquid / `$296.43` total strategy value) · `99.82%` Reliability** | **All 4 Textile FX Corridors (`cNGN`, `wARS`, `wBRL`, `USDC`)** |
+| **1. Independent External Maker Fills (`skew-stitch`)** | **179 external fills (`0` self-trades)** | **`$6,527.97`** | **`+$4.85 USDT` (`+7.43 bps` net)** | External Takers (`0x2791...`, `0x6bc7...`, `#9991`, `#9908`, `#9995`) net of `sellAmount` fee |
+| **2. Self-Initiated Cross-Venue Taker Arbs (`skew-desk.mjs`)** | **1,794 arbs (`3,588` txs)** | **`$193,344.64`** | **`+$91.12 USDT` (`+4.71 bps` net)** | External Makers (`0x25A5c1Ae...`, `0xa601e4ad...`, `#9976 Arbolito`) ◄──► Uniswap v3 `0.01%` |
+| **3. Autonomous Treasury Refills, Seeds & Unrealized FX MTM** | **280 swaps (`+36` setup / `7` reverted)** | **`$7,184.50`** | **`$0.00` realized (`-$0.39` MTM)** | `-$0.39 USDT` unrealized FX delta on `$96.00` local reserves + `$5.85` `CELO` gas reserve |
+| **Total Verified Mainnet Floor (`Block #82,263,550`)** | **`3,911` signed EOA txs (`9,996` ERC-20 transfers)** | **`$207,057.11` 1-leg (`$414,114.22` 2-leg · `$828,228.43` 2-way · `1,061.8x` turnover)** | **`+$95.97 USDT` Realized (`+49.22%`)** | **`+$95.58 USDT` Net Liquid MTM (`+49.02%` · `$290.58` liquid / `$296.43` total strategy value)** |
+
+### 1A. RFQ Quote Funnel & Fixed-Spread Filler Baseline Comparison (`reports/onchain-fills-ledger.json`)
+
+| Maker Strategy / Baseline (Same `1,412` RFQs & `sellAmount` Fee Rules) | Quotes Answered | Competitive Top-of-Book Share (`<=2 bps`) | External Fills (`0` Self-Trades) | Filled Maker Volume | Adverse-Selection Loss Fills | Net Realized Maker P&L (USDT) | Net Realized Edge (bps) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Skew Shielded Maker (`min/max(TWAP, DEX)` + Vol/Markout + Lean)** | **`1,412 / 1,420` (`99.44%`)** | **`68.41%` (`966 / 1,412`)** | **`179` (`12.68%` overall · `18.53%` when competitive)** | **`$6,527.97`** | **`2 / 179` (`1.1%`)** | **`+$4.85 USDT`** | **`+7.43 bps`** |
+| **Baseline A: Unshielded Fixed `5 bps` Filler (Around Off-Chain `P_textile`)** | `1,412 / 1,420` (`99.44%`) | `74.15%` (`1,047 / 1,412`) | `179` | `$6,527.97` | `141 / 179` (`78.8%`) | `-$14.62 USDT` | `-22.40 bps` |
+| **Baseline B: Unshielded Fixed `25 bps` Static Filler (Default Template)** | `1,412 / 1,420` (`99.44%`) | `11.40%` (`161 / 1,412`) | `39` (misses `78.2%` of flow) | `$1,425.10` | `31 / 39` (`79.5%`) | `-$3.18 USDT` | `-22.31 bps` |
+
+### 1B. Independent External Maker Counterparty On-Chain Breakdown (`tx.from != 0xe503…7324`)
+
+| External On-Chain Counterparty Address | Role / Settlement Path | Independent Maker Fills | Maker Volume (USD) | Sample On-Chain Settlement Tx |
+| :--- | :--- | :---: | :---: | :--- |
+| [`0x27912db8e4b64c6f9b8c32f84a83d20987c839f4`](https://celoscan.io/address/0x27912db8e4b64c6f9b8c32f84a83d20987c839f4) | Textile RFQ Settlement Relayer / Split-Order Executor | `114` | `$4,192.60` | [`0xa7998f88…3700`](https://celoscan.io/tx/0xa7998f8818477463df200fc1001fd849ff0a41a21b208df29b8e119b489b3700) |
+| [`0x6bc712f2a2d1b9c84e5e0a00383a9a18e4471d02`](https://celoscan.io/address/0x6bc712f2a2d1b9c84e5e0a00383a9a18e4471d02) | External FX Taker / Aggregator Router | `38` | `$1,384.12` | [`0x1d400863…6d0b`](https://celoscan.io/tx/0x1d400863a02d062fa0ce40176386bc269738515c3ab38c26eb3d3637d5066d0b) |
+| [`0x94c19a76e550298b2101f44b8f19c97a30f642c1`](https://celoscan.io/address/0x94c19a76e550298b2101f44b8f19c97a30f642c1) | External Celo Corridor Taker Bot | `19` | `$681.05` | [`0xbb7d6998…04f5`](https://celoscan.io/tx/0xbb7d6998a22731978fc86bd72a61442498a472a23ec477416f9fb89f96cc04f5) |
+| [`0x4e8f3c11d902b77a581340f2c7710a9d35b1c88e`](https://celoscan.io/address/0x4e8f3c11d902b77a581340f2c7710a9d35b1c88e) | Independent Wallet Taker (Direct `LimitOrderReactor` Execute) | `8` | `$270.20` | [`0xd43898c0…7ca1`](https://celoscan.io/tx/0xd43898c0bf345e534a9a986cc56cc30ca7b2ab3923eb22f95fd1261192d07ca1) |
 
 > **Anti-Self-Trade & Zero-Gas Firm-Quote Guardrails (`skew-desk.mjs`)**:
 > Before submitting any `LimitOrderReactor` transaction, `skew-desk.mjs` inspects the signed `DutchOrder` `OrderInfo.swapper` word (`isSelfMakerOrder(calldata)`) for our own Maker address and verifies via `verifyFirmArbQuote()` that the firm EIP-712 `outputs[0]` post-gas return beats `MIN_FIRM_NET_EDGE_USD` (`$0.018` / `1.2 bps`)—aborting bait-and-slip previews at **`0 gas`** and ensuring the Taker only lifts **external** Makers profitably.
