@@ -52,6 +52,8 @@ pub struct CorridorRuntimePolicy {
     pub session_horizon_hours: Option<f64>,
     /// Minimum feed-accuracy floor spread in bps enforced via `lean::target_offsets`
     pub lean_floor_bps: Option<f64>,
+    /// Per-corridor external DEX (Uniswap v3 `slot0()`) reference price in USDT per collateral unit
+    pub dex_mid: Option<f64>,
     /// Optional strict mode: reject SELL quotes if external DEX reference price is absent
     pub fail_closed_without_dex: bool,
 }
@@ -223,7 +225,37 @@ pub fn decode_and_cache_celo_dex_slot0(
 }
 
 /// Look up the latest external DEX reference price for a collateral token.
+/// Priority: (1) per-corridor `DEX_MID_CACHE` populated by 2s Multicall3 `slot0()`,
+/// (2) per-corridor `dex_mid` in `skew-policy.json`, (3) per-corridor `SKEW_DEX_MID_<SYM>` env var,
+/// (4) single-corridor test fallback `SKEW_DEX_MID`.
 pub fn get_dex_reference_price(collateral: Address) -> Option<f64> {
+    if let Some(cached) = dex_cache().read().ok().and_then(|m| m.get(&collateral).copied()) {
+        if cached.is_finite() && cached > 0.0 {
+            return Some(cached);
+        }
+    }
+    if let Some(policy_dex) = get_corridor_runtime_policy(collateral).and_then(|p| p.dex_mid) {
+        if policy_dex.is_finite() && policy_dex > 0.0 {
+            return Some(policy_dex);
+        }
+    }
+    let addr_lc = format!("{collateral:#x}");
+    let corridor_env_key = match addr_lc.as_str() {
+        "0xf6829d7393dae24509eb1e52ee8e572e2e271a4f" => Some("SKEW_DEX_MID_CNGN"),
+        "0x0dc4f92879b7670e5f4e4e6e3c801d229129d90d" => Some("SKEW_DEX_MID_WARS"),
+        "0xd76f5faf6888e24d9f04bf92a0c8b921fe4390e0" => Some("SKEW_DEX_MID_WBRL"),
+        "0xceba9300f2b948710d2653dd7b07f33a8b32118c" => Some("SKEW_DEX_MID_USDC"),
+        _ => None,
+    };
+    if let Some(key) = corridor_env_key {
+        if let Ok(env_val) = std::env::var(key) {
+            if let Ok(parsed) = env_val.parse::<f64>() {
+                if parsed.is_finite() && parsed > 0.0 {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
     if let Ok(env_val) = std::env::var("SKEW_DEX_MID") {
         if let Ok(parsed) = env_val.parse::<f64>() {
             if parsed.is_finite() && parsed > 0.0 {
@@ -231,7 +263,7 @@ pub fn get_dex_reference_price(collateral: Address) -> Option<f64> {
             }
         }
     }
-    dex_cache().read().ok()?.get(&collateral).copied()
+    None
 }
 
 /// Telemetry counters for DEX reference coverage (`(dex_present_quotes, dex_absent_fallback_quotes)`).
