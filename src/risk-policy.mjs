@@ -83,12 +83,12 @@ export function computeSkewAndQuotes({
 }
 
 /**
- * Compute dynamic trade sizing slices (100%, 50%, 25% of liquid USDT budget, plus $25 floor)
- * to maximize net dollar profit (edgeUsd) across shallow and deep pools.
+ * Compute dynamic trade sizing slices (100%, 75%, 50%, 35%, 20% of liquid USDT budget, plus $25 floor)
+ * at 92% free-USDT utilization up to maxSliceUsdt ($400 default) to maximize net dollar profit (edgeUsd).
  */
-export function computeSliceSizesUsdt(liquidUsdt, maxSliceUsdt = 150) {
-  const budget = Math.max(1.0, Math.min(maxSliceUsdt, Number(liquidUsdt || 25) * 0.9));
-  const rawSlices = [budget, budget * 0.5, budget * 0.25, Math.min(25, budget)];
+export function computeSliceSizesUsdt(liquidUsdt, maxSliceUsdt = 400) {
+  const budget = Math.max(1.0, Math.min(maxSliceUsdt, Number(liquidUsdt || 25) * 0.92));
+  const rawSlices = [budget, budget * 0.75, budget * 0.5, budget * 0.35, budget * 0.2, Math.min(25, budget)];
   const unique = [...new Set(rawSlices.map((v) => Number(Math.max(1.0, v).toFixed(2))))];
   return unique.sort((a, b) => b - a);
 }
@@ -443,6 +443,7 @@ const DEFAULT_TOKEN_ADDRESSES = {
   wARS: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D',
   wBRL: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0',
   USDC: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+  USAT: '0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771',
 };
 
 export function computeRiskOfficerDecisions({
@@ -461,7 +462,7 @@ export function computeRiskOfficerDecisions({
   llmOverlay = null,
   now = new Date(),
   targetCorridorUsd = Number(process.env.TARGET_CORRIDOR_USD || '24'),
-  maxSliceUsdt = Number(process.env.MAX_SLICE_USDT || '150'),
+  maxSliceUsdt = Number(process.env.MAX_SLICE_USDT || '400'),
 }) {
   const nowDate = now instanceof Date ? now : new Date(now);
   const nowMs = nowDate.getTime();
@@ -477,8 +478,10 @@ export function computeRiskOfficerDecisions({
   const usdcUsd = usdc * usdcMidUsd;
   const sliceSizesUsdt = computeSliceSizesUsdt(usdt, maxSliceUsdt);
 
+  const compactFloatMode = targetCorridorUsd <= 10;
+  const shareFloor = compactFloatMode ? 0.015 : 0.08;
   const usdtShareWeight = Number(
-    Math.max(0.08, Math.min(1.0, targetCorridorUsd / Math.max(usdt, targetCorridorUsd))).toFixed(4)
+    Math.max(shareFloor, Math.min(1.0, Math.max(0.5, targetCorridorUsd) / Math.max(usdt, targetCorridorUsd, 1))).toFixed(4)
   );
   const allocUsdt = usdt * usdtShareWeight;
   const normSkew = (collUsd) =>
@@ -552,10 +555,15 @@ export function computeRiskOfficerDecisions({
     };
   };
 
-  const cngnAdj = resolveAdjustments('cNGN', 'cNGN/USDT', 3, 3, cngnSession, 8.5);
-  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', 3, 3, warsSession, 13.3);
-  const wbrlAdj = resolveAdjustments('wBRL', 'wBRL/USDT', 3, 3, wbrlSession, 4.2);
-  const usdcAdj = resolveAdjustments('USDC', 'USDC/USDT', 2, 1, usdcSession, 0.0);
+  // ponytail: when targetCorridorUsd <= $10 ($350+ USDT vs $5 local float), skew.rs clamps usdt_share_weight >= 0.05 (+0.56 skew),
+  // which would subtract ~3.4 bps and slam a 3 bps baseBuy down to 1 bps — causing Maker self-matches on $350 uni->textile sweeps.
+  // Boosting baseBuy by +5 bps (+3 on USDC) keeps Maker Bids at high-margin ~5-6 bps net while leaving top-of-book clear for Taker arbs.
+  const emBaseBuy = compactFloatMode ? 8 : 3;
+  const usdcBaseBuy = compactFloatMode ? 5 : 2;
+  const cngnAdj = resolveAdjustments('cNGN', 'cNGN/USDT', emBaseBuy, 3, cngnSession, 8.5);
+  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', emBaseBuy, 3, warsSession, 13.3);
+  const wbrlAdj = resolveAdjustments('wBRL', 'wBRL/USDT', emBaseBuy, 3, wbrlSession, 4.2);
+  const usdcAdj = resolveAdjustments('USDC', 'USDC/USDT', usdcBaseBuy, 1, usdcSession, 0.0);
 
   const decisions = [
     {

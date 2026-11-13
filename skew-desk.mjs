@@ -87,28 +87,42 @@ export const CONFIG = {
     cngnUsdtPool: addr('0x6519d56Eb0A69FC0338657784c783B169b8f7d32'),
     warsUsdtPool: addr('0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391'),
   },
-  // Strictly restricted to the 4 official Textile FX track currencies (cNGN, wARS, wBRL, USDC against USDT)
+  // Active Textile FX corridors (cNGN, wARS, wBRL, USDC + optional USAT when ENABLE_USAT=1)
   tokens: [
-    { symbol: 'cNGN', address: addr('0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f'), decimals: 6, probeUsdt: 150, fxCode: 'NGN', dailyCarryBps: 8.5 },
-    { symbol: 'wARS', address: addr('0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D'), decimals: 18, probeUsdt: 150, fxCode: 'ARS', dailyCarryBps: 13.3 },
-    { symbol: 'wBRL', address: addr('0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0'), decimals: 18, probeUsdt: 150, fxCode: 'BRL', dailyCarryBps: 4.2 },
-    { symbol: 'USDC', address: addr('0xcebA9300f2b948710d2653dD7B07f33A8B32118C'), decimals: 6, probeUsdt: 150, fxCode: 'USD', dailyCarryBps: 0.0 },
+    { symbol: 'cNGN', address: addr('0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f'), decimals: 6, probeUsdt: 400, fxCode: 'NGN', dailyCarryBps: 8.5 },
+    { symbol: 'wARS', address: addr('0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D'), decimals: 18, probeUsdt: 400, fxCode: 'ARS', dailyCarryBps: 13.3 },
+    { symbol: 'wBRL', address: addr('0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0'), decimals: 18, probeUsdt: 400, fxCode: 'BRL', dailyCarryBps: 4.2 },
+    { symbol: 'USDC', address: addr('0xcebA9300f2b948710d2653dD7B07f33A8B32118C'), decimals: 6, probeUsdt: 400, fxCode: 'USD', dailyCarryBps: 0.0 },
+    ...(process.env.ENABLE_USAT === '1'
+      ? [{ symbol: 'USAT', address: addr('0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771'), decimals: 6, probeUsdt: 400, fxCode: 'USD', dailyCarryBps: 0.0 }]
+      : []),
   ],
-  maxSliceUsdt: Number(process.env.MAX_SLICE_USDT || '150'),
-  sliceFractions: [1.0, 0.5, 0.25],
+  maxSliceUsdt: Number(process.env.MAX_SLICE_USDT || '400'),
+  sliceFractions: [1.0, 0.75, 0.5, 0.35, 0.2],
   legacyUnwindTokens: [
     { symbol: 'WETH', address: addr('0xD221812de1BD094f35587EE8E174B07B6167D9Af'), decimals: 18 },
   ],
   feeTiers: [100, 500, 3000, 10000],
-  minEdgeUsd: Math.max(0.02, Number(process.env.MIN_EDGE_USD || '0.024')),
-  minFirmNetEdgeUsd: Number(process.env.MIN_FIRM_NET_EDGE_USD || '0.018'),
-  minFirmNetEdgeBps: Number(process.env.MIN_FIRM_NET_EDGE_BPS || '1.2'),
-  minUniToTextileDexFirstBps: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS || '6.5'),
-  estimatedArbGasUsd: Number(process.env.EST_ARB_GAS_USD || '0.006'),
+  minEdgeUsd: Math.max(0.005, Number(process.env.MIN_EDGE_USD || '0.012')),
+  minEdgeBps: Number(process.env.MIN_EDGE_BPS || '0.55'),
+  minFirmNetEdgeUsd: Number(process.env.MIN_FIRM_NET_EDGE_USD || '0.010'),
+  minFirmNetEdgeBps: Number(process.env.MIN_FIRM_NET_EDGE_BPS || '0.45'),
+  // Positive-EV floor for cash-first uni->textile (avoids -3 bps DEX flatten bleed when Makers reprice during Leg 2)
+  minUniToTextileDexFirstBps: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS || '2.5'),
+  minUniToTextileDexFirstUsd: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_USD || '0.045'),
+  estimatedArbGasUsd: Number(process.env.EST_ARB_GAS_USD || '0.003'),
+  maxDailyLossUsd: Number(process.env.MAX_DAILY_LOSS_USD || '1.00'),
+  maxConsecutiveLosses: Number(process.env.MAX_CONSECUTIVE_LOSSES || '2'),
+  maxSingleTradeLossUsd: Number(process.env.MAX_SINGLE_TRADE_LOSS_USD || '0.35'),
   scanIntervalMs: Number(process.env.SCAN_INTERVAL_MS || '3500'),
+  chaseIntervalMs: Number(process.env.CHASE_INTERVAL_MS || '1000'),
+  maxChaseIterations: Number(process.env.MAX_CHASE_ITERATIONS || '8'),
   llmIntervalMs: Number(process.env.LLM_INTERVAL_MS || '600000'),
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
-  targetCorridorUsd: Number(process.env.TARGET_CORRIDOR_USD || '24'),
+  targetCorridorUsd: Number(process.env.TARGET_CORRIDOR_USD || '5'),
+  enableErc8021Tag: process.env.ENABLE_ERC8021_TAG !== '0',
+  bindHost: process.env.BIND_HOST || '127.0.0.1',
+  dashboardToken: process.env.DASHBOARD_TOKEN || '',
   port: Number(process.env.PORT || '8080'),
   liveTrading: process.env.LIVE === '1',
   tradesLogPath: path.join(__dirname, 'trades.jsonl'),
@@ -265,6 +279,7 @@ export async function fetchTextileCorridorPrices(fetchImpl = fetch) {
     ['wARS', 'wars-usdt'],
     ['wBRL', 'wbrl-usdt'],
     ['USDC', 'usdc-usdt'],
+    ...(CONFIG.tokens.some((t) => t.symbol === 'USAT') ? [['USAT', 'usat-usdt']] : []),
   ];
   const out = {};
   await Promise.all(
@@ -293,11 +308,122 @@ const erc20Iface = new ethers.Interface(ERC20_ABI);
 const privKey = validatePrivateKey(process.env.STITCH_PRIVATE_KEY || process.env.AGENT_PRIVATE_KEY || '');
 const wallet = privKey ? new ethers.Wallet(privKey, provider) : null;
 
+const SET_AGENT_URI_SELECTOR = ethers.id('setAgentURI(uint256,string)').slice(0, 10).toLowerCase();
+const REACTOR_ALLOWED_SELECTORS = new Set(['0x3f62192e', '0x0d7a16c3']); // execute, executeBatch
+
+/**
+ * Outbound Transaction Firewall:
+ * Enforces zero native CELO transfer, strict contract allowlist, function-selector allowlist,
+ * approved spender allowlist (blocks ERC-20 transfer/transferFrom), and swap recipient === wallet.
+ */
+export function validateOutboundTx(txReq, expectedRecipient = wallet?.address || CONFIG.agentWallet) {
+  if (!txReq || typeof txReq.to !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(txReq.to)) {
+    throw new Error('TX_FIREWALL_BLOCKED: invalid destination address');
+  }
+  if (BigInt(txReq.value || 0n) !== 0n) {
+    throw new Error('TX_FIREWALL_BLOCKED: non-zero native CELO value prohibited');
+  }
+  const data = String(txReq.data || '0x');
+  if (!/^0x[0-9a-fA-F]*$/.test(data) || data.length < 10) {
+    throw new Error('TX_FIREWALL_BLOCKED: malformed calldata');
+  }
+  const selector = data.slice(0, 10).toLowerCase();
+  const toLower = txReq.to.toLowerCase();
+  const reactorLower = CONFIG.contracts.reactor.toLowerCase();
+  const routerLower = CONFIG.contracts.uniSwapRouter02.toLowerCase();
+  const permit2Lower = CONFIG.contracts.permit2.toLowerCase();
+  const registryLower = CONFIG.contracts.erc8004Registry.toLowerCase();
+
+  if (toLower === reactorLower) {
+    if (!REACTOR_ALLOWED_SELECTORS.has(selector)) {
+      throw new Error(`TX_FIREWALL_BLOCKED: unauthorized Reactor selector ${selector}`);
+    }
+    return true;
+  }
+
+  if (toLower === routerLower) {
+    if (selector !== '0x04e45aaf' || data.length < 10 + 64 * 7) {
+      throw new Error(`TX_FIREWALL_BLOCKED: unauthorized SwapRouter02 selector ${selector}`);
+    }
+    const [params] = routerIface.decodeFunctionData('exactInputSingle', data.slice(0, 10 + 64 * 7));
+    if (params.recipient.toLowerCase() !== expectedRecipient.toLowerCase()) {
+      throw new Error(`TX_FIREWALL_BLOCKED: SwapRouter02 recipient mismatch (${params.recipient})`);
+    }
+    return true;
+  }
+
+  if (toLower === registryLower) {
+    if (selector !== SET_AGENT_URI_SELECTOR) {
+      throw new Error(`TX_FIREWALL_BLOCKED: unauthorized ERC-8004 selector ${selector}`);
+    }
+    return true;
+  }
+
+  const allowedTokens = new Set([
+    CONFIG.contracts.usdt.toLowerCase(),
+    ...CONFIG.tokens.map((t) => t.address.toLowerCase()),
+    ...(CONFIG.legacyUnwindTokens || []).map((t) => t.address.toLowerCase()),
+  ]);
+  if (allowedTokens.has(toLower)) {
+    if (selector !== '0x095ea7b3' || data.length < 10 + 64 * 2) {
+      throw new Error(`TX_FIREWALL_BLOCKED: only ERC-20 approve() permitted on token contracts (got ${selector})`);
+    }
+    const [spender] = erc20Iface.decodeFunctionData('approve', data.slice(0, 10 + 64 * 2));
+    const allowedSpenders = new Set([reactorLower, permit2Lower, routerLower]);
+    if (!allowedSpenders.has(spender.toLowerCase())) {
+      throw new Error(`TX_FIREWALL_BLOCKED: unauthorized ERC-20 approve spender ${spender}`);
+    }
+    return true;
+  }
+
+  throw new Error(`TX_FIREWALL_BLOCKED: destination ${txReq.to} not in contract allowlist`);
+}
+
+/**
+ * Automatic Capital-Preservation Kill Switch (Circuit Breaker):
+ * Trips if rolling 24h net realized losses exceed maxDailyLossUsd, a single trade loses >= maxSingleTradeLossUsd,
+ * or consecutive losing trades reach maxConsecutiveLosses.
+ */
+export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), cfg = CONFIG) {
+  const relevant = (arbExecutions || []).filter(
+    (e) => e && (e.type === 'CROSS_VENUE_ARB' || e.type === 'LEG2_FLATTEN_DEX') && Number.isFinite(Number(e.edgeUsd))
+  );
+  let consecutiveLosses = 0;
+  for (const e of relevant) {
+    if (Number(e.edgeUsd) < -0.002) consecutiveLosses += 1;
+    else break;
+  }
+  const latestEdge = relevant.length > 0 ? Number(relevant[0].edgeUsd) : 0;
+  const rolling24hNetUsd = relevant
+    .filter((e) => {
+      const ts = Date.parse(e.timestamp || '');
+      return Number.isFinite(ts) && nowMs - ts <= 86_400_000;
+    })
+    .reduce((acc, e) => acc + Number(e.edgeUsd), 0);
+
+  if (latestEdge <= -(cfg.maxSingleTradeLossUsd ?? 0.35)) {
+    return { tripped: true, reason: 'max_single_trade_loss', rolling24hNetUsd, consecutiveLosses };
+  }
+  if (consecutiveLosses >= (cfg.maxConsecutiveLosses ?? 2)) {
+    return { tripped: true, reason: 'consecutive_losses', rolling24hNetUsd, consecutiveLosses };
+  }
+  if (rolling24hNetUsd <= -(cfg.maxDailyLossUsd ?? 1.0)) {
+    return { tripped: true, reason: 'max_daily_loss', rolling24hNetUsd, consecutiveLosses };
+  }
+  return { tripped: false, reason: 'ok', rolling24hNetUsd, consecutiveLosses };
+}
+
 let cachedGasPrice = { value: null, ts: 0 };
 
 export async function sendTagged(txReq) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
-  const tagged = { ...txReq, data: appendErc8021Suffix(txReq.data || '0x') };
+  validateOutboundTx(txReq, wallet.address);
+  // ponytail: skip 35-byte ERC-8021 calldata suffix when ENABLE_ERC8021_TAG=0 to shave ~560 gas/tx post-hackathon
+  const tagged = {
+    ...txReq,
+    value: 0n,
+    data: CONFIG.enableErc8021Tag ? appendErc8021Suffix(txReq.data || '0x') : txReq.data || '0x',
+  };
   if (!tagged.gasPrice && !tagged.maxFeePerGas) {
     if (cachedGasPrice.value && Date.now() - cachedGasPrice.ts < 15_000) {
       tagged.gasPrice = cachedGasPrice.value;
@@ -310,7 +436,8 @@ export async function sendTagged(txReq) {
     }
   }
   if (!tagged.gasLimit) {
-    const est = await provider.estimateGas({ ...tagged, from: wallet.address }).catch(() => 220000n);
+    // ponytail: never fallback to 220k on estimateGas revert — abort at $0 gas when a Maker quote was sniped
+    const est = await provider.estimateGas({ ...tagged, from: wallet.address });
     tagged.gasLimit = (est * 125n) / 100n;
   }
   const resp = await wallet.sendTransaction(tagged);
@@ -439,181 +566,102 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
 }
 
 /**
- * Scan a single token across both directions with Multi-Slice (100% / 50% / 25%) + adaptive availableSellAmount sizing.
+ * Scan a single token across one or both directions with Multi-Slice (100% / 75% / 50% / 35% / 20%) + adaptive availableSellAmount sizing.
  */
-async function scanCorridor(token, maxUsdtBudget) {
-  const candidateSlices = computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, token.probeUsdt);
+async function scanCorridor(token, maxUsdtBudget, onlyDirection = null) {
+  const candidateSlices = computeSliceSizesUsdt(
+    maxUsdtBudget || token.probeUsdt,
+    Math.min(CONFIG.maxSliceUsdt, token.probeUsdt)
+  );
   const probeUsdt = candidateSlices[0] || 25;
   const usdtInRaw = ethers.parseUnits(probeUsdt.toFixed(6), 6);
   const rows = [];
 
   // Direction 1: TEXTILE -> UNI
-  try {
-    let preview = await textilePreview(CONFIG.contracts.usdt, token.address, usdtInRaw);
-    let actualInRaw = usdtInRaw;
+  if (!onlyDirection || onlyDirection === 'textile->uni') {
+    try {
+      let preview = await textilePreview(CONFIG.contracts.usdt, token.address, usdtInRaw);
+      let actualInRaw = usdtInRaw;
 
-    if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) >= 1000000n) {
-      const avail = BigInt(preview.availableSellAmount);
-      if (preview.status !== 'preview' || avail < usdtInRaw) {
-        const resized = (avail * 98n) / 100n;
-        if (resized >= 1000000n) {
-          actualInRaw = resized;
-          preview = await textilePreview(CONFIG.contracts.usdt, token.address, actualInRaw);
-        }
-      }
-    }
-
-    if (preview && preview.status === 'preview' && preview.buyAmount) {
-      let bestInRaw = actualInRaw;
-      let bestTokenOutRaw = BigInt(preview.buyAmount);
-      let bestUniBack = await bestUniQuote(token.address, CONFIG.contracts.usdt, bestTokenOutRaw);
-      let bestEdgeUsd = Number(bestUniBack.amountOut) / 1e6 - Number(bestInRaw) / 1e6;
-      let sliceLabel = actualInRaw < usdtInRaw ? `Adaptive size ($${(Number(actualInRaw) / 1e6).toFixed(2)} max depth)` : `100% slice ($${(Number(actualInRaw) / 1e6).toFixed(2)})`;
-
-      if (bestUniBack.amountOut > 0n && actualInRaw >= 20000000n) {
-        for (const frac of [50n, 25n]) {
-          const sliceInRaw = (actualInRaw * frac) / 100n;
-          const sliceTokenRaw = (BigInt(preview.buyAmount) * frac) / 100n;
-          if (sliceInRaw < 1000000n || sliceTokenRaw <= 0n) continue;
-          const sliceUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, sliceTokenRaw);
-          const sliceEdgeUsd = Number(sliceUni.amountOut) / 1e6 - Number(sliceInRaw) / 1e6;
-          if (sliceEdgeUsd > bestEdgeUsd) {
-            bestInRaw = sliceInRaw;
-            bestTokenOutRaw = sliceTokenRaw;
-            bestUniBack = sliceUni;
-            bestEdgeUsd = sliceEdgeUsd;
-            sliceLabel = `${frac}% multi-slice ($${(Number(sliceInRaw) / 1e6).toFixed(2)})`;
-          }
-        }
-
-        // ponytail: single-maker top-of-book probe — a $135 preview blends multiple makers and can hide a profitable $34 top-of-book order
-        if (bestEdgeUsd < CONFIG.minEdgeUsd && actualInRaw >= 40000000n) {
-          const topSliceInRaw = actualInRaw / 4n;
-          const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw).catch(() => null);
-          if (topPreview && topPreview.status === 'preview' && topPreview.buyAmount) {
-            const topTokenRaw = BigInt(topPreview.buyAmount);
-            const topUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, topTokenRaw);
-            const topEdgeUsd = Number(topUni.amountOut) / 1e6 - Number(topSliceInRaw) / 1e6;
-            if (topEdgeUsd > bestEdgeUsd) {
-              bestInRaw = topSliceInRaw;
-              bestTokenOutRaw = topTokenRaw;
-              bestUniBack = topUni;
-              bestEdgeUsd = topEdgeUsd;
-              sliceLabel = `25% top-of-book ($${(Number(topSliceInRaw) / 1e6).toFixed(2)})`;
-            }
-          }
-        }
-      }
-
-      const usdtInNum = Number(bestInRaw) / 1e6;
-      const usdtOutNum = Number(bestUniBack.amountOut) / 1e6;
-      const edgeUsd = usdtOutNum - usdtInNum;
-      const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
-      rows.push({
-        corridor: `${token.symbol}/USDT`,
-        symbol: token.symbol,
-        tokenAddress: token.address,
-        decimals: token.decimals,
-        direction: 'textile->uni',
-        sizeUsdt: usdtInNum,
-        amountInRaw: bestInRaw.toString(),
-        midTokenRaw: bestTokenOutRaw.toString(),
-        expectedOutUsdt: usdtOutNum,
-        uniFee: bestUniBack.fee,
-        edgeUsd,
-        edgeBps,
-        sliceCandidatesUsdt: candidateSlices,
-        status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= 1.6 ? 'ACTIONABLE' : 'WATCH',
-        note: sliceLabel,
-      });
-    } else {
-      rows.push({
-        corridor: `${token.symbol}/USDT`,
-        symbol: token.symbol,
-        direction: 'textile->uni',
-        sizeUsdt: Number(actualInRaw) / 1e6,
-        expectedOutUsdt: 0,
-        edgeUsd: 0,
-        edgeBps: 0,
-        sliceCandidatesUsdt: candidateSlices,
-        status: 'NO_MAKER',
-        note: preview?.reason || 'no_makers_online',
-      });
-    }
-  } catch (e) {
-    rows.push({
-      corridor: `${token.symbol}/USDT`,
-      symbol: token.symbol,
-      direction: 'textile->uni',
-      sizeUsdt: probeUsdt,
-      expectedOutUsdt: 0,
-      edgeUsd: 0,
-      edgeBps: 0,
-      sliceCandidatesUsdt: candidateSlices,
-      status: 'ERR',
-      note: e.message?.slice(0, 40) || 'error',
-    });
-  }
-
-  // Direction 2: UNI -> TEXTILE
-  try {
-    const uniBuy = await bestUniQuote(CONFIG.contracts.usdt, token.address, usdtInRaw);
-    if (uniBuy.amountOut > 0n) {
-      let preview = await textilePreview(token.address, CONFIG.contracts.usdt, uniBuy.amountOut);
-      let actualUsdtInRaw = usdtInRaw;
-      let actualTokenRaw = uniBuy.amountOut;
-
-      if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) > 0n) {
-        const availToken = BigInt(preview.availableSellAmount);
-        if (preview.status !== 'preview' || availToken < uniBuy.amountOut) {
-          const ratio = Number(availToken) / Number(uniBuy.amountOut);
-          const resizedUsdt = BigInt(Math.floor(Number(usdtInRaw) * ratio * 0.98));
-          if (resizedUsdt >= 1000000n) {
-            const reUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, resizedUsdt);
-            if (reUni.amountOut > 0n) {
-              actualUsdtInRaw = resizedUsdt;
-              actualTokenRaw = reUni.amountOut;
-              preview = await textilePreview(token.address, CONFIG.contracts.usdt, actualTokenRaw);
-            }
+      if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) >= 1000000n) {
+        const avail = BigInt(preview.availableSellAmount);
+        if (preview.status !== 'preview' || avail < usdtInRaw) {
+          const resized = (avail * 98n) / 100n;
+          if (resized >= 1000000n) {
+            actualInRaw = resized;
+            preview = await textilePreview(CONFIG.contracts.usdt, token.address, actualInRaw);
           }
         }
       }
 
       if (preview && preview.status === 'preview' && preview.buyAmount) {
-        let bestInRaw = actualUsdtInRaw;
-        let bestTokenRaw = actualTokenRaw;
-        let bestOutRaw = BigInt(preview.buyAmount);
-        let bestFee = uniBuy.fee;
-        let bestEdgeUsd = Number(bestOutRaw) / 1e6 - Number(bestInRaw) / 1e6;
-        let noteLabel = actualUsdtInRaw < usdtInRaw
-          ? `Adaptive size ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)} max depth)`
-          : `100% slice ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)})`;
+        let bestInRaw = actualInRaw;
+        let bestTokenOutRaw = BigInt(preview.buyAmount);
+        let bestUniBack = await bestUniQuote(token.address, CONFIG.contracts.usdt, bestTokenOutRaw);
+        let bestEdgeUsd = Number(bestUniBack.amountOut) / 1e6 - Number(bestInRaw) / 1e6;
+        let sliceLabel =
+          actualInRaw < usdtInRaw
+            ? `Adaptive size ($${(Number(actualInRaw) / 1e6).toFixed(2)} max depth)`
+            : `100% slice ($${(Number(actualInRaw) / 1e6).toFixed(2)})`;
 
-        // ponytail: 25% top-of-book probe on uni->textile — isolates external Maker bids (#9929/#9908) without spilling into our own Maker
-        if (actualUsdtInRaw >= 40000000n) {
-          const topInRaw = actualUsdtInRaw / 4n;
-          const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
-          if (topUni.amountOut > 0n) {
-            const topPrev = await textilePreview(token.address, CONFIG.contracts.usdt, topUni.amountOut).catch(() => null);
-            if (topPrev && topPrev.status === 'preview' && topPrev.buyAmount) {
-              const topOutRaw = BigInt(topPrev.buyAmount);
-              const topEdgeUsd = Number(topOutRaw) / 1e6 - Number(topInRaw) / 1e6;
-              const topBps = (topEdgeUsd / (Number(topInRaw) / 1e6)) * 10000;
-              const fullBps = (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000;
-              if (topEdgeUsd > bestEdgeUsd || (topEdgeUsd >= CONFIG.minEdgeUsd && topBps > fullBps + 2.0)) {
-                bestInRaw = topInRaw;
-                bestTokenRaw = topUni.amountOut;
-                bestOutRaw = topOutRaw;
-                bestFee = topUni.fee;
-                bestEdgeUsd = topEdgeUsd;
-                noteLabel = `25% top-of-book ($${(Number(topInRaw) / 1e6).toFixed(2)})`;
+        if (bestUniBack.amountOut > 0n && actualInRaw >= 20000000n) {
+          const subChecks = await Promise.all(
+            [75n, 50n, 35n, 20n].map(async (frac) => {
+              const sliceInRaw = (actualInRaw * frac) / 100n;
+              const sliceTokenRaw = (BigInt(preview.buyAmount) * frac) / 100n;
+              if (sliceInRaw < 5000000n || sliceTokenRaw <= 0n) return null;
+              const sliceUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, sliceTokenRaw);
+              return {
+                frac,
+                sliceInRaw,
+                sliceTokenRaw,
+                sliceUni,
+                sliceEdgeUsd: Number(sliceUni.amountOut) / 1e6 - Number(sliceInRaw) / 1e6,
+              };
+            })
+          );
+          for (const sub of subChecks) {
+            if (sub && sub.sliceEdgeUsd > bestEdgeUsd) {
+              bestInRaw = sub.sliceInRaw;
+              bestTokenOutRaw = sub.sliceTokenRaw;
+              bestUniBack = sub.sliceUni;
+              bestEdgeUsd = sub.sliceEdgeUsd;
+              sliceLabel = `${sub.frac}% multi-slice ($${(Number(sub.sliceInRaw) / 1e6).toFixed(2)})`;
+            }
+          }
+
+          // ponytail: top-of-book preview probe — a $350 preview blends makers and can hide a profitable $87–$175 single-maker order
+          if (bestEdgeUsd < CONFIG.minEdgeUsd && actualInRaw >= 40000000n) {
+            const topChecks = await Promise.all(
+              [50n, 25n].map(async (frac) => {
+                const topSliceInRaw = (actualInRaw * frac) / 100n;
+                const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw).catch(() => null);
+                if (!topPreview || topPreview.status !== 'preview' || !topPreview.buyAmount) return null;
+                const topTokenRaw = BigInt(topPreview.buyAmount);
+                const topUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, topTokenRaw);
+                return {
+                  frac,
+                  topSliceInRaw,
+                  topTokenRaw,
+                  topUni,
+                  topEdgeUsd: Number(topUni.amountOut) / 1e6 - Number(topSliceInRaw) / 1e6,
+                };
+              })
+            );
+            for (const top of topChecks) {
+              if (top && top.topEdgeUsd > bestEdgeUsd) {
+                bestInRaw = top.topSliceInRaw;
+                bestTokenOutRaw = top.topTokenRaw;
+                bestUniBack = top.topUni;
+                bestEdgeUsd = top.topEdgeUsd;
+                sliceLabel = `${top.frac}% top-of-book ($${(Number(top.topSliceInRaw) / 1e6).toFixed(2)})`;
               }
             }
           }
         }
 
         const usdtInNum = Number(bestInRaw) / 1e6;
-        const usdtOutNum = Number(bestOutRaw) / 1e6;
+        const usdtOutNum = Number(bestUniBack.amountOut) / 1e6;
         const edgeUsd = usdtOutNum - usdtInNum;
         const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
         rows.push({
@@ -621,43 +669,172 @@ async function scanCorridor(token, maxUsdtBudget) {
           symbol: token.symbol,
           tokenAddress: token.address,
           decimals: token.decimals,
-          direction: 'uni->textile',
+          direction: 'textile->uni',
           sizeUsdt: usdtInNum,
           amountInRaw: bestInRaw.toString(),
-          midTokenRaw: bestTokenRaw.toString(),
+          midTokenRaw: bestTokenOutRaw.toString(),
           expectedOutUsdt: usdtOutNum,
-          uniFee: bestFee,
+          uniFee: bestUniBack.fee,
           edgeUsd,
           edgeBps,
-          status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= 1.8 ? 'ACTIONABLE' : 'WATCH',
-          note: noteLabel,
+          sliceCandidatesUsdt: candidateSlices,
+          status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= CONFIG.minEdgeBps ? 'ACTIONABLE' : 'WATCH',
+          note: sliceLabel,
         });
       } else {
         rows.push({
           corridor: `${token.symbol}/USDT`,
           symbol: token.symbol,
-          direction: 'uni->textile',
-          sizeUsdt: probeUsdt,
+          direction: 'textile->uni',
+          sizeUsdt: Number(actualInRaw) / 1e6,
           expectedOutUsdt: 0,
           edgeUsd: 0,
           edgeBps: 0,
+          sliceCandidatesUsdt: candidateSlices,
           status: 'NO_MAKER',
           note: preview?.reason || 'no_makers_online',
         });
       }
+    } catch (e) {
+      rows.push({
+        corridor: `${token.symbol}/USDT`,
+        symbol: token.symbol,
+        direction: 'textile->uni',
+        sizeUsdt: probeUsdt,
+        expectedOutUsdt: 0,
+        edgeUsd: 0,
+        edgeBps: 0,
+        sliceCandidatesUsdt: candidateSlices,
+        status: 'ERR',
+        note: e.message?.slice(0, 40) || 'error',
+      });
     }
-  } catch (e) {
-    rows.push({
-      corridor: `${token.symbol}/USDT`,
-      symbol: token.symbol,
-      direction: 'uni->textile',
-      sizeUsdt: probeUsdt,
-      expectedOutUsdt: 0,
-      edgeUsd: 0,
-      edgeBps: 0,
-      status: 'ERR',
-      note: e.message?.slice(0, 40) || 'error',
-    });
+  }
+
+  // Direction 2: UNI -> TEXTILE
+  if (!onlyDirection || onlyDirection === 'uni->textile') {
+    try {
+      const uniBuy = await bestUniQuote(CONFIG.contracts.usdt, token.address, usdtInRaw);
+      if (uniBuy.amountOut > 0n) {
+        let preview = await textilePreview(token.address, CONFIG.contracts.usdt, uniBuy.amountOut);
+        let actualUsdtInRaw = usdtInRaw;
+        let actualTokenRaw = uniBuy.amountOut;
+
+        if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) > 0n) {
+          const availToken = BigInt(preview.availableSellAmount);
+          if (preview.status !== 'preview' || availToken < uniBuy.amountOut) {
+            const ratio = Number(availToken) / Number(uniBuy.amountOut);
+            const resizedUsdt = BigInt(Math.floor(Number(usdtInRaw) * ratio * 0.98));
+            if (resizedUsdt >= 1000000n) {
+              const reUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, resizedUsdt);
+              if (reUni.amountOut > 0n) {
+                actualUsdtInRaw = resizedUsdt;
+                actualTokenRaw = reUni.amountOut;
+                preview = await textilePreview(token.address, CONFIG.contracts.usdt, actualTokenRaw);
+              }
+            }
+          }
+        }
+
+        if (preview && preview.status === 'preview' && preview.buyAmount) {
+          let bestInRaw = actualUsdtInRaw;
+          let bestTokenRaw = actualTokenRaw;
+          let bestOutRaw = BigInt(preview.buyAmount);
+          let bestFee = uniBuy.fee;
+          let bestEdgeUsd = Number(bestOutRaw) / 1e6 - Number(bestInRaw) / 1e6;
+          let noteLabel =
+            actualUsdtInRaw < usdtInRaw
+              ? `Adaptive size ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)} max depth)`
+              : `100% slice ($${(Number(actualUsdtInRaw) / 1e6).toFixed(2)})`;
+
+          // ponytail: 75% / 50% / 25% multi-slice probe on uni->textile — picks whichever clip maximizes total net USD profit
+          if (actualUsdtInRaw >= 40000000n) {
+            const subSlices = await Promise.all(
+              [75n, 50n, 25n].map(async (frac) => {
+                const subInRaw = (actualUsdtInRaw * frac) / 100n;
+                if (subInRaw < 10000000n) return null;
+                const subUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, subInRaw);
+                if (subUni.amountOut <= 0n) return null;
+                const subPrev = await textilePreview(token.address, CONFIG.contracts.usdt, subUni.amountOut).catch(() => null);
+                if (!subPrev || subPrev.status !== 'preview' || !subPrev.buyAmount) return null;
+                const subOutRaw = BigInt(subPrev.buyAmount);
+                return {
+                  frac,
+                  subInRaw,
+                  subTokenRaw: subUni.amountOut,
+                  subOutRaw,
+                  subFee: subUni.fee,
+                  subEdgeUsd: Number(subOutRaw) / 1e6 - Number(subInRaw) / 1e6,
+                };
+              })
+            );
+            for (const sub of subSlices) {
+              if (sub && sub.subEdgeUsd > bestEdgeUsd) {
+                bestInRaw = sub.subInRaw;
+                bestTokenRaw = sub.subTokenRaw;
+                bestOutRaw = sub.subOutRaw;
+                bestFee = sub.subFee;
+                bestEdgeUsd = sub.subEdgeUsd;
+                noteLabel = `${sub.frac}% multi-slice ($${(Number(sub.subInRaw) / 1e6).toFixed(2)})`;
+              }
+            }
+          }
+
+          const usdtInNum = Number(bestInRaw) / 1e6;
+          const usdtOutNum = Number(bestOutRaw) / 1e6;
+          const edgeUsd = usdtOutNum - usdtInNum;
+          const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
+          const localBalUnits = Number(STATE.balances?.[token.symbol.toLowerCase()] || 0);
+          const localMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
+          const invCoversClip = localBalUnits * localMidUsd >= Math.max(6.0, usdtInNum * 0.95);
+          const minReqBps = invCoversClip ? CONFIG.minEdgeBps : CONFIG.minUniToTextileDexFirstBps;
+          const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
+          rows.push({
+            corridor: `${token.symbol}/USDT`,
+            symbol: token.symbol,
+            tokenAddress: token.address,
+            decimals: token.decimals,
+            direction: 'uni->textile',
+            sizeUsdt: usdtInNum,
+            amountInRaw: bestInRaw.toString(),
+            midTokenRaw: bestTokenRaw.toString(),
+            expectedOutUsdt: usdtOutNum,
+            uniFee: bestFee,
+            edgeUsd,
+            edgeBps,
+            sliceCandidatesUsdt: candidateSlices,
+            status: edgeUsd >= minReqUsd && edgeBps >= minReqBps ? 'ACTIONABLE' : 'WATCH',
+            note: noteLabel,
+          });
+        } else {
+          rows.push({
+            corridor: `${token.symbol}/USDT`,
+            symbol: token.symbol,
+            direction: 'uni->textile',
+            sizeUsdt: probeUsdt,
+            expectedOutUsdt: 0,
+            edgeUsd: 0,
+            edgeBps: 0,
+            sliceCandidatesUsdt: candidateSlices,
+            status: 'NO_MAKER',
+            note: preview?.reason || 'no_makers_online',
+          });
+        }
+      }
+    } catch (e) {
+      rows.push({
+        corridor: `${token.symbol}/USDT`,
+        symbol: token.symbol,
+        direction: 'uni->textile',
+        sizeUsdt: probeUsdt,
+        expectedOutUsdt: 0,
+        edgeUsd: 0,
+        edgeBps: 0,
+        sliceCandidatesUsdt: candidateSlices,
+        status: 'ERR',
+        note: e.message?.slice(0, 40) || 'error',
+      });
+    }
   }
 
   return rows;
@@ -704,6 +881,7 @@ const executionManager = createExecutionManager({
   erc20Iface,
   sendTagged,
   bestUniQuote,
+  textilePreview,
   textileRequestQuote,
   textileSubmitTx,
   fetchJson,
@@ -742,11 +920,15 @@ export async function runSingleScan() {
     const wbrlC = new ethers.Contract(CONFIG.tokens[2].address, ERC20_ABI, provider);
     const usdcC = new ethers.Contract(CONFIG.tokens[3].address, ERC20_ABI, provider);
 
+    const usatTok = CONFIG.tokens.find((t) => t.symbol === 'USAT');
+    const usatC = usatTok ? new ethers.Contract(usatTok.address, ERC20_ABI, provider) : null;
+
     let usdt = 97.6;
     let cngn = 25020.0;
     let wars = 22191.0;
     let wbrl = 390.6;
     let usdc = 15.0;
+    let usat = 0.0;
     let celo = 10.6;
     let uniCngnMid = 0.00072538;
     let uniWarsMid = 0.00067808;
@@ -759,12 +941,13 @@ export async function runSingleScan() {
     STATE.textileMids = { ...STATE.textileMids, ...fetchedTextileMids };
 
     try {
-      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, celoRaw, poolCngnMid, poolWarsMid, previewRes] = await Promise.all([
+      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, usatRaw, celoRaw, poolCngnMid, poolWarsMid, previewRes] = await Promise.all([
         usdtC.balanceOf(CONFIG.agentWallet),
         cngnC.balanceOf(CONFIG.agentWallet),
         warsC.balanceOf(CONFIG.agentWallet),
         wbrlC.balanceOf(CONFIG.agentWallet),
         usdcC.balanceOf(CONFIG.agentWallet),
+        usatC ? usatC.balanceOf(CONFIG.agentWallet) : Promise.resolve(0n),
         provider.getBalance(CONFIG.agentWallet),
         readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
         readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
@@ -775,6 +958,7 @@ export async function runSingleScan() {
       wars = Number(warsRaw) / 1e18;
       wbrl = Number(wbrlRaw) / 1e18;
       usdc = Number(usdcRaw) / 1e6;
+      usat = Number(usatRaw) / 1e6;
       celo = Number(celoRaw) / 1e18;
       uniCngnMid = poolCngnMid;
       uniWarsMid = poolWarsMid;
@@ -785,8 +969,15 @@ export async function runSingleScan() {
 
     const wbrlMidUsd = STATE.textileMids.wBRL || (offChainFx.BRL > 0 ? 1 / offChainFx.BRL : 0.185);
     const usdcMidUsd = STATE.textileMids.USDC || 1.0;
-    const totalUsd = usdt + cngn * uniCngnMid + wars * uniWarsMid + wbrl * wbrlMidUsd + usdc * usdcMidUsd;
-    STATE.balances = { usdt, cngn, wars, wbrl, usdc, celo, totalUsd, uniWarsPerUsdt: 1 / uniWarsMid };
+    const usatMidUsd = STATE.textileMids.USAT || 1.0;
+    const totalUsd =
+      usdt +
+      cngn * uniCngnMid +
+      wars * uniWarsMid +
+      wbrl * wbrlMidUsd +
+      usdc * usdcMidUsd +
+      usat * usatMidUsd;
+    STATE.balances = { usdt, cngn, wars, wbrl, usdc, usat, celo, totalUsd, uniWarsPerUsdt: 1 / uniWarsMid };
 
     const textileMid = STATE.textileMids.cNGN || (
       cngnBuyPreview?.buyAmount
@@ -800,12 +991,14 @@ export async function runSingleScan() {
       wARS: uniWarsMid || STATE.textileMids.wARS || 1 / offChainFx.ARS,
       wBRL: wbrlMidUsd,
       USDC: usdcMidUsd,
+      USAT: usatMidUsd,
     };
     const offChainPerUsdMap = {
       cNGN: offChainFx.NGN,
       wARS: offChainFx.ARS,
       wBRL: offChainFx.BRL,
       USDC: 1.0,
+      USAT: 1.0,
     };
     for (const tok of CONFIG.tokens) {
       STATE.quantBySymbol[tok.symbol] = updateCorridorQuantState(STATE.quantBySymbol[tok.symbol], {
@@ -901,8 +1094,9 @@ export async function runSingleScan() {
       STATE.riskOfficer.stitchPolicySync = syncStitchRuntimePolicy(STATE.riskOfficer);
     }
 
-    const probeBudget = Math.min(CONFIG.maxSliceUsdt, Math.max(1, usdt * 0.9));
-    const scanBatches = await Promise.all(CONFIG.tokens.map((t) => scanCorridor(t, probeBudget)));
+    // ponytail: pass full liquid USDT into scanCorridor because computeSliceSizesUsdt already applies the 0.92 utilization factor
+    const liquidUsdtBudget = Math.max(1, usdt);
+    const scanBatches = await Promise.all(CONFIG.tokens.map((t) => scanCorridor(t, liquidUsdtBudget)));
     const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : 2);
     const allRows = scanBatches
       .flat()
@@ -916,14 +1110,50 @@ export async function runSingleScan() {
       .slice(0, 2);
     const bestRow = allRows[0];
     console.log(
-      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) edge=$${bestRow.edgeUsd.toFixed(4)} [${bestRow.status}]` : 'none'}`
+      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) skew=${STATE.skewMetrics.skew >= 0 ? '+' : ''}${STATE.skewMetrics.skew.toFixed(3)} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestRow.status}]` : 'none'}`
     );
-    if (actionableRows.length > 0 && CONFIG.liveTrading && wallet && celo >= 0.15) {
+
+    STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, nowMs, CONFIG);
+    let arbExecutedThisTick = false;
+    if (STATE.circuitBreaker.tripped && CONFIG.liveTrading) {
+      console.warn(
+        `[CIRCUIT-BREAKER] Live Taker execution paused (${STATE.circuitBreaker.reason}): 24hNet=$${STATE.circuitBreaker.rolling24hNetUsd.toFixed(4)} consecutiveLosses=${STATE.circuitBreaker.consecutiveLosses}`
+      );
+    } else if (actionableRows.length > 0 && CONFIG.liveTrading && wallet && celo >= 0.15) {
       for (const candidate of actionableRows) {
         try {
           const execRec = await executeOpportunity(candidate);
           if (execRec) {
+            arbExecutedThisTick = true;
             STATE.arbExecutions.unshift(execRec);
+            STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG);
+            // ponytail: 1.0s hot-corridor chase loop — drain multi-block external Maker quotes before Kiyoshi's 30s loop wakes up
+            const corridorTok = CONFIG.tokens.find((t) => t.symbol === candidate.symbol);
+            if (corridorTok && execRec.edgeUsd > 0 && !STATE.circuitBreaker.tripped && CONFIG.chaseIntervalMs > 0) {
+              for (let chaseIdx = 1; chaseIdx <= CONFIG.maxChaseIterations; chaseIdx++) {
+                await new Promise((res) => setTimeout(res, CONFIG.chaseIntervalMs));
+                const [freshUsdtRaw, freshCeloRaw] = await Promise.all([
+                  usdtC.balanceOf(CONFIG.agentWallet),
+                  provider.getBalance(CONFIG.agentWallet),
+                ]).catch(() => [0n, 0n]);
+                const freshUsdt = Number(freshUsdtRaw) / 1e6;
+                const freshCelo = Number(freshCeloRaw) / 1e18;
+                if (freshUsdt < 10 || freshCelo < 0.15) break;
+                const chaseRows = await scanCorridor(corridorTok, freshUsdt, candidate.direction);
+                const chaseOpp = chaseRows.find(
+                  (r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= CONFIG.minEdgeBps
+                );
+                if (!chaseOpp) break;
+                console.log(
+                  `[CHASE #${chaseIdx}/${CONFIG.maxChaseIterations}] ${chaseOpp.corridor}(${chaseOpp.direction}) $${chaseOpp.sizeUsdt.toFixed(2)} estEdge=+$${chaseOpp.edgeUsd.toFixed(4)} (+${chaseOpp.edgeBps.toFixed(2)} bps)`
+                );
+                const chaseExec = await executeOpportunity(chaseOpp);
+                if (!chaseExec) break;
+                STATE.arbExecutions.unshift(chaseExec);
+                STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG);
+                if (chaseExec.edgeUsd <= 0 || STATE.circuitBreaker.tripped) break;
+              }
+            }
             break;
           }
         } catch (err) {
@@ -932,7 +1162,7 @@ export async function runSingleScan() {
       }
     }
 
-    if (CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet) {
+    if (!arbExecutedThisTick && CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet) {
       try {
         const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, wbrl, usdc, celo, uniCngnMid, uniWarsMid });
         if (treasuryRec) STATE.arbExecutions.unshift(treasuryRec);
@@ -1034,18 +1264,33 @@ if (isMain) {
     skewMetrics: STATE.skewMetrics,
   });
 
+  let lastManualScanMs = 0;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${CONFIG.port}`);
+    const origin = req.headers.origin || '';
+    const corsHeaders =
+      origin === `http://localhost:${CONFIG.port}` || origin === `http://127.0.0.1:${CONFIG.port}`
+        ? { 'access-control-allow-origin': origin }
+        : {};
+
+    if (CONFIG.dashboardToken) {
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${CONFIG.dashboardToken}`) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'unauthorized' }));
+      }
+    }
+
     if (url.pathname === '/status' || url.pathname === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
       return res.end(JSON.stringify({ ...STATE, liveTrading: CONFIG.liveTrading, config: { chainId: CONFIG.chainId, agentId: CONFIG.agentId, erc8004Registry: CONFIG.contracts.erc8004Registry, wallet: CONFIG.agentWallet, attributionTag: CONFIG.attributionTag } }, null, 2));
     }
     if (url.pathname === '/trades') {
-      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
       return res.end(JSON.stringify({ arbExecutions: STATE.arbExecutions, onChainActivity: STATE.onChainActivity }, null, 2));
     }
     if (url.pathname === '/llm') {
-      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
       return res.end(JSON.stringify({
         llmSupervisor: STATE.llmSupervisor,
         quantBySymbol: STATE.quantBySymbol,
@@ -1054,16 +1299,27 @@ if (isMain) {
       }, null, 2));
     }
     if (url.pathname === '/scan' && req.method === 'POST') {
+      const remoteIp = req.socket?.remoteAddress || '';
+      const isLoopback = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+      if (!isLoopback && !CONFIG.dashboardToken) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'loopback_only' }));
+      }
+      if (Date.now() - lastManualScanMs < 5000) {
+        res.writeHead(429, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'rate_limited' }));
+      }
+      lastManualScanMs = Date.now();
       await runSingleScan();
-      res.writeHead(200, { 'content-type': 'application/json' });
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
       return res.end(JSON.stringify({ ok: true, lastScanAt: STATE.lastScanAt }));
     }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderDashboardHtml());
   });
 
-  server.listen(CONFIG.port, () => {
-    console.log(`[SKEW-DESK] Agent #${CONFIG.agentId} (${CONFIG.attributionTag}) listening on http://localhost:${CONFIG.port}`);
+  server.listen(CONFIG.port, CONFIG.bindHost, () => {
+    console.log(`[SKEW-DESK] Agent #${CONFIG.agentId} (${CONFIG.attributionTag}) listening on http://${CONFIG.bindHost}:${CONFIG.port}`);
     console.log(`[SKEW-DESK] Mode: ${CONFIG.liveTrading ? 'LIVE ON-CHAIN EXECUTION' : 'TELEMETRY + WATCH (set LIVE=1 to execute)'}`);
   });
 

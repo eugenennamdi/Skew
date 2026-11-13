@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ethers } from 'ethers';
 import {
   CONFIG,
   MAX_UNI_QUOTE_GAS,
@@ -27,6 +28,8 @@ import {
   renderDashboardHtml,
   runDryRunVerification,
   validatePrivateKey,
+  validateOutboundTx,
+  evaluateCircuitBreaker,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -43,13 +46,14 @@ test('1. Celo Mainnet (42220) configuration & ERC-8004 Agent #9905 identity', ()
   assert.equal(CONFIG.contracts.erc8004Registry, '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432');
   assert.equal(CONFIG.contracts.reactor, '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3');
   assert.equal(CONFIG.contracts.permit2, '0x000000000022D473030F116dDEE9F6B43aC78BA3');
+  const expectUsat = process.env.ENABLE_USAT === '1';
   assert.deepEqual(
     CONFIG.tokens.map((t) => t.symbol),
-    ['cNGN', 'wARS', 'wBRL', 'USDC']
+    expectUsat ? ['cNGN', 'wARS', 'wBRL', 'USDC', 'USAT'] : ['cNGN', 'wARS', 'wBRL', 'USDC']
   );
   assert.deepEqual(
     CONFIG.tokens.map((t) => t.decimals),
-    [6, 18, 18, 6]
+    expectUsat ? [6, 18, 18, 6, 6] : [6, 18, 18, 6]
   );
 });
 
@@ -163,14 +167,12 @@ test('8. Anti-self-trade calldata filter detects our own Maker address in real L
   assert.equal(isSelfMakerOrder(realExternalMakerFillCalldata), false);
 });
 
-test('9. Multi-slice trade sizing computes 100%, 50%, 25% of liquid USDT budget and enforces cap', () => {
+test('9. Multi-slice trade sizing computes 100%, 75%, 50%, 35%, 20% of 92% liquid USDT budget and enforces $400 cap', () => {
   const slices = computeSliceSizesUsdt(140.0, 150.0);
-  assert.deepEqual(slices, [126, 63, 31.5, 25]);
+  assert.deepEqual(slices, [128.8, 96.6, 64.4, 45.08, 25.76, 25]);
 
-  const capped = computeSliceSizesUsdt(200.0, 150.0);
-  assert.equal(capped[0], 150);
-  assert.equal(capped[1], 75);
-  assert.equal(capped[2], 37.5);
+  const capped = computeSliceSizesUsdt(500.0, 400.0);
+  assert.deepEqual(capped, [400, 300, 200, 140, 80, 25]);
 });
 
 test('10. Private key format validation rejects malformed keys and allows empty read-only mode', () => {
@@ -230,7 +232,7 @@ test('14. stitch.toml matches Celo Mainnet (42220), Agent #9905, and all 4 Texti
   const toml = fs.readFileSync(path.join(repoRoot, 'stitch.toml'), 'utf8');
   assert.match(toml, /agent_id\s*=\s*9905/);
   assert.match(toml, /chain_id\s*=\s*42220/);
-  for (const tok of CONFIG.tokens) {
+  for (const tok of CONFIG.tokens.filter((t) => t.symbol !== 'USAT')) {
     assert.ok(
       toml.toLowerCase().includes(tok.address.toLowerCase()),
       `stitch.toml must include ${tok.symbol} (${tok.address})`
@@ -660,4 +662,140 @@ test('27. Root stitch.toml and textile-stitch/stitch.toml are 100% synced and sk
   } finally {
     if (fs.existsSync(tmpPolicyPath)) fs.unlinkSync(tmpPolicyPath);
   }
+});
+
+test('28. Post-hackathon Phase 1 profit-max engine uncaps slices to $400, accepts 0.55 bps Textile-first edges, and enforces 2.5 bps positive-EV floor on cash-first uni->textile', () => {
+  assert.equal(CONFIG.maxSliceUsdt, 400);
+  assert.equal(CONFIG.targetCorridorUsd, 5);
+  assert.equal(CONFIG.minEdgeUsd, 0.012);
+  assert.equal(CONFIG.minEdgeBps, 0.55);
+  assert.equal(CONFIG.minUniToTextileDexFirstBps, 2.5);
+  assert.equal(CONFIG.minUniToTextileDexFirstUsd, 0.045);
+  assert.equal(CONFIG.chaseIntervalMs, 1000);
+
+  // $340 clip at +0.60 bps (+$0.0204 gross, +$0.0174 net after $0.003 gas) passes firm-quote verification
+  const thinLargeClip = verifyFirmArbQuote({ inUsdt: 340.0, firmOutUsdt: 340.0204 });
+  assert.equal(thinLargeClip.ok, true);
+  assert.ok(thinLargeClip.netEdgeUsd >= 0.017);
+  assert.ok(thinLargeClip.netEdgeBps >= 0.5);
+
+  // Compact $5 float mode widens Maker baseBuy to 8 bps (5 bps USDC) so Rust 0.05 weight clamp never collapses Maker bid to 1 bps
+  const skewMetrics = computeSkewAndQuotes({ usdtUsd: 355, cngnBalance: 6900, textileMid: 0.000723, uniMid: 0.000725 });
+  const compactRisk = computeRiskOfficerDecisions({
+    usdt: 355,
+    cngn: 6900, // ~$5
+    wars: 7300, // ~$5
+    wbrl: 27,   // ~$5
+    usdc: 5,    // ~$5
+    uniCngnMid: 0.000725,
+    uniWarsMid: 0.000685,
+    skewMetrics,
+    now: new Date('2026-11-04T14:00:00Z'), // Weekday open
+    targetCorridorUsd: 5,
+    maxSliceUsdt: 400,
+  });
+  const cngnCompact = compactRisk.corridors.find((c) => c.corridor === 'cNGN/USDT');
+  const usdcCompact = compactRisk.corridors.find((c) => c.corridor === 'USDC/USDT');
+  assert.equal(cngnCompact.stitchBuyOffsetBps, 8);
+  assert.equal(usdcCompact.stitchBuyOffsetBps, 5);
+  assert.equal(compactRisk.sliceSizesUsdt[0], 326.6);
+});
+
+test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall, Circuit Breaker Kill Switch, Loopback Bind, and SHA-256 Pin', () => {
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface([
+    'function approve(address,uint256) returns (bool)',
+    'function transfer(address,uint256) returns (bool)',
+  ]);
+  const attacker = '0x1111111111111111111111111111111111111111';
+
+  // 1. Valid Reactor execute & executeBatch, valid Router swap to our wallet, valid bounded approve to Reactor pass
+  assert.equal(validateOutboundTx({ to: CONFIG.contracts.reactor, data: '0x3f62192e0000' }, CONFIG.agentWallet), true);
+  assert.equal(validateOutboundTx({ to: CONFIG.contracts.reactor, data: '0x0d7a16c30000' }, CONFIG.agentWallet), true);
+  const validSwapData = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.usdt,
+    tokenOut: CONFIG.tokens[0].address,
+    fee: 100,
+    recipient: CONFIG.agentWallet,
+    amountIn: 100_000000n,
+    amountOutMinimum: 99_900000n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.equal(validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: validSwapData }, CONFIG.agentWallet), true);
+  const validApprove = erc20Iface.encodeFunctionData('approve', [CONFIG.contracts.reactor, 1_200_000_000n]);
+  assert.equal(validateOutboundTx({ to: CONFIG.contracts.usdt, data: validApprove }, CONFIG.agentWallet), true);
+
+  // 2. Malicious txs are blocked before wallet.sendTransaction is ever reached
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.reactor, data: '0x3f62192e0000', value: 1n }, CONFIG.agentWallet),
+    /non-zero native CELO value prohibited/
+  );
+  assert.throws(
+    () => validateOutboundTx({ to: attacker, data: '0x3f62192e0000' }, CONFIG.agentWallet),
+    /not in contract allowlist/
+  );
+  const drainTransfer = erc20Iface.encodeFunctionData('transfer', [attacker, 350_000000n]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.usdt, data: drainTransfer }, CONFIG.agentWallet),
+    /only ERC-20 approve\(\) permitted/
+  );
+  const rogueSpenderApprove = erc20Iface.encodeFunctionData('approve', [attacker, 350_000000n]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.usdt, data: rogueSpenderApprove }, CONFIG.agentWallet),
+    /unauthorized ERC-20 approve spender/
+  );
+  const hijackedRecipientSwap = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.usdt,
+    tokenOut: CONFIG.tokens[0].address,
+    fee: 100,
+    recipient: attacker,
+    amountIn: 100_000000n,
+    amountOutMinimum: 99_900000n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: hijackedRecipientSwap }, CONFIG.agentWallet),
+    /recipient mismatch/
+  );
+
+  // 3. Circuit breaker trips on 2 consecutive losses, single >= $0.35 loss, or >= $1.00 24h loss
+  const nowMs = Date.now();
+  const ts = new Date(nowMs - 60_000).toISOString();
+  assert.equal(evaluateCircuitBreaker([{ type: 'CROSS_VENUE_ARB', edgeUsd: 0.045, timestamp: ts }], nowMs).tripped, false);
+  assert.equal(
+    evaluateCircuitBreaker(
+      [
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.04, timestamp: ts },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: -0.03, timestamp: ts },
+      ],
+      nowMs
+    ).reason,
+    'consecutive_losses'
+  );
+  assert.equal(
+    evaluateCircuitBreaker([{ type: 'CROSS_VENUE_ARB', edgeUsd: -0.40, timestamp: ts }], nowMs).reason,
+    'max_single_trade_loss'
+  );
+  assert.equal(
+    evaluateCircuitBreaker(
+      [
+        { type: 'CROSS_VENUE_ARB', edgeUsd: 0.02, timestamp: ts },
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.34, timestamp: ts },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: 0.02, timestamp: ts },
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.34, timestamp: ts },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: 0.02, timestamp: ts },
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.39, timestamp: ts },
+      ],
+      nowMs
+    ).reason,
+    'max_daily_loss'
+  );
+
+  // 4. Loopback server default & SHA-256 binary pin in run-vm.sh
+  assert.equal(CONFIG.bindHost, '127.0.0.1');
+  const runVmSh = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
+  assert.match(runVmSh, /EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"/);
+  assert.match(runVmSh, /sha256sum -c/);
 });

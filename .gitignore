@@ -14,6 +14,7 @@ stitch.runtime.toml
 skew-policy.json
 llm-decisions.jsonl
 markouts.jsonl
+HANDOFF_PROFIT_MAX.md
 
 # Build artifacts & dependencies
 node_modules/
