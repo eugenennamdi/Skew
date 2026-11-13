@@ -31,15 +31,15 @@ if [ ! -d "node_modules/ethers" ]; then
   npm ci --no-audit --no-fund
 fi
 
-# 3. Run self-check against Celo Mainnet & Textile RFQ
-echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."
-SKEW_POLICY_FILE="$(pwd)/skew-policy.json" node skew-desk.mjs --check
-
-# 4. Stop any previous skew-desk or skew-stitch processes
+# 3. Stop any previous skew-desk or skew-stitch processes first so they do not compete for Textile RFQ quota
 echo "[+] Stopping any previous instances..."
 pkill -f "node skew-desk.mjs" 2>/dev/null || true
 pkill -f "skew-stitch" 2>/dev/null || true
 sleep 2
+
+# 4. Run self-check against Celo Mainnet & Textile RFQ
+echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."
+SKEW_POLICY_FILE="$(pwd)/skew-policy.json" node skew-desk.mjs --check
 
 # 5. Fetch & cryptographically verify SHA-256 of Engine 1 (./skew-stitch) if on Linux x86_64
 EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"

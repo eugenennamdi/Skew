@@ -775,6 +775,32 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
     ).reason,
     'consecutive_losses'
   );
+  // Pre-restart historical entries before sessionStartMs never dead-lock a freshly booted session
+  assert.equal(
+    evaluateCircuitBreaker(
+      [
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.04, timestamp: ts },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: -0.03, timestamp: ts },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: 5.99, timestamp: ts },
+      ],
+      nowMs,
+      CONFIG,
+      nowMs - 5_000
+    ).tripped,
+    false
+  );
+  // Consecutive-loss pause auto-resumes after 15-minute cooldown
+  const oldLossTs = new Date(nowMs - 20 * 60_000).toISOString();
+  assert.equal(
+    evaluateCircuitBreaker(
+      [
+        { type: 'LEG2_FLATTEN_DEX', edgeUsd: -0.04, timestamp: oldLossTs },
+        { type: 'CROSS_VENUE_ARB', edgeUsd: -0.03, timestamp: oldLossTs },
+      ],
+      nowMs
+    ).tripped,
+    false
+  );
   assert.equal(
     evaluateCircuitBreaker([{ type: 'CROSS_VENUE_ARB', edgeUsd: -0.40, timestamp: ts }], nowMs).reason,
     'max_single_trade_loss'

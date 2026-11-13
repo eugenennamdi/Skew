@@ -384,33 +384,45 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
  * Trips if rolling 24h net realized losses exceed maxDailyLossUsd, a single trade loses >= maxSingleTradeLossUsd,
  * or consecutive losing trades reach maxConsecutiveLosses.
  */
-export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), cfg = CONFIG) {
+export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), cfg = CONFIG, sessionStartMs = 0) {
   const relevant = (arbExecutions || []).filter(
     (e) => e && (e.type === 'CROSS_VENUE_ARB' || e.type === 'LEG2_FLATTEN_DEX') && Number.isFinite(Number(e.edgeUsd))
   );
+  const rolling24h = relevant.filter((e) => {
+    const ts = Date.parse(e.timestamp || '');
+    return Number.isFinite(ts) && nowMs - ts <= 86_400_000;
+  });
+  const rolling24hNetUsd = rolling24h.reduce((acc, e) => acc + Number(e.edgeUsd), 0);
+
+  // ponytail: scope single-trade & consecutive-loss counters to current session (ts >= sessionStartMs) so pre-restart history never dead-locks a fresh deploy
+  const sessionRecords =
+    sessionStartMs > 0
+      ? rolling24h.filter((e) => {
+          const ts = Date.parse(e.timestamp || '');
+          return Number.isFinite(ts) && ts >= sessionStartMs;
+        })
+      : rolling24h;
+  const sessionNetUsd = sessionRecords.reduce((acc, e) => acc + Number(e.edgeUsd), 0);
+
   let consecutiveLosses = 0;
-  for (const e of relevant) {
-    if (Number(e.edgeUsd) < -0.002) consecutiveLosses += 1;
+  for (const e of sessionRecords) {
+    if (Number(e.edgeUsd) <= -0.01) consecutiveLosses += 1;
     else break;
   }
-  const latestEdge = relevant.length > 0 ? Number(relevant[0].edgeUsd) : 0;
-  const rolling24hNetUsd = relevant
-    .filter((e) => {
-      const ts = Date.parse(e.timestamp || '');
-      return Number.isFinite(ts) && nowMs - ts <= 86_400_000;
-    })
-    .reduce((acc, e) => acc + Number(e.edgeUsd), 0);
+  const latestEdge = sessionRecords.length > 0 ? Number(sessionRecords[0].edgeUsd) : 0;
+  const latestTs = sessionRecords.length > 0 ? Date.parse(sessionRecords[0].timestamp || '') : 0;
+  const cooldownMs = Number(cfg.circuitBreakerCooldownMs ?? 15 * 60_000);
 
   if (latestEdge <= -(cfg.maxSingleTradeLossUsd ?? 0.35)) {
-    return { tripped: true, reason: 'max_single_trade_loss', rolling24hNetUsd, consecutiveLosses };
+    return { tripped: true, reason: 'max_single_trade_loss', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
   }
-  if (consecutiveLosses >= (cfg.maxConsecutiveLosses ?? 2)) {
-    return { tripped: true, reason: 'consecutive_losses', rolling24hNetUsd, consecutiveLosses };
+  if (consecutiveLosses >= (cfg.maxConsecutiveLosses ?? 2) && Number.isFinite(latestTs) && nowMs - latestTs < cooldownMs) {
+    return { tripped: true, reason: 'consecutive_losses', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
   }
-  if (rolling24hNetUsd <= -(cfg.maxDailyLossUsd ?? 1.0)) {
-    return { tripped: true, reason: 'max_daily_loss', rolling24hNetUsd, consecutiveLosses };
+  if (rolling24hNetUsd <= -(cfg.maxDailyLossUsd ?? 1.0) || sessionNetUsd <= -(cfg.maxDailyLossUsd ?? 1.0)) {
+    return { tripped: true, reason: 'max_daily_loss', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
   }
-  return { tripped: false, reason: 'ok', rolling24hNetUsd, consecutiveLosses };
+  return { tripped: false, reason: 'ok', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
 }
 
 let cachedGasPrice = { value: null, ts: 0 };
@@ -691,7 +703,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             bestEdgeUsd < CONFIG.minEdgeUsd &&
             currBps > -2.5 &&
             actualInRaw >= 40000000n &&
-            (opts.priority || PREVIEW_BUDGET.remaining >= 22)
+            (opts.priority || PREVIEW_BUDGET.remaining >= 28)
           ) {
             const topSliceInRaw = (actualInRaw * 25n) / 100n;
             const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw, opts).catch(() => null);
@@ -852,7 +864,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
               bestEdgeUsd < subMinReqUsd &&
               currBps > -2.5 &&
               actualUsdtInRaw >= 40000000n &&
-              (opts.priority || PREVIEW_BUDGET.remaining >= 22)
+              (opts.priority || PREVIEW_BUDGET.remaining >= 28)
             ) {
               const topInRaw = (actualUsdtInRaw * 25n) / 100n;
               const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
@@ -1214,7 +1226,7 @@ export async function runSingleScan() {
       }
     });
 
-    const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : 2);
+    const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : s === 'NO_MAKER' ? 2 : 3);
     const allRows = CONFIG.tokens
       .flatMap((t) => STATE.corridorRowCache[t.symbol] || [])
       .sort((a, b) => rank(a.status) - rank(b.status) || b.edgeUsd - a.edgeUsd);
@@ -1230,7 +1242,8 @@ export async function runSingleScan() {
       `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) quota=${PREVIEW_BUDGET.remaining}/${PREVIEW_BUDGET.limit} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestRow.status}]` : 'none'}`
     );
 
-    STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, nowMs, CONFIG);
+    const sessionStartMs = Date.parse(STATE.startedAt) || 0;
+    STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, nowMs, CONFIG, sessionStartMs);
     let arbExecutedThisTick = false;
     if (STATE.circuitBreaker.tripped && CONFIG.liveTrading) {
       console.warn(
@@ -1243,7 +1256,7 @@ export async function runSingleScan() {
           if (execRec) {
             arbExecutedThisTick = true;
             STATE.arbExecutions.unshift(execRec);
-            STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG);
+            STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
             // ponytail: 1.0s hot-corridor chase loop uses reserved priority quota credits to drain external Makers before Kiyoshi's 30s timer
             const corridorTok = CONFIG.tokens.find((t) => t.symbol === candidate.symbol);
             if (corridorTok && execRec.edgeUsd > 0 && !STATE.circuitBreaker.tripped && CONFIG.chaseIntervalMs > 0) {
@@ -1267,7 +1280,7 @@ export async function runSingleScan() {
                 const chaseExec = await executeOpportunity(chaseOpp);
                 if (!chaseExec) break;
                 STATE.arbExecutions.unshift(chaseExec);
-                STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG);
+                STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
                 if (chaseExec.edgeUsd <= 0 || STATE.circuitBreaker.tripped) break;
               }
             }
