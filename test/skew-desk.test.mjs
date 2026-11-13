@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 import {
   CONFIG,
+  PREVIEW_BUDGET,
   MAX_UNI_QUOTE_GAS,
   OFFCHAIN_FX_DEFAULTS,
   appendErc8021Suffix,
@@ -793,9 +794,12 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
     'max_daily_loss'
   );
 
-  // 4. Loopback server default & SHA-256 binary pin in run-vm.sh
+  // 4. Loopback server default, rate-aware preview budget, & SHA-256 binary pin in run-vm.sh
   assert.equal(CONFIG.bindHost, '127.0.0.1');
+  assert.equal(PREVIEW_BUDGET.limit, 60);
+  assert.equal(PREVIEW_BUDGET.reserveForChase, 10);
   const runVmSh = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
   assert.match(runVmSh, /EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-6000\}"/);
   assert.match(runVmSh, /sha256sum -c/);
 });
