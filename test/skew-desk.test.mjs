@@ -820,8 +820,9 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
     'max_daily_loss'
   );
 
-  // 4. Loopback server default, rate-aware preview budget, & SHA-256 binary pin in run-vm.sh
+  // 4. Loopback server default, rate-aware preview budget, EIP-1559 priority tip, & SHA-256 binary pin in run-vm.sh
   assert.equal(CONFIG.bindHost, '127.0.0.1');
+  assert.equal(CONFIG.priorityTipGwei, 20);
   assert.equal(PREVIEW_BUDGET.limit, 60);
   assert.equal(PREVIEW_BUDGET.reserveForChase, 10);
   const runVmSh = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');

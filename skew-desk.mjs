@@ -111,6 +111,7 @@ export const CONFIG = {
   minUniToTextileDexFirstBps: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS || '2.5'),
   minUniToTextileDexFirstUsd: Number(process.env.MIN_UNI_TO_TEXTILE_DEX_FIRST_USD || '0.045'),
   estimatedArbGasUsd: Number(process.env.EST_ARB_GAS_USD || '0.003'),
+  priorityTipGwei: Number(process.env.PRIORITY_TIP_GWEI || '20'),
   maxDailyLossUsd: Number(process.env.MAX_DAILY_LOSS_USD || '1.00'),
   maxConsecutiveLosses: Number(process.env.MAX_CONSECUTIVE_LOSSES || '2'),
   maxSingleTradeLossUsd: Number(process.env.MAX_SINGLE_TRADE_LOSS_USD || '0.35'),
@@ -427,31 +428,44 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
 
 let cachedGasPrice = { value: null, ts: 0 };
 
-export async function sendTagged(txReq) {
+export async function sendTagged(txReq, opts = {}) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
   validateOutboundTx(txReq, wallet.address);
   // ponytail: skip 35-byte ERC-8021 calldata suffix when ENABLE_ERC8021_TAG=0 to shave ~560 gas/tx post-hackathon
   const tagged = {
     ...txReq,
     value: 0n,
+    chainId: CONFIG.chainId,
     data: CONFIG.enableErc8021Tag ? appendErc8021Suffix(txReq.data || '0x') : txReq.data || '0x',
   };
   if (!tagged.gasPrice && !tagged.maxFeePerGas) {
-    if (cachedGasPrice.value && Date.now() - cachedGasPrice.ts < 15_000) {
-      tagged.gasPrice = cachedGasPrice.value;
-    } else {
+    let baseGasPrice = cachedGasPrice.value;
+    if (!baseGasPrice || Date.now() - cachedGasPrice.ts >= 15_000) {
       const fd = await provider.getFeeData().catch(() => null);
       if (fd?.gasPrice) {
-        cachedGasPrice = { value: fd.gasPrice, ts: Date.now() };
-        tagged.gasPrice = fd.gasPrice;
+        baseGasPrice = fd.gasPrice;
+        cachedGasPrice = { value: baseGasPrice, ts: Date.now() };
+      }
+    }
+    if (baseGasPrice) {
+      if (opts.priorityTip) {
+        // ponytail: 20 gwei EIP-1559 priority tip (~$0.0003 on Celo) places our arb tx at idx 1 ahead of bots paying 2.5 gwei
+        const tipWei = BigInt(Math.round((CONFIG.priorityTipGwei || 20) * 1e9));
+        tagged.type = 2;
+        tagged.maxPriorityFeePerGas = tipWei;
+        tagged.maxFeePerGas = (baseGasPrice * 140n) / 100n + tipWei;
+      } else {
+        tagged.gasPrice = baseGasPrice;
       }
     }
   }
-  if (!tagged.gasLimit) {
-    // ponytail: never fallback to 220k on estimateGas revert — abort at $0 gas when a Maker quote was sniped
-    const est = await provider.estimateGas({ ...tagged, from: wallet.address });
-    tagged.gasLimit = (est * 125n) / 100n;
-  }
+  // ponytail: batch estimateGas + pending nonce in one parallel RPC round-trip so wallet.sendTransaction signs locally in 0ms
+  const [est, pendingNonce] = await Promise.all([
+    tagged.gasLimit ? Promise.resolve(BigInt(tagged.gasLimit)) : provider.estimateGas({ ...tagged, from: wallet.address }),
+    tagged.nonce != null ? Promise.resolve(tagged.nonce) : provider.getTransactionCount(wallet.address, 'pending'),
+  ]);
+  if (!tagged.gasLimit) tagged.gasLimit = (est * 125n) / 100n;
+  if (tagged.nonce == null) tagged.nonce = pendingNonce;
   const resp = await wallet.sendTransaction(tagged);
   const receipt = await resp.wait();
   return receipt;
@@ -740,6 +754,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           edgeUsd,
           edgeBps,
           sliceCandidatesUsdt: candidateSlices,
+          scannedAtMs: Date.now(),
           status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= CONFIG.minEdgeBps ? 'ACTIONABLE' : 'WATCH',
           note: sliceLabel,
         });
@@ -909,6 +924,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             edgeUsd,
             edgeBps,
             sliceCandidatesUsdt: candidateSlices,
+            scannedAtMs: Date.now(),
             status: edgeUsd >= minReqUsd && edgeBps >= minReqBps ? 'ACTIONABLE' : 'WATCH',
             note: noteLabel,
           });

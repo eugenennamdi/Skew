@@ -33,33 +33,36 @@ export function createExecutionManager({
   sumReceiptTokenTransfers,
   getCachedOffChainFx,
 }) {
-  const approvedMaxCache = new Set();
+  const allowanceCache = new Map();
   let permit2Initialized = false;
   let erc8004MetadataSynced = false;
 
   async function ensureAllowance(tokenAddr, spender, minAmount) {
     const key = `${tokenAddr.toLowerCase()}:${spender.toLowerCase()}`;
     const minReq = BigInt(minAmount);
-    if (approvedMaxCache.has(key) && minReq <= 1_200_000_000n) return;
-    const c = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
-    const current = BigInt(await c.allowance(wallet.address, spender));
-    if (current >= 10n ** 30n) {
-      approvedMaxCache.add(key);
+    const cached = allowanceCache.get(key) || 0n;
+    if (cached >= minReq) {
+      if (cached < 10n ** 30n) allowanceCache.set(key, cached - minReq);
       return;
     }
-    if (current < minReq) {
-      if (current > 0n) {
-        await sendTagged({ to: tokenAddr, data: erc20Iface.encodeFunctionData('approve', [spender, 0n]) });
-      }
-      // ponytail: bounded working allowance (~$1,200 for 6-dec tokens, 3M units for 18-dec FX) instead of infinite MaxUint256
-      const is18Dec = CONFIG.tokens.some(
-        (t) => t.address.toLowerCase() === tokenAddr.toLowerCase() && t.decimals === 18
-      );
-      const boundedCap = is18Dec ? 3_000_000n * 10n ** 18n : 1_200_000_000n;
-      const approveAmt = minReq > boundedCap ? minReq * 2n : boundedCap;
-      const data = erc20Iface.encodeFunctionData('approve', [spender, approveAmt]);
-      await sendTagged({ to: tokenAddr, data });
+    const c = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
+    const current = BigInt(await c.allowance(wallet.address, spender));
+    if (current >= minReq) {
+      allowanceCache.set(key, current >= 10n ** 30n ? current : current - minReq);
+      return;
     }
+    if (current > 0n) {
+      await sendTagged({ to: tokenAddr, data: erc20Iface.encodeFunctionData('approve', [spender, 0n]) });
+    }
+    // ponytail: bounded working allowance (~$1,200 for 6-dec tokens, 3M units for 18-dec FX) instead of infinite MaxUint256
+    const is18Dec = CONFIG.tokens.some(
+      (t) => t.address.toLowerCase() === tokenAddr.toLowerCase() && t.decimals === 18
+    );
+    const boundedCap = is18Dec ? 3_000_000n * 10n ** 18n : 1_200_000_000n;
+    const approveAmt = minReq > boundedCap ? minReq * 2n : boundedCap;
+    const data = erc20Iface.encodeFunctionData('approve', [spender, approveAmt]);
+    await sendTagged({ to: tokenAddr, data });
+    allowanceCache.set(key, approveAmt - minReq);
   }
 
   async function ensureErc8004Metadata() {
@@ -145,8 +148,10 @@ export function createExecutionManager({
 
     if (opp.direction === 'textile->uni') {
       const amountInRaw = BigInt(opp.amountInRaw);
-      await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.reactor, amountInRaw);
-      const q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, opp.amountInRaw);
+      const [, q] = await Promise.all([
+        ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.reactor, amountInRaw),
+        textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, opp.amountInRaw),
+      ]);
       const toAddr = q?.transactions?.swap?.to;
       const calldata = q?.transactions?.swap?.data;
       if (!toAddr || !calldata || toAddr.toLowerCase() !== CONFIG.contracts.reactor.toLowerCase()) {
@@ -173,16 +178,18 @@ export function createExecutionManager({
         return null;
       }
 
-      const r1 = await sendTagged({ to: toAddr, data: calldata });
+      const r1 = await sendTagged({ to: toAddr, data: calldata }, { priorityTip: true });
       textileSubmitTx(q.rfqId, q.claimToken, r1.hash).catch(() => {});
       const receivedFromLogs = sumReceiptTokenTransfers(r1, opp.tokenAddress, { toAddr: wallet.address });
       const spentUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || amountInRaw;
       const receivedRaw = receivedFromLogs > 0n ? receivedFromLogs : firmBuyRaw;
 
-      await ensureAllowance(opp.tokenAddress, CONFIG.contracts.uniSwapRouter02, receivedRaw);
-      const leg2Uni = receivedRaw === firmBuyRaw
-        ? firmUni
-        : await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, receivedRaw);
+      const [, leg2Uni] = await Promise.all([
+        ensureAllowance(opp.tokenAddress, CONFIG.contracts.uniSwapRouter02, receivedRaw),
+        receivedRaw === firmBuyRaw
+          ? Promise.resolve(firmUni)
+          : bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, receivedRaw),
+      ]);
       const minOutUsdt = leg2Uni.amountOut > 0n
         ? (leg2Uni.amountOut * 9995n) / 10000n
         : BigInt(Math.floor(opp.sizeUsdt * 0.999 * 1e6));
@@ -195,7 +202,7 @@ export function createExecutionManager({
         amountOutMinimum: minOutUsdt,
         sqrtPriceLimitX96: 0n,
       }]);
-      const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+      const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, { priorityTip: true });
       const returnedUsdtRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { toAddr: wallet.address });
       const actualInUsdt = Number(spentUsdtRaw) / 1e6;
       const actualOutUsdt = returnedUsdtRaw > 0n ? Number(returnedUsdtRaw) / 1e6 : Number(leg2Uni.amountOut) / 1e6;
@@ -221,11 +228,19 @@ export function createExecutionManager({
     }
 
     if (opp.direction === 'uni->textile') {
-      const tokenContract = new ethers.Contract(opp.tokenAddress, ERC20_ABI, provider);
-      const walletTokRaw = BigInt(await tokenContract.balanceOf(wallet.address));
       const unitScale = 10 ** opp.decimals;
       const approxMidUsd = opp.sizeUsdt / Math.max(1e-12, Number(BigInt(opp.midTokenRaw)) / unitScale);
-      const walletTokUsd = (Number(walletTokRaw) / unitScale) * approxMidUsd;
+      const cachedTokUnits = Number(STATE.balances?.[opp.symbol?.toLowerCase()] || 0);
+      const cachedTokUsd = cachedTokUnits * approxMidUsd;
+
+      let walletTokRaw = 0n;
+      let walletTokUsd = cachedTokUsd;
+      // ponytail: skip ~180ms balanceOf RPC when cached local float clearly cannot cover the clip (e.g. $5 float vs $330 clip)
+      if (cachedTokUsd >= 6.0 && opp.sizeUsdt <= cachedTokUsd * 1.15) {
+        const tokenContract = new ethers.Contract(opp.tokenAddress, ERC20_ABI, provider);
+        walletTokRaw = BigInt(await tokenContract.balanceOf(wallet.address));
+        walletTokUsd = (Number(walletTokRaw) / unitScale) * approxMidUsd;
+      }
 
       // Inventory-first (0-gas firm-quote-first) ONLY when existing local float already covers the clip size.
       // Never shrink $150-$400 clips down to a $5 local float.
@@ -233,8 +248,10 @@ export function createExecutionManager({
         let sellTokRaw = BigInt(opp.midTokenRaw) <= (walletTokRaw * 98n) / 100n
           ? BigInt(opp.midTokenRaw)
           : (walletTokRaw * 96n) / 100n;
-        await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellTokRaw);
-        let q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellTokRaw);
+        let [, q] = await Promise.all([
+          ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellTokRaw),
+          textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellTokRaw),
+        ]);
         let toAddr = q?.transactions?.swap?.to;
         let calldata = q?.transactions?.swap?.data;
         if (calldata && isSelfMakerOrder(calldata) && walletTokUsd >= 12.0) {
@@ -269,11 +286,13 @@ export function createExecutionManager({
           return null;
         }
 
-        const r1 = await sendTagged({ to: toAddr, data: calldata });
+        const [r1] = await Promise.all([
+          sendTagged({ to: toAddr, data: calldata }, { priorityTip: true }),
+          ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, refillUsdtRaw),
+        ]);
         textileSubmitTx(q.rfqId, q.claimToken, r1.hash).catch(() => {});
         const receivedUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { toAddr: wallet.address }) || firmOutUsdtRaw;
 
-        await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, refillUsdtRaw);
         const minRefillTok = (sellTokRaw * 9995n) / 10000n;
         const swapData = routerIface.encodeFunctionData('exactInputSingle', [{
           tokenIn: CONFIG.contracts.usdt,
@@ -284,7 +303,7 @@ export function createExecutionManager({
           amountOutMinimum: minRefillTok,
           sqrtPriceLimitX96: 0n,
         }]);
-        const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+        const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, { priorityTip: true });
         const spentRefillRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || refillUsdtRaw;
         const actualInUsdt = Number(spentRefillRaw) / 1e6;
         const actualOutUsdt = Number(receivedUsdtRaw) / 1e6;
@@ -315,9 +334,10 @@ export function createExecutionManager({
       let amountInRaw = BigInt(opp.amountInRaw);
       let expectedTokenRaw = BigInt(opp.midTokenRaw);
       let leg1Fee = opp.uniFee;
+      const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
 
-      // Pre-Leg-1 sub-second live check (0 gas spent if external Maker pulled depth or DEX lacks two-way exit liquidity)
-      if (textilePreview) {
+      // ponytail: skip duplicate bestUniQuote + textilePreview (~550ms) when scanCorridor verified this exact quote <1.5s ago
+      if (!isFreshScan && textilePreview) {
         const freshUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, amountInRaw);
         if (freshUni.amountOut <= 0n) return null;
         expectedTokenRaw = freshUni.amountOut;
@@ -355,8 +375,11 @@ export function createExecutionManager({
         }
       }
 
-      // Mandatory Two-Way DEX Exit Guard: block one-way pools (e.g. wBRL/USDT) where selling back to USDT returns 0 or >35 bps loss
-      const reverseExitUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedTokenRaw);
+      // Mandatory Two-Way DEX Exit Guard + parallel allowance check (~120ms single round-trip instead of ~1.05s sequential)
+      const [reverseExitUni] = await Promise.all([
+        bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedTokenRaw),
+        ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, amountInRaw),
+      ]);
       const reverseExitUsdt = Number(reverseExitUni.amountOut) / 1e6;
       const plannedInUsdt = Number(amountInRaw) / 1e6;
       if (reverseExitUni.amountOut <= 0n || reverseExitUsdt < plannedInUsdt * 0.9965) {
@@ -366,7 +389,6 @@ export function createExecutionManager({
         return null;
       }
 
-      await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.uniSwapRouter02, amountInRaw);
       // Tight slippage floor (max 3 bps slack, or half of edgeBps) so thin 0.8-2.0 bps arbs revert on Leg 1 instead of filling underwater
       const maxSlackBps = BigInt(Math.max(1, Math.min(3, Math.floor(opp.edgeBps))));
       const minTokenOut = (expectedTokenRaw * (10000n - maxSlackBps)) / 10000n;
@@ -379,14 +401,16 @@ export function createExecutionManager({
         amountOutMinimum: minTokenOut,
         sqrtPriceLimitX96: 0n,
       }]);
-      const r1 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+      const r1 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, { priorityTip: true });
       const boughtFromLogs = sumReceiptTokenTransfers(r1, opp.tokenAddress, { toAddr: wallet.address });
       const spentUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || amountInRaw;
       const initialBoughtRaw = boughtFromLogs > 0n ? boughtFromLogs : expectedTokenRaw;
       let sellRaw = initialBoughtRaw;
 
-      await ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellRaw);
-      let q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellRaw).catch(() => null);
+      let [, q] = await Promise.all([
+        ensureAllowance(opp.tokenAddress, CONFIG.contracts.reactor, sellRaw),
+        textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellRaw).catch(() => null),
+      ]);
       let toAddr = q?.transactions?.swap?.to;
       let calldata = q?.transactions?.swap?.data;
       for (const stepPct of [70n, 50n]) {
@@ -433,7 +457,7 @@ export function createExecutionManager({
         return null;
       }
 
-      const r2 = await sendTagged({ to: toAddr, data: calldata });
+      const r2 = await sendTagged({ to: toAddr, data: calldata }, { priorityTip: true });
       textileSubmitTx(q.rfqId, q.claimToken, r2.hash).catch(() => {});
       const returnedUsdtRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { toAddr: wallet.address });
       const actualInUsdt = leg2CostUsdt;
