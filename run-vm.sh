@@ -31,11 +31,15 @@ if [ ! -d "node_modules/ethers" ]; then
   npm ci --no-audit --no-fund
 fi
 
-# 3. Stop any previous skew-desk or skew-stitch processes first so they do not compete for Textile RFQ quota
+# 3. Stop any previous skew-desk or skew-stitch processes gracefully (waits up to 12s for any in-flight Leg-2 arb to settle)
 echo "[+] Stopping any previous instances..."
 pkill -f "node skew-desk.mjs" 2>/dev/null || true
+for _ in $(seq 1 24); do
+  pgrep -f "node skew-desk.mjs" >/dev/null 2>&1 || break
+  sleep 0.5
+done
 pkill -f "skew-stitch" 2>/dev/null || true
-sleep 2
+sleep 1
 
 # 4. Run self-check against Celo Mainnet & Textile RFQ
 echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."

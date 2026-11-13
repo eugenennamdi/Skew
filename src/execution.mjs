@@ -32,6 +32,7 @@ export function createExecutionManager({
   verifyFirmArbQuote,
   sumReceiptTokenTransfers,
   getCachedOffChainFx,
+  leg2RetryDelaysMs = [850, 1200],
 }) {
   const allowanceCache = new Map();
   let permit2Initialized = false;
@@ -413,6 +414,20 @@ export function createExecutionManager({
       ]);
       let toAddr = q?.transactions?.swap?.to;
       let calldata = q?.transactions?.swap?.data;
+      // ponytail: calibrate for 1-block (~900ms) RPC lag between Forno and Textile's backend node right after Leg-1 mines
+      for (const waitMs of leg2RetryDelaysMs) {
+        if (toAddr && calldata) break;
+        if (q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
+          const availTok = BigInt(q.availableSellAmount);
+          if (availTok < sellRaw && availTok >= (initialBoughtRaw * 25n) / 100n) {
+            sellRaw = (availTok * 99n) / 100n;
+          }
+        }
+        await new Promise((r) => setTimeout(r, waitMs));
+        q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, sellRaw).catch(() => null);
+        toAddr = q?.transactions?.swap?.to;
+        calldata = q?.transactions?.swap?.data;
+      }
       for (const stepPct of [70n, 50n]) {
         if (calldata && isSelfMakerOrder(calldata)) {
           sellRaw = (initialBoughtRaw * stepPct) / 100n;
@@ -433,26 +448,22 @@ export function createExecutionManager({
         !(quotedOutUsdt > 0 && quotedOutUsdt < leg2CostUsdt * 0.9985);
 
       if (!leg2Valid) {
-        // ponytail: bounded immediate flatten (<= 15 bps max scratch) + record exact scratch PnL so circuit breaker counts it
+        // ponytail: bounded immediate flatten (<= 15 bps max scratch) + record exact scratch PnL on disk so circuit breaker counts it
         console.warn(`[FLATTEN] Leg 2 rejected/slipped on ${opp.corridor}; flattening ${opp.symbol} back to USDT immediately...`);
         const backUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, initialBoughtRaw);
         const backUsdt = Number(backUni.amountOut) / 1e6;
         const spentUsdt = Number(spentUsdtRaw) / 1e6;
         if (backUni.amountOut > 0n && backUsdt >= spentUsdt * 0.9985) {
-          const flatRec = await swapOnUniswap(
+          return swapOnUniswap(
             opp.tokenAddress,
             CONFIG.contracts.usdt,
             initialBoughtRaw,
             'LEG2_FLATTEN_DEX',
             opp.corridor,
             spentUsdt,
-            0
+            0,
+            spentUsdt
           );
-          if (flatRec) {
-            flatRec.edgeUsd = Number((flatRec.sizeUsdt - spentUsdt).toFixed(6));
-            flatRec.edgeBps = spentUsdt > 0 ? Number(((flatRec.edgeUsd / spentUsdt) * 10000).toFixed(2)) : 0;
-            return flatRec;
-          }
         }
         return null;
       }
@@ -487,7 +498,7 @@ export function createExecutionManager({
     return null;
   }
 
-  async function swapOnUniswap(tokenIn, tokenOut, amountInRaw, label, corridor, sizeUsdt, edgeBps = 0) {
+  async function swapOnUniswap(tokenIn, tokenOut, amountInRaw, label, corridor, sizeUsdt, edgeBps = 0, costBasisUsdt = null) {
     if (!wallet) return null;
     const uniQuote = await bestUniQuote(tokenIn, tokenOut, amountInRaw);
     if (uniQuote.amountOut === 0n) return null;
@@ -508,14 +519,20 @@ export function createExecutionManager({
       ? sumReceiptTokenTransfers(r, CONFIG.contracts.usdt, { toAddr: wallet.address })
       : 0n;
     const effectiveUsdt = returnedUsdtRaw > 0n ? Number(returnedUsdtRaw) / 1e6 : sizeUsdt;
+    const computedEdgeUsd = costBasisUsdt !== null
+      ? effectiveUsdt - costBasisUsdt
+      : (effectiveUsdt * edgeBps) / 10000;
+    const computedEdgeBps = costBasisUsdt !== null && costBasisUsdt > 0
+      ? (computedEdgeUsd / costBasisUsdt) * 10000
+      : edgeBps;
     const rec = {
       timestamp: new Date().toISOString(),
       type: label,
       corridor,
       direction: `uni_v3_fee_${uniQuote.fee}`,
       sizeUsdt: Number(effectiveUsdt.toFixed(6)),
-      edgeUsd: Number(((effectiveUsdt * edgeBps) / 10000).toFixed(6)),
-      edgeBps,
+      edgeUsd: Number(computedEdgeUsd.toFixed(6)),
+      edgeBps: Number(computedEdgeBps.toFixed(2)),
       txHash1: r.hash,
       txHash2: r.hash,
       attributionTag: CONFIG.attributionTag,

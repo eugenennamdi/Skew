@@ -630,6 +630,9 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
   }).catch(() => {});
 }
 
+const corridorDepthCache = new Map();
+const DEPTH_CACHE_TTL_MS = 24000;
+
 /**
  * Scan a single token across one or both directions with Multi-Slice (100% / 75% / 50% / 35% / 20%) + adaptive availableSellAmount sizing.
  */
@@ -665,15 +668,21 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
         note: 'no_uniswap_sell_exit',
       });
     } else try {
-      let preview = await textilePreview(CONFIG.contracts.usdt, token.address, usdtInRaw, opts);
-      let actualInRaw = usdtInRaw;
+      const depthKey1 = `${token.symbol}:textile->uni`;
+      const cachedDepth1 = corridorDepthCache.get(depthKey1);
+      let actualInRaw =
+        cachedDepth1 && Date.now() - cachedDepth1.ts < DEPTH_CACHE_TTL_MS && cachedDepth1.usdtRaw < usdtInRaw
+          ? cachedDepth1.usdtRaw
+          : usdtInRaw;
+      let preview = await textilePreview(CONFIG.contracts.usdt, token.address, actualInRaw, opts);
 
       if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) >= 1000000n) {
         const avail = BigInt(preview.availableSellAmount);
-        if (preview.status !== 'preview' || avail < usdtInRaw) {
+        if (preview.status !== 'preview' || avail < actualInRaw) {
           const resized = (avail * 98n) / 100n;
           if (resized >= 1000000n) {
             actualInRaw = resized;
+            corridorDepthCache.set(depthKey1, { usdtRaw: resized, ts: Date.now() });
             preview = await textilePreview(CONFIG.contracts.usdt, token.address, actualInRaw, opts);
           }
         }
@@ -813,22 +822,28 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
         note: 'one_way_pool_blocked',
       });
     } else try {
-      const uniBuy = await bestUniQuote(CONFIG.contracts.usdt, token.address, usdtInRaw);
+      const depthKey2 = `${token.symbol}:uni->textile`;
+      const cachedDepth2 = corridorDepthCache.get(depthKey2);
+      let actualUsdtInRaw =
+        cachedDepth2 && Date.now() - cachedDepth2.ts < DEPTH_CACHE_TTL_MS && cachedDepth2.usdtRaw < usdtInRaw
+          ? cachedDepth2.usdtRaw
+          : usdtInRaw;
+      const uniBuy = await bestUniQuote(CONFIG.contracts.usdt, token.address, actualUsdtInRaw);
       if (uniBuy.amountOut > 0n) {
         let preview = await textilePreview(token.address, CONFIG.contracts.usdt, uniBuy.amountOut, opts);
-        let actualUsdtInRaw = usdtInRaw;
         let actualTokenRaw = uniBuy.amountOut;
 
         if (preview && preview.availableSellAmount && BigInt(preview.availableSellAmount) > 0n) {
           const availToken = BigInt(preview.availableSellAmount);
           if (preview.status !== 'preview' || availToken < uniBuy.amountOut) {
             const ratio = Number(availToken) / Number(uniBuy.amountOut);
-            const resizedUsdt = BigInt(Math.floor(Number(usdtInRaw) * ratio * 0.98));
+            const resizedUsdt = BigInt(Math.floor(Number(actualUsdtInRaw) * ratio * 0.98));
             if (resizedUsdt >= 1000000n) {
               const reUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, resizedUsdt);
               if (reUni.amountOut > 0n) {
                 actualUsdtInRaw = resizedUsdt;
                 actualTokenRaw = reUni.amountOut;
+                corridorDepthCache.set(depthKey2, { usdtRaw: resizedUsdt, ts: Date.now() });
                 preview = await textilePreview(token.address, CONFIG.contracts.usdt, actualTokenRaw, opts);
               }
             }
@@ -1044,9 +1059,10 @@ const {
 } = executionManager;
 
 let isBusy = false;
+let isShuttingDown = false;
 
 export async function runSingleScan() {
-  if (isBusy) return STATE;
+  if (isBusy || isShuttingDown) return STATE;
   isBusy = true;
   try {
     if (CONFIG.liveTrading && wallet) {
@@ -1474,6 +1490,21 @@ if (isMain) {
     console.log(`[SKEW-DESK] Agent #${CONFIG.agentId} (${CONFIG.attributionTag}) listening on http://${CONFIG.bindHost}:${CONFIG.port}`);
     console.log(`[SKEW-DESK] Mode: ${CONFIG.liveTrading ? 'LIVE ON-CHAIN EXECUTION' : 'TELEMETRY + WATCH (set LIVE=1 to execute)'}`);
   });
+
+  const gracefulExit = (sig) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`[SKEW-DESK] ${sig} received; draining any in-flight 2-leg trade before exit...`);
+    const t0 = Date.now();
+    const poll = setInterval(() => {
+      if (!isBusy || Date.now() - t0 > 11000) {
+        clearInterval(poll);
+        process.exit(0);
+      }
+    }, 150);
+  };
+  process.on('SIGTERM', () => gracefulExit('SIGTERM'));
+  process.on('SIGINT', () => gracefulExit('SIGINT'));
 
   ensureErc8004Metadata().catch(() => {});
   loadOnChainHistory().catch(() => {});

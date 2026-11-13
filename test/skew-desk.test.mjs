@@ -36,6 +36,7 @@ import {
   verifyCommittedOnChainLedger,
   evaluateMakerFillVsFixedBaseline,
 } from '../scripts/verify-onchain-pnl.mjs';
+import { createExecutionManager } from '../src/execution.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, '..');
@@ -845,4 +846,113 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-6000\}"/);
   assert.match(runVmSh, /sha256sum -c/);
+});
+
+test('30. Leg-2 RPC propagation retry recovers from 1-block insufficient_funds lag and writes exact flatten PnL to disk', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.retry.${Date.now()}.jsonl`);
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const mockProvider = {
+    call: async () => ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [10n ** 36n]),
+  };
+  const externalCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '00000000000000000000000025a5c1ae6a47e5c57941a69b54ce6fc52e7cab52';
+
+  let quoteCalls = 0;
+  let txCounter = 0;
+  try {
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { cngn: 7000 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: mockProvider,
+      routerIface,
+      erc20Iface,
+      sendTagged: async () => ({ hash: `0x${String(++txCounter).padStart(64, 'a')}`, logs: [] }),
+      bestUniQuote: async () => ({ amountOut: 330_718200n, fee: 100 }),
+      textileRequestQuote: async () => {
+        if (++quoteCalls === 1) return { error: 'insufficient_funds' }; // simulates 1-block RPC lag at t=0ms
+        return {
+          rfqId: 'rfq-1',
+          claimToken: 'claim-1',
+          quote: { buyAmount: '330820000' },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === CONFIG.tokens[0].address && f.toAddr) return 465_257_266600n;
+        if (tok === CONFIG.contracts.usdt && f.fromAddr) return 330_720000n;
+        if (tok === CONFIG.contracts.usdt && f.toAddr) return 330_820000n;
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+      leg2RetryDelaysMs: [1, 1],
+    });
+
+    // Override allowance check cleanly via pre-warmed mock contract call
+    const opp = {
+      corridor: 'cNGN/USDT',
+      symbol: 'cNGN',
+      tokenAddress: CONFIG.tokens[0].address,
+      decimals: 6,
+      direction: 'uni->textile',
+      sizeUsdt: 330.72,
+      amountInRaw: '330720000',
+      midTokenRaw: '465257266600',
+      expectedOutUsdt: 330.82,
+      uniFee: 100,
+      edgeUsd: 0.10,
+      edgeBps: 3.02,
+      scannedAtMs: Date.now(),
+    };
+    const res = await exec.executeOpportunity(opp);
+    assert.equal(res.type, 'CROSS_VENUE_ARB');
+    assert.ok(res.edgeUsd >= 0.099);
+
+    // Now simulate permanent Maker disappearance -> verify exact scratch PnL written to disk in trades.jsonl
+    const execFlat = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { cngn: 7000 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: mockProvider,
+      routerIface,
+      erc20Iface,
+      sendTagged: async () => ({ hash: '0x' + 'b'.repeat(64), logs: [] }),
+      bestUniQuote: async () => ({ amountOut: 330_718200n, fee: 100 }),
+      textileRequestQuote: async () => ({ error: 'no_makers_online' }),
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === CONFIG.tokens[0].address && f.toAddr) return 465_257_266600n;
+        if (tok === CONFIG.contracts.usdt && f.fromAddr) return 330_720000n;
+        if (tok === CONFIG.contracts.usdt && f.toAddr) return 330_718200n;
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+      leg2RetryDelaysMs: [1, 1],
+    });
+    const flatRes = await execFlat.executeOpportunity({ ...opp, scannedAtMs: Date.now() });
+    assert.equal(flatRes.type, 'LEG2_FLATTEN_DEX');
+    assert.equal(flatRes.edgeUsd, -0.0018);
+    const lines = fs.readFileSync(tmpLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(lines[1].type, 'LEG2_FLATTEN_DEX');
+    assert.equal(lines[1].edgeUsd, -0.0018);
+  } finally {
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
 });
