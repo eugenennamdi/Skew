@@ -760,6 +760,19 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
     () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: hijackedRecipientSwap }, CONFIG.agentWallet),
     /recipient mismatch/
   );
+  const unvettedTokenSwap = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.usdt,
+    tokenOut: attacker,
+    fee: 100,
+    recipient: CONFIG.agentWallet,
+    amountIn: 100_000000n,
+    amountOutMinimum: 99_900000n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: unvettedTokenSwap }, CONFIG.agentWallet),
+    /unvetted token/
+  );
 
   // 3. Circuit breaker trips on 2 consecutive losses, single >= $0.35 loss, or >= $1.00 24h loss
   const nowMs = Date.now();
@@ -827,6 +840,9 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.equal(PREVIEW_BUDGET.reserveForChase, 10);
   const runVmSh = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
   assert.match(runVmSh, /EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"/);
+  assert.match(runVmSh, /ENABLE_USAT="\$\{ENABLE_USAT:-0\}"/);
+  assert.match(runVmSh, /MIN_EDGE_USD="\$\{MIN_EDGE_USD:-0\.015\}"/);
+  assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-6000\}"/);
   assert.match(runVmSh, /sha256sum -c/);
 });

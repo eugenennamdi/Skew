@@ -335,6 +335,12 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
   const permit2Lower = CONFIG.contracts.permit2.toLowerCase();
   const registryLower = CONFIG.contracts.erc8004Registry.toLowerCase();
 
+  const allowedTokens = new Set([
+    CONFIG.contracts.usdt.toLowerCase(),
+    ...CONFIG.tokens.map((t) => t.address.toLowerCase()),
+    ...(CONFIG.legacyUnwindTokens || []).map((t) => t.address.toLowerCase()),
+  ]);
+
   if (toLower === reactorLower) {
     if (!REACTOR_ALLOWED_SELECTORS.has(selector)) {
       throw new Error(`TX_FIREWALL_BLOCKED: unauthorized Reactor selector ${selector}`);
@@ -350,6 +356,9 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
     if (params.recipient.toLowerCase() !== expectedRecipient.toLowerCase()) {
       throw new Error(`TX_FIREWALL_BLOCKED: SwapRouter02 recipient mismatch (${params.recipient})`);
     }
+    if (!allowedTokens.has(params.tokenIn.toLowerCase()) || !allowedTokens.has(params.tokenOut.toLowerCase())) {
+      throw new Error(`TX_FIREWALL_BLOCKED: SwapRouter02 unvetted token (${params.tokenIn} -> ${params.tokenOut})`);
+    }
     return true;
   }
 
@@ -360,11 +369,6 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
     return true;
   }
 
-  const allowedTokens = new Set([
-    CONFIG.contracts.usdt.toLowerCase(),
-    ...CONFIG.tokens.map((t) => t.address.toLowerCase()),
-    ...(CONFIG.legacyUnwindTokens || []).map((t) => t.address.toLowerCase()),
-  ]);
   if (allowedTokens.has(toLower)) {
     if (selector !== '0x095ea7b3' || data.length < 10 + 64 * 2) {
       throw new Error(`TX_FIREWALL_BLOCKED: only ERC-20 approve() permitted on token contracts (got ${selector})`);
@@ -711,13 +715,14 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             }
           }
 
-          // ponytail: conditional 25% top-of-book preview only when close to positive edge (> -2.5 bps) and quota has headroom
+          // ponytail: on cNGN, probe 25% ($82.50) down to -15 bps so stacked single-Maker (#9908) +7.6 bps gems hidden behind blended $330 books are caught
+          const topGateBps = token.symbol === 'cNGN' ? -15.0 : -2.5;
           const currBps = Number(bestInRaw) > 0 ? (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000 : -999;
           if (
             bestEdgeUsd < CONFIG.minEdgeUsd &&
-            currBps > -2.5 &&
+            currBps > topGateBps &&
             actualInRaw >= 40000000n &&
-            (opts.priority || PREVIEW_BUDGET.remaining >= 28)
+            (opts.priority || PREVIEW_BUDGET.remaining >= 24)
           ) {
             const topSliceInRaw = (actualInRaw * 25n) / 100n;
             const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw, opts).catch(() => null);
@@ -874,12 +879,13 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
 
             const invCoversSub = preBalUsd >= Math.max(6.0, (Number(bestInRaw) / 1e6) * 0.95);
             const subMinReqUsd = invCoversSub ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
+            const topGateBps = token.symbol === 'cNGN' ? -15.0 : -2.5;
             const currBps = Number(bestInRaw) > 0 ? (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000 : -999;
             if (
               bestEdgeUsd < subMinReqUsd &&
-              currBps > -2.5 &&
+              currBps > topGateBps &&
               actualUsdtInRaw >= 40000000n &&
-              (opts.priority || PREVIEW_BUDGET.remaining >= 28)
+              (opts.priority || PREVIEW_BUDGET.remaining >= 24)
             ) {
               const topInRaw = (actualUsdtInRaw * 25n) / 100n;
               const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
