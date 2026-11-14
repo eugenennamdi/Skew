@@ -774,6 +774,43 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
     () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: unvettedTokenSwap }, CONFIG.agentWallet),
     /unvetted token/
   );
+  // Bounded $2.00 AUTO_GAS_REFILL (USDT -> CELO <= $5) passes firewall, while oversized ($50) or reverse (CELO -> USDT) are blocked
+  const validGasRefillSwap = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.usdt,
+    tokenOut: CONFIG.contracts.celo,
+    fee: 100,
+    recipient: CONFIG.agentWallet,
+    amountIn: 2_000000n,
+    amountOutMinimum: 30n * 10n ** 18n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.equal(validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: validGasRefillSwap }, CONFIG.agentWallet), true);
+  const oversizedGasRefill = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.usdt,
+    tokenOut: CONFIG.contracts.celo,
+    fee: 100,
+    recipient: CONFIG.agentWallet,
+    amountIn: 50_000000n,
+    amountOutMinimum: 1n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: oversizedGasRefill }, CONFIG.agentWallet),
+    /unvetted token/
+  );
+  const reverseCeloSell = routerIface.encodeFunctionData('exactInputSingle', [{
+    tokenIn: CONFIG.contracts.celo,
+    tokenOut: CONFIG.contracts.usdt,
+    fee: 100,
+    recipient: CONFIG.agentWallet,
+    amountIn: 10n * 10n ** 18n,
+    amountOutMinimum: 1n,
+    sqrtPriceLimitX96: 0n,
+  }]);
+  assert.throws(
+    () => validateOutboundTx({ to: CONFIG.contracts.uniSwapRouter02, data: reverseCeloSell }, CONFIG.agentWallet),
+    /unvetted token/
+  );
 
   // 3. Circuit breaker trips on 2 consecutive losses, single >= $0.35 loss, or >= $1.00 24h loss
   const nowMs = Date.now();

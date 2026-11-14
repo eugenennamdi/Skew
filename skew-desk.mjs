@@ -356,7 +356,14 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
     if (params.recipient.toLowerCase() !== expectedRecipient.toLowerCase()) {
       throw new Error(`TX_FIREWALL_BLOCKED: SwapRouter02 recipient mismatch (${params.recipient})`);
     }
-    if (!allowedTokens.has(params.tokenIn.toLowerCase()) || !allowedTokens.has(params.tokenOut.toLowerCase())) {
+    const inLower = params.tokenIn.toLowerCase();
+    const outLower = params.tokenOut.toLowerCase();
+    // ponytail: permit bounded one-way USDT -> CELO (<= $5) strictly for AUTO_GAS_REFILL without granting CELO approve/sell surface
+    const isBoundedGasRefill =
+      inLower === CONFIG.contracts.usdt.toLowerCase() &&
+      outLower === CONFIG.contracts.celo.toLowerCase() &&
+      BigInt(params.amountIn || 0n) <= 5_000_000n;
+    if (!isBoundedGasRefill && (!allowedTokens.has(inLower) || !allowedTokens.has(outLower))) {
       throw new Error(`TX_FIREWALL_BLOCKED: SwapRouter02 unvetted token (${params.tokenIn} -> ${params.tokenOut})`);
     }
     return true;
