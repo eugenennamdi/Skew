@@ -956,3 +956,157 @@ test('30. Leg-2 RPC propagation retry recovers from 1-block insufficient_funds l
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
   }
 });
+
+test('31. Leg-2 Maker bait-and-slip shield rejects -14.51 bps quote, flattens on 1-bps DEX, quarantines corridor 30m, and auto-resumes positive 24h book after 60m', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.bait.${Date.now()}.jsonl`);
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const mockProvider = {
+    call: async () => ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [10n ** 36n]),
+  };
+  const externalCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '00000000000000000000000025a5c1ae6a47e5c57941a69b54ce6fc52e7cab52';
+
+  let sentTxs = [];
+  try {
+    const warsToken = CONFIG.tokens.find((t) => t.symbol === 'wARS');
+    const cngnToken = CONFIG.tokens.find((t) => t.symbol === 'cNGN');
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { wars: 8338, cngn: 7048 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: mockProvider,
+      routerIface,
+      erc20Iface,
+      sendTagged: async (tx) => {
+        sentTxs.push(tx);
+        return { hash: `0x${String(sentTxs.length).padStart(64, 'c')}`, logs: [] };
+      },
+      bestUniQuote: async (tokIn) => {
+        if (tokIn === warsToken.address) return { amountOut: 333_633200n, fee: 100 }; // -2.0 bps ($333.6332) DEX exit
+        return { amountOut: 330_820000n, fee: 100 };
+      },
+      textileRequestQuote: async (sellTok) => {
+        if (sellTok === warsToken.address) {
+          // Exact reproduction of 11:47Z wARS Maker bait-and-slip: $333.7000 -> $333.2158 (-14.51 bps = -$0.4842)
+          return {
+            rfqId: 'rfq-bait',
+            claimToken: 'claim-bait',
+            quote: { buyAmount: '333215800' },
+            transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+          };
+        }
+        return {
+          rfqId: 'rfq-cngn',
+          claimToken: 'claim-cngn',
+          quote: { buyAmount: '330850000' },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === warsToken.address && f.toAddr) return 556_635n * 10n ** 18n;
+        if (tok === cngnToken.address && f.toAddr) return 465_000_000000n;
+        if (tok === CONFIG.contracts.usdt && f.fromAddr) return sentTxs.length <= 2 ? 333_700000n : 330_720000n;
+        if (tok === CONFIG.contracts.usdt && f.toAddr) return sentTxs.length <= 2 ? 333_633200n : 330_850000n;
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+      leg2RetryDelaysMs: [1, 1],
+    });
+
+    const warsOpp = {
+      corridor: 'wARS/USDT',
+      symbol: 'wARS',
+      tokenAddress: warsToken.address,
+      decimals: 18,
+      direction: 'uni->textile',
+      sizeUsdt: 333.70,
+      amountInRaw: '333700000',
+      midTokenRaw: String(556_635n * 10n ** 18n),
+      expectedOutUsdt: 333.79,
+      uniFee: 100,
+      edgeUsd: 0.09,
+      edgeBps: 2.70,
+      scannedAtMs: Date.now(),
+    };
+
+    // 1. Rejects -$0.4842 Reactor quote (never signs Reactor tx!) and flattens on 1-bps Uniswap pool for -$0.0668
+    const res1 = await exec.executeOpportunity(warsOpp);
+    assert.equal(res1.type, 'LEG2_FLATTEN_DEX');
+    assert.equal(res1.edgeUsd, -0.0668);
+    assert.equal(sentTxs.some((tx) => tx.to.toLowerCase() === CONFIG.contracts.reactor.toLowerCase()), false);
+
+    // 2. Quarantines wARS/USDT cash-first uni->textile for 30 minutes (0 gas), while cNGN/USDT still executes normally
+    const txCountBeforeRetry = sentTxs.length;
+    const resBlocked = await exec.executeOpportunity({ ...warsOpp, scannedAtMs: Date.now() });
+    assert.equal(resBlocked, null);
+    assert.equal(sentTxs.length, txCountBeforeRetry);
+
+    const cngnRes = await exec.executeOpportunity({
+      corridor: 'cNGN/USDT',
+      symbol: 'cNGN',
+      tokenAddress: cngnToken.address,
+      decimals: 6,
+      direction: 'uni->textile',
+      sizeUsdt: 330.72,
+      amountInRaw: '330720000',
+      midTokenRaw: '465000000000',
+      expectedOutUsdt: 330.85,
+      uniFee: 100,
+      edgeUsd: 0.13,
+      edgeBps: 3.93,
+      scannedAtMs: Date.now(),
+    });
+    assert.equal(cngnRes.type, 'CROSS_VENUE_ARB');
+    assert.ok(cngnRes.edgeUsd > 0.12);
+
+    // 3. Circuit breaker: 60m cooldown when 24h net PnL > 0, permanent lock when 24h net PnL <= 0
+    const nowMs = Date.now();
+    const tenMinAgo = new Date(nowMs - 10 * 60_000).toISOString();
+    const sixtyFiveMinAgo = new Date(nowMs - 65 * 60_000).toISOString();
+    const earlierToday = new Date(nowMs - 4 * 3600_000).toISOString();
+
+    assert.equal(
+      evaluateCircuitBreaker(
+        [
+          { type: 'CROSS_VENUE_ARB', edgeUsd: -0.4842, timestamp: tenMinAgo },
+          { type: 'CROSS_VENUE_ARB', edgeUsd: 3.95, timestamp: earlierToday },
+        ],
+        nowMs
+      ).reason,
+      'max_single_trade_loss'
+    );
+    assert.equal(
+      evaluateCircuitBreaker(
+        [
+          { type: 'CROSS_VENUE_ARB', edgeUsd: -0.4842, timestamp: sixtyFiveMinAgo },
+          { type: 'CROSS_VENUE_ARB', edgeUsd: 3.95, timestamp: earlierToday },
+        ],
+        nowMs
+      ).tripped,
+      false
+    );
+    assert.equal(
+      evaluateCircuitBreaker(
+        [{ type: 'CROSS_VENUE_ARB', edgeUsd: -0.4842, timestamp: sixtyFiveMinAgo }],
+        nowMs
+      ).reason,
+      'max_single_trade_loss'
+    );
+  } finally {
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});

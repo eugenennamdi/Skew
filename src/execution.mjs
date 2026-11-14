@@ -35,6 +35,7 @@ export function createExecutionManager({
   leg2RetryDelaysMs = [850, 1200],
 }) {
   const allowanceCache = new Map();
+  const baitCooldownUntil = new Map();
   let permit2Initialized = false;
   let erc8004MetadataSynced = false;
 
@@ -331,6 +332,11 @@ export function createExecutionManager({
 
       const minDexFirstUsd = CONFIG.minUniToTextileDexFirstUsd ?? 0.045;
       if (opp.edgeBps < CONFIG.minUniToTextileDexFirstBps || opp.edgeUsd < minDexFirstUsd) return null;
+      const baitKey = `${opp.corridor}:uni->textile`;
+      if ((baitCooldownUntil.get(baitKey) || 0) > Date.now()) {
+        console.log(`[BAIT-SHIELD] Skipping ${opp.corridor} cash-first uni->textile (30m cooldown active after Maker bait-and-slip)`);
+        return null;
+      }
 
       let amountInRaw = BigInt(opp.amountInRaw);
       let expectedTokenRaw = BigInt(opp.midTokenRaw);
@@ -439,17 +445,21 @@ export function createExecutionManager({
 
       const leg2Share = Number(sellRaw) / Math.max(1, Number(initialBoughtRaw));
       const leg2CostUsdt = (Number(spentUsdtRaw) / 1e6) * leg2Share;
-      const quotedOutUsdt = Number(q?.quote?.buyAmount || 0) / 1e6;
+      const quotedOutUsdt = Number(q?.quote?.buyAmount || q?.buyAmount || 0) / 1e6;
+      // ponytail: cap Reactor Leg-2 bait-and-slip at -2.5 bps (0.99975, ~-$0.08 max) instead of -15 bps (-$0.50); prefer 1-bps DEX flatten
       const leg2Valid =
         toAddr &&
         calldata &&
         toAddr.toLowerCase() === CONFIG.contracts.reactor.toLowerCase() &&
         !isSelfMakerOrder(calldata) &&
-        !(quotedOutUsdt > 0 && quotedOutUsdt < leg2CostUsdt * 0.9985);
+        quotedOutUsdt >= leg2CostUsdt * 0.99975;
 
       if (!leg2Valid) {
+        baitCooldownUntil.set(baitKey, Date.now() + Number(CONFIG.baitCooldownMs ?? 30 * 60_000));
         // ponytail: bounded immediate flatten (<= 15 bps max scratch) + record exact scratch PnL on disk so circuit breaker counts it
-        console.warn(`[FLATTEN] Leg 2 rejected/slipped on ${opp.corridor}; flattening ${opp.symbol} back to USDT immediately...`);
+        console.warn(
+          `[FLATTEN] Leg 2 rejected/slipped on ${opp.corridor} (quotedOut=$${quotedOutUsdt.toFixed(4)} vs cost=$${leg2CostUsdt.toFixed(4)}); quarantining cash-first 30m & flattening ${opp.symbol} to USDT...`
+        );
         const backUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, initialBoughtRaw);
         const backUsdt = Number(backUni.amountOut) / 1e6;
         const spentUsdt = Number(spentUsdtRaw) / 1e6;

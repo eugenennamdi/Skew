@@ -417,8 +417,12 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
   const latestEdge = sessionRecords.length > 0 ? Number(sessionRecords[0].edgeUsd) : 0;
   const latestTs = sessionRecords.length > 0 ? Date.parse(sessionRecords[0].timestamp || '') : 0;
   const cooldownMs = Number(cfg.circuitBreakerCooldownMs ?? 15 * 60_000);
+  const singleLossCooldownMs = Number(cfg.singleLossCooldownMs ?? 60 * 60_000);
 
-  if (latestEdge <= -(cfg.maxSingleTradeLossUsd ?? 0.35)) {
+  if (
+    latestEdge <= -(cfg.maxSingleTradeLossUsd ?? 0.35) &&
+    (rolling24hNetUsd <= 0 || (Number.isFinite(latestTs) && nowMs - latestTs < singleLossCooldownMs))
+  ) {
     return { tripped: true, reason: 'max_single_trade_loss', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
   }
   if (consecutiveLosses >= (cfg.maxConsecutiveLosses ?? 2) && Number.isFinite(latestTs) && nowMs - latestTs < cooldownMs) {
