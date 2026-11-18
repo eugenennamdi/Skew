@@ -86,17 +86,20 @@ if [ -x "./skew-stitch" ]; then
     cp -f "$(pwd)/rfq-api.key" "$(pwd)/textile-stitch/rfq-api.key"
   fi
   export STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key"
+  : > skew-stitch.log
   STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
   STITCH_RFQ_API_KEY_FILE="$(pwd)/rfq-api.key" \
   SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \
   SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-6}" \
   RUST_LOG=info \
-    setsid nohup ./skew-stitch --config ./stitch.runtime.toml </dev/null > skew-stitch.log 2>&1 &
+    setsid nohup ./skew-stitch --config ./stitch.runtime.toml </dev/null >> skew-stitch.log 2>&1 &
   echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
 
 # 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
+: > skew-desk.log
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=384}" \
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
 GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}" \
@@ -117,13 +120,13 @@ CHASE_INTERVAL_MS="${CHASE_INTERVAL_MS:-1000}" \
 SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-3500}" \
 BIND_HOST="${BIND_HOST:-127.0.0.1}" \
 PORT="${PORT:-8080}" \
-  setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
+  setsid nohup node skew-desk.mjs </dev/null >> skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI (loopback): http://${BIND_HOST:-127.0.0.1}:${PORT:-8080}"
 
-# 7. Install idempotent 2-minute reboot & crash self-healing watchdog in user crontab (Linux VM, zero sudo required)
+# 7. Install idempotent 2-minute reboot, OOM/crash, & 50MB log-trim watchdog in user crontab (Linux VM, zero sudo required)
 if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
   REPO_DIR="$(pwd)"
-  WATCHDOG_LINE="*/2 * * * * [ -z \"\$(find \"$LOCK_FILE\" -mmin -2 2>/dev/null)\" ] && ( ! pgrep -f \"[n]ode skew-desk.mjs\" >/dev/null 2>&1 || ( [ -x \"$REPO_DIR/skew-stitch\" ] && ! pgrep -f \"[s]kew-stitch\" >/dev/null 2>&1 ) ) && cd \"$REPO_DIR\" && ./run-vm.sh >> \"$REPO_DIR/watchdog.log\" 2>&1 # skew-auto-watchdog"
+  WATCHDOG_LINE="*/2 * * * * find \"$REPO_DIR\" -maxdepth 1 -name '*.log' -size +50M -exec truncate -s 0 {} + 2>/dev/null; [ -z \"\$(find \"$LOCK_FILE\" -mmin -2 2>/dev/null)\" ] && ( ! pgrep -f \"[n]ode skew-desk.mjs\" >/dev/null 2>&1 || ( [ -x \"$REPO_DIR/skew-stitch\" ] && ! pgrep -f \"[s]kew-stitch\" >/dev/null 2>&1 ) ) && cd \"$REPO_DIR\" && ./run-vm.sh >> \"$REPO_DIR/watchdog.log\" 2>&1 # skew-auto-watchdog"
   ( crontab -l 2>/dev/null | grep -v "# skew-auto-watchdog" || true; echo "$WATCHDOG_LINE" ) | crontab - 2>/dev/null && \
-    echo "[+] Installed 2-minute reboot & process watchdog (# skew-auto-watchdog)." || true
+    echo "[+] Installed 2-minute reboot, log-trim & process watchdog (# skew-auto-watchdog)." || true
 fi
