@@ -32,13 +32,17 @@ if [ ! -d "node_modules/ethers" ]; then
 fi
 
 # 3. Stop any previous skew-desk or skew-stitch processes gracefully (waits up to 12s for any in-flight Leg-2 arb to settle)
+LOCK_FILE="/tmp/skew-starting-$(id -u).lock"
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
 echo "[+] Stopping any previous instances..."
-pkill -f "node skew-desk.mjs" 2>/dev/null || true
+pkill -f "[n]ode skew-desk.mjs" 2>/dev/null || true
 for _ in $(seq 1 24); do
-  pgrep -f "node skew-desk.mjs" >/dev/null 2>&1 || break
+  pgrep -f "[n]ode skew-desk.mjs" >/dev/null 2>&1 || break
   sleep 0.5
 done
-pkill -f "skew-stitch" 2>/dev/null || true
+pkill -f "[s]kew-stitch" 2>/dev/null || true
 sleep 1
 
 # 4. Run self-check against Celo Mainnet & Textile RFQ
@@ -110,8 +114,16 @@ MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="${MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0.045}" \
 MAX_DAILY_LOSS_USD="${MAX_DAILY_LOSS_USD:-1.00}" \
 MAX_CONSECUTIVE_LOSSES="${MAX_CONSECUTIVE_LOSSES:-2}" \
 CHASE_INTERVAL_MS="${CHASE_INTERVAL_MS:-1000}" \
-SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-6000}" \
+SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-3500}" \
 BIND_HOST="${BIND_HOST:-127.0.0.1}" \
 PORT="${PORT:-8080}" \
   setsid nohup node skew-desk.mjs </dev/null > skew-desk.log 2>&1 &
 echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI (loopback): http://${BIND_HOST:-127.0.0.1}:${PORT:-8080}"
+
+# 7. Install idempotent 2-minute reboot & crash self-healing watchdog in user crontab (Linux VM, zero sudo required)
+if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
+  REPO_DIR="$(pwd)"
+  WATCHDOG_LINE="*/2 * * * * [ -z \"\$(find \"$LOCK_FILE\" -mmin -2 2>/dev/null)\" ] && ( ! pgrep -f \"[n]ode skew-desk.mjs\" >/dev/null 2>&1 || ( [ -x \"$REPO_DIR/skew-stitch\" ] && ! pgrep -f \"[s]kew-stitch\" >/dev/null 2>&1 ) ) && cd \"$REPO_DIR\" && ./run-vm.sh >> \"$REPO_DIR/watchdog.log\" 2>&1 # skew-auto-watchdog"
+  ( crontab -l 2>/dev/null | grep -v "# skew-auto-watchdog" || true; echo "$WATCHDOG_LINE" ) | crontab - 2>/dev/null && \
+    echo "[+] Installed 2-minute reboot & process watchdog (# skew-auto-watchdog)." || true
+fi

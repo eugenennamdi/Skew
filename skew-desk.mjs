@@ -200,6 +200,20 @@ export function sumReceiptTokenTransfers(receipt, tokenAddr, { fromAddr = null, 
   return total;
 }
 
+let cachedGasPrice = { value: null, ts: 0 };
+
+/**
+ * Compute live 2-leg arbitrage gas cost in USD from Celo baseFee + priority tip (~320k combined gas).
+ * Falls back to CONFIG.estimatedArbGasUsd when offline so unit tests stay deterministic.
+ */
+export function estimateLiveArbGasUsd(gasPriceWei = cachedGasPrice.value, celoUsd = 0.065) {
+  if (!gasPriceWei || BigInt(gasPriceWei) <= 0n) return CONFIG.estimatedArbGasUsd;
+  const tipWei = BigInt(Math.round((CONFIG.priorityTipGwei || 20) * 1e9));
+  const effGasWei = BigInt(gasPriceWei) + tipWei;
+  const totalCelo = (Number(effGasWei) * 320_000) / 1e18;
+  return Math.max(CONFIG.estimatedArbGasUsd, Number((totalCelo * celoUsd).toFixed(6)));
+}
+
 /**
  * Pre-flight profitability gate on the signed firm Textile quote (`q.quote.buyAmount`) vs live Uniswap v3 exit.
  * Aborts BEFORE Leg 1 (0 gas spent) whenever preview-to-firm slippage makes the round-trip unprofitable after gas.
@@ -207,7 +221,7 @@ export function sumReceiptTokenTransfers(receipt, tokenAddr, { fromAddr = null, 
 export function verifyFirmArbQuote({
   inUsdt,
   firmOutUsdt,
-  estimatedGasUsd = CONFIG.estimatedArbGasUsd,
+  estimatedGasUsd = estimateLiveArbGasUsd(),
   minNetEdgeUsd = CONFIG.minFirmNetEdgeUsd,
   minNetEdgeBps = CONFIG.minFirmNetEdgeBps,
 }) {
@@ -441,8 +455,6 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
   return { tripped: false, reason: 'ok', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
 }
 
-let cachedGasPrice = { value: null, ts: 0 };
-
 export async function sendTagged(txReq, opts = {}) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
   validateOutboundTx(txReq, wallet.address);
@@ -643,6 +655,8 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
 
 const corridorDepthCache = new Map();
 const DEPTH_CACHE_TTL_MS = 24000;
+const topProbeNegCache = new Map();
+const TOP_PROBE_NEG_TTL_MS = 12000;
 
 /**
  * Scan a single token across one or both directions with Multi-Slice (100% / 75% / 50% / 35% / 20%) + adaptive availableSellAmount sizing.
@@ -735,27 +749,33 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             }
           }
 
-          // ponytail: on cNGN, probe 25% ($82.50) down to -15 bps so stacked single-Maker (#9908) +7.6 bps gems hidden behind blended $330 books are caught
-          const topGateBps = token.symbol === 'cNGN' ? -15.0 : -2.5;
+          // ponytail: probe ~28% (~$100 sweet spot) on cNGN & wARS down to -16 bps (with 12s dry cache) to snipe stacked $100 Maker tiers
+          const topGateBps = token.symbol === 'cNGN' || token.symbol === 'wARS' ? -16.0 : -2.5;
           const currBps = Number(bestInRaw) > 0 ? (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000 : -999;
+          const topNegKey1 = `${token.symbol}:t2u`;
           if (
             bestEdgeUsd < CONFIG.minEdgeUsd &&
             currBps > topGateBps &&
             actualInRaw >= 40000000n &&
-            (opts.priority || PREVIEW_BUDGET.remaining >= 24)
+            (opts.priority || ((topProbeNegCache.get(topNegKey1) || 0) <= Date.now() && PREVIEW_BUDGET.remaining >= 24))
           ) {
-            const topSliceInRaw = (actualInRaw * 25n) / 100n;
+            const topSliceInRaw = (actualInRaw * 28n) / 100n;
             const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw, opts).catch(() => null);
             if (topPreview && topPreview.status === 'preview' && topPreview.buyAmount) {
               const topTokenRaw = BigInt(topPreview.buyAmount);
               const topUni = await bestUniQuote(token.address, CONFIG.contracts.usdt, topTokenRaw);
               const topEdgeUsd = Number(topUni.amountOut) / 1e6 - Number(topSliceInRaw) / 1e6;
+              if (topEdgeUsd >= CONFIG.minEdgeUsd) {
+                topProbeNegCache.delete(topNegKey1);
+              } else {
+                topProbeNegCache.set(topNegKey1, Date.now() + TOP_PROBE_NEG_TTL_MS);
+              }
               if (topEdgeUsd > bestEdgeUsd) {
                 bestInRaw = topSliceInRaw;
                 bestTokenOutRaw = topTokenRaw;
                 bestUniBack = topUni;
                 bestEdgeUsd = topEdgeUsd;
-                sliceLabel = '25% top-of-book ($' + (Number(topSliceInRaw) / 1e6).toFixed(2) + ')';
+                sliceLabel = '28% top-of-book ($' + (Number(topSliceInRaw) / 1e6).toFixed(2) + ')';
               }
             }
           }
@@ -905,28 +925,34 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
 
             const invCoversSub = preBalUsd >= Math.max(6.0, (Number(bestInRaw) / 1e6) * 0.95);
             const subMinReqUsd = invCoversSub ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
-            const topGateBps = token.symbol === 'cNGN' ? -15.0 : -2.5;
+            const topGateBps = token.symbol === 'cNGN' || token.symbol === 'wARS' ? -16.0 : -2.5;
             const currBps = Number(bestInRaw) > 0 ? (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000 : -999;
+            const topNegKey2 = `${token.symbol}:u2t`;
             if (
               bestEdgeUsd < subMinReqUsd &&
               currBps > topGateBps &&
               actualUsdtInRaw >= 40000000n &&
-              (opts.priority || PREVIEW_BUDGET.remaining >= 24)
+              (opts.priority || ((topProbeNegCache.get(topNegKey2) || 0) <= Date.now() && PREVIEW_BUDGET.remaining >= 24))
             ) {
-              const topInRaw = (actualUsdtInRaw * 25n) / 100n;
+              const topInRaw = (actualUsdtInRaw * 28n) / 100n;
               const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
               if (topUni.amountOut > 0n) {
                 const topPrev = await textilePreview(token.address, CONFIG.contracts.usdt, topUni.amountOut, opts).catch(() => null);
                 if (topPrev && topPrev.status === 'preview' && topPrev.buyAmount) {
                   const topOutRaw = BigInt(topPrev.buyAmount);
                   const topEdgeUsd = Number(topOutRaw) / 1e6 - Number(topInRaw) / 1e6;
+                  if (topEdgeUsd >= subMinReqUsd) {
+                    topProbeNegCache.delete(topNegKey2);
+                  } else {
+                    topProbeNegCache.set(topNegKey2, Date.now() + TOP_PROBE_NEG_TTL_MS);
+                  }
                   if (topEdgeUsd > bestEdgeUsd) {
                     bestInRaw = topInRaw;
                     bestTokenRaw = topUni.amountOut;
                     bestOutRaw = topOutRaw;
                     bestFee = topUni.fee;
                     bestEdgeUsd = topEdgeUsd;
-                    noteLabel = '25% top-of-book ($' + (Number(topInRaw) / 1e6).toFixed(2) + ')';
+                    noteLabel = '28% top-of-book ($' + (Number(topInRaw) / 1e6).toFixed(2) + ')';
                   }
                 }
               }
@@ -1110,7 +1136,7 @@ export async function runSingleScan() {
     STATE.textileMids = { ...STATE.textileMids, ...fetchedTextileMids };
 
     try {
-      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, usatRaw, celoRaw, poolCngnMid, poolWarsMid] = await Promise.all([
+      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, usatRaw, celoRaw, poolCngnMid, poolWarsMid, feeData] = await Promise.all([
         usdtC.balanceOf(CONFIG.agentWallet),
         cngnC.balanceOf(CONFIG.agentWallet),
         warsC.balanceOf(CONFIG.agentWallet),
@@ -1120,7 +1146,13 @@ export async function runSingleScan() {
         provider.getBalance(CONFIG.agentWallet),
         readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
         readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
+        !cachedGasPrice.value || Date.now() - cachedGasPrice.ts >= 30_000
+          ? provider.getFeeData().catch(() => null)
+          : Promise.resolve(null),
       ]);
+      if (feeData?.gasPrice) {
+        cachedGasPrice = { value: feeData.gasPrice, ts: Date.now() };
+      }
       usdt = Number(usdtRaw) / 1e6;
       cngn = Number(cngnRaw) / 1e6;
       wars = Number(warsRaw) / 1e18;
@@ -1257,13 +1289,29 @@ export async function runSingleScan() {
       STATE.riskOfficer.stitchPolicySync = syncStitchRuntimePolicy(STATE.riskOfficer);
     }
 
-    // ponytail: tiered rate-aware rotation — always scan cNGN + wARS + 1 rotating secondary (~5 previews/tick <= 50/min out of 60/min cap)
+    // ponytail: 3.5s slot0()-driven scanning — reacts immediately whenever cNGN/wARS pool mid moves >=0.15 bps (or quota >=35), pacing flat ticks only when quota <35
     const liquidUsdtBudget = Math.max(1, usdt);
+    const cngnMoved =
+      !STATE.lastSlot0Mids ||
+      Math.abs(uniCngnMid - STATE.lastSlot0Mids.cNGN) / Math.max(1e-12, uniCngnMid) >= 0.000015;
+    const warsMoved =
+      !STATE.lastSlot0Mids ||
+      Math.abs(uniWarsMid - STATE.lastSlot0Mids.wARS) / Math.max(1e-12, uniWarsMid) >= 0.000015;
+    STATE.lastSlot0Mids = { cNGN: uniCngnMid, wARS: uniWarsMid };
+
     let activeTokens = CONFIG.tokens;
     if (STATE.scanCount > 0 && CONFIG.tokens.length > 2) {
-      const hotTokens = CONFIG.tokens.filter((t) => t.symbol === 'cNGN' || t.symbol === 'wARS');
+      const quotaHealthy = PREVIEW_BUDGET.remaining >= 35 || STATE.scanCount % 2 === 0;
+      const hotTokens = CONFIG.tokens.filter((t) => {
+        if (t.symbol === 'cNGN') return cngnMoved || quotaHealthy;
+        if (t.symbol === 'wARS') return warsMoved || quotaHealthy;
+        return false;
+      });
       const secondaryTokens = CONFIG.tokens.filter((t) => t.symbol !== 'cNGN' && t.symbol !== 'wARS');
-      const rotated = secondaryTokens.length > 0 ? [secondaryTokens[(STATE.scanCount - 1) % secondaryTokens.length]] : [];
+      const rotated =
+        secondaryTokens.length > 0 && STATE.scanCount % 4 === 0
+          ? [secondaryTokens[Math.floor(STATE.scanCount / 4) % secondaryTokens.length]]
+          : [];
       activeTokens = [...hotTokens, ...rotated];
     }
 

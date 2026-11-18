@@ -149,6 +149,11 @@ export function createExecutionManager({
     console.log(`[EXEC] Attempting ${opp.corridor} (${opp.direction}) size=$${opp.sizeUsdt.toFixed(4)} previewEdge=+$${opp.edgeUsd.toFixed(4)}`);
 
     if (opp.direction === 'textile->uni') {
+      const t2uBaitKey = `${opp.corridor}:textile->uni`;
+      if ((baitCooldownUntil.get(t2uBaitKey) || 0) > Date.now()) {
+        console.log(`[BAIT-SHIELD] Skipping ${opp.corridor} textile->uni (5m cooldown active after DEX Leg-2 slip)`);
+        return null;
+      }
       const amountInRaw = BigInt(opp.amountInRaw);
       const [, q] = await Promise.all([
         ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.reactor, amountInRaw),
@@ -180,11 +185,14 @@ export function createExecutionManager({
         return null;
       }
 
+      // ponytail: pre-warm SwapRouter02 allowance BEFORE Leg 1 so Leg 2 fires in 0ms after r1 mines
+      await ensureAllowance(opp.tokenAddress, CONFIG.contracts.uniSwapRouter02, firmBuyRaw * 2n);
       const r1 = await sendTagged({ to: toAddr, data: calldata }, { priorityTip: true });
       textileSubmitTx(q.rfqId, q.claimToken, r1.hash).catch(() => {});
       const receivedFromLogs = sumReceiptTokenTransfers(r1, opp.tokenAddress, { toAddr: wallet.address });
       const spentUsdtRaw = sumReceiptTokenTransfers(r1, CONFIG.contracts.usdt, { fromAddr: wallet.address }) || amountInRaw;
       const receivedRaw = receivedFromLogs > 0n ? receivedFromLogs : firmBuyRaw;
+      const actualInUsdt = Number(spentUsdtRaw) / 1e6;
 
       const [, leg2Uni] = await Promise.all([
         ensureAllowance(opp.tokenAddress, CONFIG.contracts.uniSwapRouter02, receivedRaw),
@@ -204,9 +212,32 @@ export function createExecutionManager({
         amountOutMinimum: minOutUsdt,
         sqrtPriceLimitX96: 0n,
       }]);
-      const r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, { priorityTip: true });
+      let r2;
+      try {
+        r2 = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, { priorityTip: true });
+      } catch (leg2Err) {
+        // ponytail: catch >5 bps DEX pool move during Leg 1 and flatten 100% in 1 tx (<=35 bps cap) + log PnL instead of stranding for 3x $150 unwinds
+        baitCooldownUntil.set(t2uBaitKey, Date.now() + Number(CONFIG.t2uCooldownMs ?? 5 * 60_000));
+        console.warn(
+          `[FLATTEN] textile->uni Leg 2 slipped >5 bps on ${opp.corridor} (${leg2Err.message?.slice(0, 80)}); quarantining 5m & flattening 100% ${opp.symbol} to USDT...`
+        );
+        const backUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, receivedRaw);
+        const backUsdt = Number(backUni.amountOut) / 1e6;
+        if (backUni.amountOut > 0n && backUsdt >= actualInUsdt * 0.9965) {
+          return swapOnUniswap(
+            opp.tokenAddress,
+            CONFIG.contracts.usdt,
+            receivedRaw,
+            'LEG2_FLATTEN_DEX',
+            opp.corridor,
+            actualInUsdt,
+            0,
+            actualInUsdt
+          );
+        }
+        throw leg2Err;
+      }
       const returnedUsdtRaw = sumReceiptTokenTransfers(r2, CONFIG.contracts.usdt, { toAddr: wallet.address });
-      const actualInUsdt = Number(spentUsdtRaw) / 1e6;
       const actualOutUsdt = returnedUsdtRaw > 0n ? Number(returnedUsdtRaw) / 1e6 : Number(leg2Uni.amountOut) / 1e6;
       const realizedEdgeUsd = actualOutUsdt - actualInUsdt;
       const realizedEdgeBps = actualInUsdt > 0 ? (realizedEdgeUsd / actualInUsdt) * 10000 : 0;
@@ -648,7 +679,7 @@ export function createExecutionManager({
 
     for (const s of slots) {
       if (!(s.mid > 0) || s.usd <= upperBandUsd) continue;
-      const unwindUsd = Math.min(s.usd - targetUsd, 150.0);
+      const unwindUsd = Math.min(s.usd - targetUsd, 400.0);
       if (unwindUsd < 1.5) continue;
       const sellUnits = (unwindUsd / s.mid).toFixed(s.dec === 6 ? 2 : 4);
       const sellRaw = ethers.parseUnits(sellUnits, s.dec);

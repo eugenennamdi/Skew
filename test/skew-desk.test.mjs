@@ -24,6 +24,7 @@ import {
   syncStitchRuntimePolicy,
   isSelfMakerOrder,
   isValidUniQuoteGas,
+  estimateLiveArbGasUsd,
   verifyFirmArbQuote,
   sumReceiptTokenTransfers,
   renderDashboardHtml,
@@ -881,7 +882,8 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /ENABLE_USAT="\$\{ENABLE_USAT:-0\}"/);
   assert.match(runVmSh, /MIN_EDGE_USD="\$\{MIN_EDGE_USD:-0\.015\}"/);
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-6000\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-3500\}"/);
+  assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
 });
 
@@ -1143,6 +1145,118 @@ test('31. Leg-2 Maker bait-and-slip shield rejects -14.51 bps quote, flattens on
       ).reason,
       'max_single_trade_loss'
     );
+  } finally {
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});
+
+test('32. textile->uni Leg-2 >5bps DEX slip catches revert, flattens 100% in 1 swap with disk PnL, quarantines 5m, and scales live gas floor', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.t2u.${Date.now()}.jsonl`);
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const mockProvider = {
+    call: async () => ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [10n ** 36n]),
+  };
+  const externalCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '00000000000000000000000025a5c1ae6a47e5c57941a69b54ce6fc52e7cab52';
+
+  // 1. Live gas cost scaling: offline = $0.003, 260 gwei = ~$0.0058, 1500 gwei = ~$0.0316 (blocks thin $0.02 gross edge)
+  assert.equal(estimateLiveArbGasUsd(null), CONFIG.estimatedArbGasUsd);
+  assert.ok(estimateLiveArbGasUsd(260_000_000_000n, 0.065) > 0.005);
+  const highGas = estimateLiveArbGasUsd(1_500_000_000_000n, 0.065);
+  assert.ok(highGas > 0.03);
+  assert.equal(verifyFirmArbQuote({ inUsdt: 100, firmOutUsdt: 100.02, estimatedGasUsd: highGas }).ok, false);
+
+  // 2. Exact reproduction of blk=83021268 orphaned textile->uni Leg 2:
+  //    Pre-Leg-1 quote = $346.35 (+4.3 bps), then external bot moves pool -8 bps to $345.92 during Leg 1!
+  //    First Router call (minOutUsdt = 99.95% of $346.35 = $346.1768) throws CALL_EXCEPTION -> caught & flattened 100% in 1 tx!
+  let uniQuoteCalls = 0;
+  let routerCalls = 0;
+  const sentTxs = [];
+  try {
+    const cngnToken = CONFIG.tokens.find((t) => t.symbol === 'cNGN');
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { cngn: 7200 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: mockProvider,
+      routerIface,
+      erc20Iface,
+      sendTagged: async (tx) => {
+        if (tx.to.toLowerCase() === CONFIG.contracts.uniSwapRouter02.toLowerCase()) {
+          routerCalls += 1;
+          if (routerCalls === 1) {
+            throw new Error('execution reverted: Too little received');
+          }
+        }
+        sentTxs.push(tx);
+        return { hash: `0x${String(sentTxs.length).padStart(64, 'd')}`, logs: [] };
+      },
+      bestUniQuote: async () => {
+        uniQuoteCalls += 1;
+        // Call 1 (pre-Leg-1): $346.3500; Call 2 (post-slip flatten): $346.0200 (-5.2 bps vs $346.20 spent)
+        return uniQuoteCalls === 1
+          ? { amountOut: 346_350000n, fee: 100 }
+          : { amountOut: 346_020000n, fee: 100 };
+      },
+      textileRequestQuote: async () => ({
+        rfqId: 'rfq-t2u',
+        claimToken: 'claim-t2u',
+        quote: { buyAmount: '498029174058' },
+        transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+      }),
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === cngnToken.address && f.toAddr) return 498_029_174058n;
+        if (tok === CONFIG.contracts.usdt && f.fromAddr) return 346_200000n; // includes 2-bps Textile fee ($346.1308 + $0.0692)
+        if (tok === CONFIG.contracts.usdt && f.toAddr) return 346_020000n;
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const opp = {
+      corridor: 'cNGN/USDT',
+      symbol: 'cNGN',
+      tokenAddress: cngnToken.address,
+      decimals: 6,
+      direction: 'textile->uni',
+      sizeUsdt: 346.20,
+      amountInRaw: '346200000',
+      midTokenRaw: '498029174058',
+      expectedOutUsdt: 346.35,
+      uniFee: 100,
+      edgeUsd: 0.15,
+      edgeBps: 4.33,
+      scannedAtMs: Date.now(),
+    };
+
+    const res = await exec.executeOpportunity(opp);
+    assert.equal(res.type, 'LEG2_FLATTEN_DEX');
+    assert.equal(res.edgeUsd, -0.18); // -$0.18 in 1 tx instead of -$1.11 across 3 slow $150 treasury unwinds!
+    assert.equal(sentTxs.length, 2); // 1 Reactor Leg 1 + 1 single-tx 100% Uniswap flatten
+
+    const logged = fs.readFileSync(tmpLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].type, 'LEG2_FLATTEN_DEX');
+    assert.equal(logged[0].edgeUsd, -0.18);
+
+    // Immediate retry within 5m cooldown is skipped with 0 gas
+    const retryRes = await exec.executeOpportunity({ ...opp, scannedAtMs: Date.now() });
+    assert.equal(retryRes, null);
+    assert.equal(sentTxs.length, 2);
   } finally {
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
   }
