@@ -544,7 +544,9 @@ export function createExecutionManager({
     const uniQuote = await bestUniQuote(tokenIn, tokenOut, amountInRaw);
     if (uniQuote.amountOut === 0n) return null;
     await ensureAllowance(tokenIn, CONFIG.contracts.uniSwapRouter02, amountInRaw);
-    const minOutBps = label === 'AUTO_GAS_REFILL' ? 9900n : 9975n;
+    // ponytail: use priorityTip + tight -10 bps floor on LEG2_FLATTEN_DEX so flash-bots cannot front-run flattens for -20 bps
+    const isFlatten = label === 'LEG2_FLATTEN_DEX';
+    const minOutBps = label === 'AUTO_GAS_REFILL' ? 9900n : isFlatten ? 9990n : 9975n;
     const minOut = (uniQuote.amountOut * minOutBps) / 10000n;
     const swapData = routerIface.encodeFunctionData('exactInputSingle', [{
       tokenIn,
@@ -555,7 +557,24 @@ export function createExecutionManager({
       amountOutMinimum: minOut,
       sqrtPriceLimitX96: 0n,
     }]);
-    const r = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData });
+    let r;
+    try {
+      r = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: swapData }, isFlatten ? { priorityTip: true } : {});
+    } catch (e) {
+      if (!isFlatten) throw e;
+      const reQuote = await bestUniQuote(tokenIn, tokenOut, amountInRaw);
+      if (reQuote.amountOut === 0n) throw e;
+      const fallbackData = routerIface.encodeFunctionData('exactInputSingle', [{
+        tokenIn,
+        tokenOut,
+        fee: reQuote.fee,
+        recipient: wallet.address,
+        amountIn: amountInRaw,
+        amountOutMinimum: (reQuote.amountOut * 9980n) / 10000n,
+        sqrtPriceLimitX96: 0n,
+      }]);
+      r = await sendTagged({ to: CONFIG.contracts.uniSwapRouter02, data: fallbackData }, { priorityTip: true });
+    }
     const returnedUsdtRaw = tokenOut.toLowerCase() === CONFIG.contracts.usdt.toLowerCase()
       ? sumReceiptTokenTransfers(r, CONFIG.contracts.usdt, { toAddr: wallet.address })
       : 0n;

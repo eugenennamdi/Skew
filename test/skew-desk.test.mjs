@@ -882,6 +882,8 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /ENABLE_USAT="\$\{ENABLE_USAT:-0\}"/);
   assert.match(runVmSh, /MIN_EDGE_USD="\$\{MIN_EDGE_USD:-0\.015\}"/);
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
+  assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS:-4\.5\}"/);
+  assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-3500\}"/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
