@@ -1263,3 +1263,172 @@ test('32. textile->uni Leg-2 >5bps DEX slip catches revert, flattens 100% in 1 s
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
   }
 });
+
+test('33. SkewAtomicRouter rfq:aggregator Flash Mode executes $2,000 t2u & $1,500 u2t in 1 atomic tx, enforces firewall, and skips 0-loss reverts', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.flash.${Date.now()}.jsonl`);
+  const artifact = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'contracts', 'SkewAtomicRouter.artifact.json'), 'utf8')
+  );
+  const flashIface = new ethers.Interface(artifact.abi);
+  assert.equal(flashIface.getFunction('executeFlashArb').selector, '0xbbccecf8');
+
+  const simRouterAddr = '0x9905000000000000000000000000000000009905';
+  const prevFlashAddr = CONFIG.flashRouterAddress;
+  CONFIG.flashRouterAddress = simRouterAddr;
+
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const externalCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000000000000000000000000000000000000000000200' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000a9aa0a64769cbed4d3b1ceb4df01cde915c235b3' +
+    '00000000000000000000000025a5c1ae6a47e5c57941a69b54ce6fc52e7cab52';
+
+  try {
+    // 1. Outbound firewall permits executeFlashArb on SkewAtomicRouter and blocks bogus selectors
+    assert.equal(validateOutboundTx({ to: simRouterAddr, data: '0xbbccecf80000' }, CONFIG.agentWallet), true);
+    assert.throws(
+      () => validateOutboundTx({ to: simRouterAddr, data: '0xdeadbeef0000' }, CONFIG.agentWallet),
+      /unauthorized SkewAtomicRouter selector/
+    );
+
+    // 2. Verify $2,000 textile->uni and $1,500 uni->textile single-tx atomic flash execution + 0-loss revert handling
+    const cngnToken = CONFIG.tokens.find((t) => t.symbol === 'cNGN');
+    const warsToken = CONFIG.tokens.find((t) => t.symbol === 'wARS');
+    const requestedTakers = [];
+    const sentTxs = [];
+    let shouldRevertNext = false;
+
+    const exec = createExecutionManager({
+      CONFIG: {
+        ...CONFIG,
+        textileApiKey: 'tx_live_test_aggregator_key',
+        flashRouterAddress: simRouterAddr,
+        tradesLogPath: tmpLog,
+      },
+      STATE: { balances: { usdt: 384.52 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface,
+      erc20Iface,
+      sendTagged: async (tx, opts) => {
+        validateOutboundTx(tx, CONFIG.agentWallet);
+        assert.equal(opts?.priorityTip, true);
+        if (shouldRevertNext) throw new Error('execution reverted: InsufficientProfit');
+        sentTxs.push(tx);
+        return { hash: `0x${String(sentTxs.length).padStart(64, 'f')}`, logs: [] };
+      },
+      bestUniQuote: async (tokIn) => {
+        if (tokIn === cngnToken.address) return { amountOut: 2004_150000n, fee: 100 }; // +$4.15 on $2,000
+        return { amountOut: 2_560_000n * 10n ** 18n, fee: 100 };
+      },
+      textileRequestQuote: async (sellTok, _buyTok, _amt, opts) => {
+        requestedTakers.push(opts?.taker);
+        if (sellTok === CONFIG.contracts.usdt) {
+          return {
+            rfqId: 'rfq-flash-t2u',
+            claimToken: 'claim-1',
+            quote: {
+              takerPays: '2000000000',
+              buyAmount: '2878000000000',
+              spender: '0x7777777777777777777777777777777777777777', // Vault executor spender read dynamically!
+            },
+            transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+          };
+        }
+        return {
+          rfqId: 'rfq-flash-u2t',
+          claimToken: 'claim-2',
+          quote: {
+            takerPays: String(2_560_000n * 10n ** 18n),
+            buyAmount: '1502850000', // +$2.85 on $1,500
+            spender: CONFIG.contracts.reactor,
+          },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === CONFIG.contracts.usdt && f.fromAddr === simRouterAddr && f.toAddr === CONFIG.agentWallet) {
+          return sentTxs.length === 1 ? 4_150000n : 2_850000n;
+        }
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const resT2U = await exec.executeOpportunity({
+      corridor: 'cNGN/USDT',
+      symbol: 'cNGN',
+      tokenAddress: cngnToken.address,
+      decimals: 6,
+      direction: 'textile->uni',
+      sizeUsdt: 2000,
+      amountInRaw: '2000000000',
+      midTokenRaw: '2878000000000',
+      expectedOutUsdt: 2004.15,
+      uniFee: 100,
+      edgeUsd: 4.15,
+      edgeBps: 20.75,
+      scannedAtMs: Date.now(),
+    });
+    assert.equal(resT2U.direction, 'flash:textile->uni');
+    assert.equal(resT2U.edgeUsd, 4.15);
+    assert.equal(requestedTakers[0], simRouterAddr);
+    assert.equal(sentTxs.length, 1);
+    const [decoded1] = flashIface.decodeFunctionData('executeFlashArb', sentTxs[0].data);
+    assert.equal(decoded1.isTextileToUni, true);
+    assert.equal(decoded1.spender, '0x7777777777777777777777777777777777777777');
+
+    const resU2T = await exec.executeOpportunity({
+      corridor: 'wARS/USDT',
+      symbol: 'wARS',
+      tokenAddress: warsToken.address,
+      decimals: 18,
+      direction: 'uni->textile',
+      sizeUsdt: 1500,
+      amountInRaw: '1500000000',
+      midTokenRaw: String(2_560_000n * 10n ** 18n),
+      expectedOutUsdt: 1502.85,
+      uniFee: 100,
+      edgeUsd: 2.85,
+      edgeBps: 19.0,
+      scannedAtMs: Date.now(),
+    });
+    assert.equal(resU2T.direction, 'flash:uni->textile');
+    assert.equal(resU2T.edgeUsd, 2.85);
+    assert.equal(sentTxs.length, 2);
+
+    // Lost race / InsufficientProfit pre-flight revert returns null cleanly with 0 txs sent and 0 loss
+    shouldRevertNext = true;
+    const skipped = await exec.executeOpportunity({
+      corridor: 'cNGN/USDT',
+      symbol: 'cNGN',
+      tokenAddress: cngnToken.address,
+      decimals: 6,
+      direction: 'textile->uni',
+      sizeUsdt: 2000,
+      amountInRaw: '2000000000',
+      midTokenRaw: '2878000000000',
+      expectedOutUsdt: 2004.15,
+      uniFee: 100,
+      edgeUsd: 4.15,
+      edgeBps: 20.75,
+      scannedAtMs: Date.now(),
+    });
+    assert.equal(skipped, null);
+    assert.equal(sentTxs.length, 2);
+  } finally {
+    CONFIG.flashRouterAddress = prevFlashAddr;
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});

@@ -65,11 +65,29 @@ for (const relEnv of ['.env', path.join('textile-stitch', 'stitch.env')]) {
 }
 
 const addr = (a) => ethers.getAddress(a.toLowerCase());
+const FLASH_ROUTER_SAVE_PATH = path.join(__dirname, 'flash-router.json');
+
+function loadSavedFlashRouterAddress() {
+  if (process.env.FLASH_ROUTER_ADDRESS && /^0x[0-9a-fA-F]{40}$/.test(process.env.FLASH_ROUTER_ADDRESS)) {
+    return addr(process.env.FLASH_ROUTER_ADDRESS);
+  }
+  try {
+    if (fs.existsSync(FLASH_ROUTER_SAVE_PATH)) {
+      const saved = JSON.parse(fs.readFileSync(FLASH_ROUTER_SAVE_PATH, 'utf8'));
+      if (saved?.address && /^0x[0-9a-fA-F]{40}$/.test(saved.address)) return addr(saved.address);
+    }
+  } catch {}
+  return '';
+}
 
 export const CONFIG = {
   chainId: 42220,
   rpcUrl: process.env.CELO_RPC_URL || 'https://forno.celo.org',
   textileApi: 'https://api.textilecredit.com',
+  textileApiKey: (process.env.TEXTILE_API_KEY || '').trim(),
+  flashRouterAddress: loadSavedFlashRouterAddress(),
+  flashRouterSavePath: FLASH_ROUTER_SAVE_PATH,
+  maxFlashSliceUsdt: Number(process.env.MAX_FLASH_SLICE_USDT || '3000'),
   agentWallet: addr('0xe5036100b4a32b83d5e1997d403ce64a4c7f7324'),
   agentId: 9905,
   makerId: 'cmv75ay6h00bq339u3x6gdicy',
@@ -86,6 +104,12 @@ export const CONFIG = {
     erc8004Registry: addr('0x8004A169FB4a3325136EB29fA0ceB6D2e539a432'),
     cngnUsdtPool: addr('0x6519d56Eb0A69FC0338657784c783B169b8f7d32'),
     warsUsdtPool: addr('0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391'),
+    flashPools: {
+      cNGN: addr('0x6519d56Eb0A69FC0338657784c783B169b8f7d32'),
+      wARS: addr('0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391'),
+      wBRL: addr('0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F'),
+      USDC: addr('0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846'),
+    },
   },
   // Active Textile FX corridors (cNGN, wARS, wBRL, USDC + optional USAT when ENABLE_USAT=1)
   tokens: [
@@ -325,6 +349,10 @@ const wallet = privKey ? new ethers.Wallet(privKey, provider) : null;
 
 const SET_AGENT_URI_SELECTOR = ethers.id('setAgentURI(uint256,string)').slice(0, 10).toLowerCase();
 const REACTOR_ALLOWED_SELECTORS = new Set(['0x3f62192e', '0x0d7a16c3']); // execute, executeBatch
+const FLASH_ROUTER_ALLOWED_SELECTORS = new Set([
+  '0xbbccecf8', // executeFlashArb((address,address,bool,uint256,uint256,uint256,address,address,bytes))
+  ethers.id('rescueTokens(address)').slice(0, 10).toLowerCase(),
+]);
 
 /**
  * Outbound Transaction Firewall:
@@ -358,6 +386,14 @@ export function validateOutboundTx(txReq, expectedRecipient = wallet?.address ||
   if (toLower === reactorLower) {
     if (!REACTOR_ALLOWED_SELECTORS.has(selector)) {
       throw new Error(`TX_FIREWALL_BLOCKED: unauthorized Reactor selector ${selector}`);
+    }
+    return true;
+  }
+
+  const flashRouterLower = (CONFIG.flashRouterAddress || '').toLowerCase();
+  if (flashRouterLower && toLower === flashRouterLower) {
+    if (!FLASH_ROUTER_ALLOWED_SELECTORS.has(selector)) {
+      throw new Error(`TX_FIREWALL_BLOCKED: unauthorized SkewAtomicRouter selector ${selector}`);
     }
     return true;
   }
@@ -561,9 +597,11 @@ async function textilePreview(sellToken, buyToken, sellAmountRaw, opts = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
+    const headers = { 'content-type': 'application/json' };
+    if (CONFIG.textileApiKey) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
     const res = await fetch(`${CONFIG.textileApi}/v2/rfq/preview`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({
         chainId: CONFIG.chainId,
         sellToken,
@@ -608,17 +646,20 @@ async function signTakerControl() {
   return { nonce, issuedAt, signature };
 }
 
-async function textileRequestQuote(sellToken, buyToken, sellAmountRaw) {
+async function textileRequestQuote(sellToken, buyToken, sellAmountRaw, opts = {}) {
+  const targetTaker = opts.taker || wallet.address;
   const sendReq = async (extra = {}) => {
+    const headers = { 'content-type': 'application/json' };
+    if (CONFIG.textileApiKey) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
     const res = await fetch(`${CONFIG.textileApi}/v2/rfq/request`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({
         chainId: CONFIG.chainId,
         sellToken,
         buyToken,
         sellAmount: sellAmountRaw.toString(),
-        taker: wallet.address,
+        taker: targetTaker,
         ...extra,
       }),
       signal: AbortSignal.timeout(45000),
@@ -629,7 +670,7 @@ async function textileRequestQuote(sellToken, buyToken, sellAmountRaw) {
 
   for (let attempt = 0; attempt < 3; attempt++) {
     let r = await sendReq();
-    if (r.status === 401 && r.body?.error?.details?.reason === 'proof_of_control_required') {
+    if (!CONFIG.textileApiKey && r.status === 401 && r.body?.error?.details?.reason === 'proof_of_control_required') {
       r = await sendReq({ takerProof: await signTakerControl() });
     }
     if (!r.ok) {
@@ -662,10 +703,12 @@ const TOP_PROBE_NEG_TTL_MS = 12000;
  * Scan a single token across one or both directions with Multi-Slice (100% / 75% / 50% / 35% / 20%) + adaptive availableSellAmount sizing.
  */
 async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {}) {
-  const candidateSlices = computeSliceSizesUsdt(
-    maxUsdtBudget || token.probeUsdt,
-    Math.min(CONFIG.maxSliceUsdt, token.probeUsdt)
+  const isFlashMode = Boolean(
+    CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
   );
+  const candidateSlices = isFlashMode
+    ? [CONFIG.maxFlashSliceUsdt, 2000, 1250, 750, 350, 100].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
   const probeUsdt = candidateSlices[0] || 25;
   const usdtInRaw = ethers.parseUnits(probeUsdt.toFixed(6), 6);
   const rows = [];
@@ -724,8 +767,9 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             : `100% slice ($${(Number(actualInRaw) / 1e6).toFixed(2)})`;
 
         if (bestUniBack.amountOut > 0n && actualInRaw >= 20000000n) {
+          const subFracs = actualInRaw > 500000000n ? [75n, 50n, 33n, 17n, 10n, 4n] : [75n, 50n, 35n, 20n];
           const subChecks = await Promise.all(
-            [75n, 50n, 35n, 20n].map(async (frac) => {
+            subFracs.map(async (frac) => {
               const sliceInRaw = (actualInRaw * frac) / 100n;
               const sliceTokenRaw = (BigInt(preview.buyAmount) * frac) / 100n;
               if (sliceInRaw < 5000000n || sliceTokenRaw <= 0n) return null;
@@ -759,7 +803,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             actualInRaw >= 40000000n &&
             (opts.priority || ((topProbeNegCache.get(topNegKey1) || 0) <= Date.now() && PREVIEW_BUDGET.remaining >= 24))
           ) {
-            const topSliceInRaw = (actualInRaw * 28n) / 100n;
+            const topSliceInRaw = actualInRaw > 450000000n ? 100000000n : (actualInRaw * 28n) / 100n;
             const topPreview = await textilePreview(CONFIG.contracts.usdt, token.address, topSliceInRaw, opts).catch(() => null);
             if (topPreview && topPreview.status === 'preview' && topPreview.buyAmount) {
               const topTokenRaw = BigInt(topPreview.buyAmount);
@@ -839,7 +883,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
     const preBalUnits = Number(STATE.balances?.[token.symbol.toLowerCase()] || 0);
     const preMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
     const preBalUsd = preBalUnits * preMidUsd;
-    if (!hasDexSellExit && preBalUsd < 6.0) {
+    if (!hasDexSellExit && preBalUsd < 6.0 && !isFlashMode) {
       rows.push({
         corridor: `${token.symbol}/USDT`,
         symbol: token.symbol,
@@ -895,8 +939,9 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           // ponytail: zero-HTTP-cost RPC multi-slice on uni->textile — scales Maker rate across exact Uniswap v3 sub-quotes, saving 3 previews/corridor
           const fullBuyAmountRaw = BigInt(preview.buyAmount);
           if (actualUsdtInRaw >= 25000000n && actualTokenRaw > 0n) {
+            const subFracs2 = actualUsdtInRaw > 500000000n ? [75n, 50n, 33n, 17n, 10n, 4n] : [75n, 50n, 35n, 20n];
             const subSlices = await Promise.all(
-              [75n, 50n, 35n, 20n].map(async (frac) => {
+              subFracs2.map(async (frac) => {
                 const subInRaw = (actualUsdtInRaw * frac) / 100n;
                 if (subInRaw < 10000000n) return null;
                 const subUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, subInRaw);
@@ -923,7 +968,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
               }
             }
 
-            const invCoversSub = preBalUsd >= Math.max(6.0, (Number(bestInRaw) / 1e6) * 0.95);
+            const invCoversSub = isFlashMode || preBalUsd >= Math.max(6.0, (Number(bestInRaw) / 1e6) * 0.95);
             const subMinReqUsd = invCoversSub ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
             const topGateBps = token.symbol === 'cNGN' || token.symbol === 'wARS' ? -16.0 : -2.5;
             const currBps = Number(bestInRaw) > 0 ? (bestEdgeUsd / (Number(bestInRaw) / 1e6)) * 10000 : -999;
@@ -934,7 +979,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
               actualUsdtInRaw >= 40000000n &&
               (opts.priority || ((topProbeNegCache.get(topNegKey2) || 0) <= Date.now() && PREVIEW_BUDGET.remaining >= 24))
             ) {
-              const topInRaw = (actualUsdtInRaw * 28n) / 100n;
+              const topInRaw = actualUsdtInRaw > 450000000n ? 100000000n : (actualUsdtInRaw * 28n) / 100n;
               const topUni = await bestUniQuote(CONFIG.contracts.usdt, token.address, topInRaw);
               if (topUni.amountOut > 0n) {
                 const topPrev = await textilePreview(token.address, CONFIG.contracts.usdt, topUni.amountOut, opts).catch(() => null);
@@ -965,7 +1010,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           const edgeBps = usdtInNum > 0 ? (edgeUsd / usdtInNum) * 10000 : 0;
           const localBalUnits = Number(STATE.balances?.[token.symbol.toLowerCase()] || 0);
           const localMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
-          const invCoversClip = localBalUnits * localMidUsd >= Math.max(6.0, usdtInNum * 0.95);
+          const invCoversClip = isFlashMode || localBalUnits * localMidUsd >= Math.max(6.0, usdtInNum * 0.95);
           const minReqBps = invCoversClip ? CONFIG.minEdgeBps : CONFIG.minUniToTextileDexFirstBps;
           const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
           rows.push({
@@ -1088,6 +1133,7 @@ const executionManager = createExecutionManager({
 
 const {
   ensureErc8004Metadata,
+  ensureFlashRouterDeployed,
   settlePendingHoldings,
   executeOpportunity,
   autoManageTreasuryInventory,
@@ -1459,6 +1505,8 @@ if (isMain) {
     console.log(JSON.stringify({
       ...dry,
       mode: 'LIVE_MAINNET_CHECK',
+      flashAggregatorConfigured: Boolean(CONFIG.textileApiKey),
+      flashRouterAddress: CONFIG.flashRouterAddress || (CONFIG.textileApiKey ? 'AUTO_DEPLOY_ON_BOOT' : 'DISABLED_EOA_MODE'),
       balances: state.balances,
       skew: Number(state.skewMetrics.skew.toFixed(4)),
       textileRateCngnPerUsdt: Number((1 / state.skewMetrics.textileMid).toFixed(2)),
@@ -1565,6 +1613,7 @@ if (isMain) {
   process.on('SIGTERM', () => gracefulExit('SIGTERM'));
   process.on('SIGINT', () => gracefulExit('SIGINT'));
 
+  await ensureFlashRouterDeployed().catch((e) => console.error('[FLASH-ROUTER-ERR]', e.message));
   ensureErc8004Metadata().catch(() => {});
   loadOnChainHistory().catch(() => {});
   runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message));

@@ -8,6 +8,10 @@ import { ethers } from 'ethers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, '..');
+const FLASH_ROUTER_ARTIFACT = JSON.parse(
+  fs.readFileSync(path.join(REPO_ROOT, 'contracts', 'SkewAtomicRouter.artifact.json'), 'utf8')
+);
+const flashRouterIface = new ethers.Interface(FLASH_ROUTER_ARTIFACT.abi);
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -96,6 +100,172 @@ export function createExecutionManager({
     }
   }
 
+  async function ensureFlashRouterDeployed() {
+    if (!wallet || !CONFIG.textileApiKey) return null;
+    if (CONFIG.flashRouterAddress && /^0x[0-9a-fA-F]{40}$/.test(CONFIG.flashRouterAddress)) {
+      const code = await provider.getCode(CONFIG.flashRouterAddress).catch(() => '0x');
+      if (code && code !== '0x' && code.length > 10) {
+        const routerC = new ethers.Contract(CONFIG.flashRouterAddress, FLASH_ROUTER_ARTIFACT.abi, provider);
+        const onChainOwner = await routerC.owner().catch(() => '');
+        if (onChainOwner.toLowerCase() === wallet.address.toLowerCase()) {
+          console.log(
+            `[FLASH-ROUTER] Active SkewAtomicRouter verified at ${CONFIG.flashRouterAddress} (owner=${wallet.address}, maxFlash=$${CONFIG.maxFlashSliceUsdt})`
+          );
+          return CONFIG.flashRouterAddress;
+        }
+      }
+    }
+    console.log(`[FLASH-ROUTER] Deploying non-custodial SkewAtomicRouter ($0 balance, atomic revert guard) for ${wallet.address}...`);
+    const factory = new ethers.ContractFactory(FLASH_ROUTER_ARTIFACT.abi, FLASH_ROUTER_ARTIFACT.bytecode, wallet);
+    const contract = await factory.deploy(wallet.address, CONFIG.contracts.usdt, CONFIG.contracts.reactor);
+    const depTx = contract.deploymentTransaction();
+    await contract.waitForDeployment();
+    const deployedAddr = await contract.getAddress();
+    CONFIG.flashRouterAddress = deployedAddr;
+    if (CONFIG.flashRouterSavePath) {
+      try {
+        fs.writeFileSync(
+          CONFIG.flashRouterSavePath,
+          JSON.stringify(
+            { chainId: CONFIG.chainId, owner: wallet.address, address: deployedAddr, txHash: depTx?.hash || '' },
+            null,
+            2
+          ) + '\n',
+          { mode: 0o600 }
+        );
+      } catch {}
+    }
+    console.log(`[FLASH-ROUTER] Deployed SkewAtomicRouter -> ${deployedAddr} (tx ${depTx?.hash || 'confirmed'})`);
+    return deployedAddr;
+  }
+
+  async function executeFlashOpportunity(opp, flashPool, startedAt) {
+    const isTextileToUni = opp.direction === 'textile->uni';
+    const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
+    let q;
+    let inUsdt = Number(BigInt(opp.amountInRaw)) / 1e6;
+    let takerPays;
+    let buyAmount;
+    let firmOutUsdt;
+
+    if (isTextileToUni) {
+      q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, opp.amountInRaw, {
+        taker: CONFIG.flashRouterAddress,
+      });
+      const toAddr = q?.transactions?.swap?.to;
+      const calldata = q?.transactions?.swap?.data;
+      if (!toAddr || !calldata) return null;
+      if (isSelfMakerOrder(calldata)) return null;
+      const expRaw = q?.quote?.expiresAt;
+      const expMs = typeof expRaw === 'string' ? Date.parse(expRaw) : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
+      if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+
+      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || opp.amountInRaw);
+      buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
+      if (takerPays <= 0n || buyAmount <= 0n) return null;
+      const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
+      if (firmUni.amountOut <= 0n) return null;
+      inUsdt = Number(takerPays) / 1e6;
+      firmOutUsdt = Number(firmUni.amountOut) / 1e6;
+    } else {
+      let expectedFxRaw = BigInt(opp.midTokenRaw);
+      let amountUsdtRaw = BigInt(opp.amountInRaw);
+      if (!isFreshScan) {
+        const freshUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, amountUsdtRaw);
+        if (freshUni.amountOut <= 0n) return null;
+        expectedFxRaw = freshUni.amountOut;
+      }
+      q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+        taker: CONFIG.flashRouterAddress,
+      }).catch(() => null);
+      if (!q?.transactions?.swap?.data && q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
+        const availFx = (BigInt(q.availableSellAmount) * 98n) / 100n;
+        if (availFx > 0n && availFx < expectedFxRaw) {
+          amountUsdtRaw = (amountUsdtRaw * availFx) / expectedFxRaw;
+          expectedFxRaw = availFx;
+          q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+            taker: CONFIG.flashRouterAddress,
+          }).catch(() => null);
+        }
+      }
+      const toAddr = q?.transactions?.swap?.to;
+      const calldata = q?.transactions?.swap?.data;
+      if (!toAddr || !calldata) return null;
+      if (isSelfMakerOrder(calldata)) return null;
+      const expRaw = q?.quote?.expiresAt;
+      const expMs = typeof expRaw === 'string' ? Date.parse(expRaw) : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
+      if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+
+      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
+      buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
+      if (takerPays <= 0n || buyAmount <= 0n) return null;
+      inUsdt = (Number(amountUsdtRaw) / 1e6) * (Number(takerPays) / Math.max(1, Number(expectedFxRaw)));
+      firmOutUsdt = Number(buyAmount) / 1e6;
+    }
+
+    const firmCheck = verifyFirmArbQuote({ inUsdt, firmOutUsdt });
+    if (!firmCheck.ok) {
+      console.log(
+        `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason})`
+      );
+      return null;
+    }
+
+    const toAddr = q.transactions.swap.to;
+    const calldata = q.transactions.swap.data;
+    const spender = q?.quote?.spender || toAddr;
+    // ponytail: hard on-chain floor (>= gas cost) makes any losing trade mathematically impossible
+    const minProfitUsdt = BigInt(Math.max(4000, Math.floor(Number(CONFIG.estimatedArbGasUsd || 0.004) * 1e6)));
+    const flashData = flashRouterIface.encodeFunctionData('executeFlashArb', [
+      {
+        pool: flashPool,
+        fxToken: opp.tokenAddress,
+        isTextileToUni,
+        takerPays,
+        buyAmount,
+        minProfitUsdt,
+        spender,
+        swapTarget: toAddr,
+        swapData: calldata,
+      },
+    ]);
+
+    let r;
+    try {
+      r = await sendTagged({ to: CONFIG.flashRouterAddress, data: flashData }, { priorityTip: true });
+    } catch (err) {
+      console.log(
+        `[FLASH-SKIP] ${opp.corridor} (${opp.direction}) $${inUsdt.toFixed(2)} atomic pre-flight reverted (0 loss): ${err.message?.slice(0, 90)}`
+      );
+      return null;
+    }
+
+    textileSubmitTx(q.rfqId, q.claimToken, r.hash).catch(() => {});
+    const sweptProfitRaw = sumReceiptTokenTransfers(r, CONFIG.contracts.usdt, {
+      fromAddr: CONFIG.flashRouterAddress,
+      toAddr: wallet.address,
+    });
+    const realizedEdgeUsd = sweptProfitRaw > 0n ? Number(sweptProfitRaw) / 1e6 : firmCheck.grossEdgeUsd;
+    const realizedEdgeBps = inUsdt > 0 ? (realizedEdgeUsd / inUsdt) * 10000 : 0;
+    console.log(
+      `[FLASH-OK] ${opp.corridor} (${opp.direction}) flash=$${inUsdt.toFixed(2)} -> pureProfit=+$${realizedEdgeUsd.toFixed(4)} (+${realizedEdgeBps.toFixed(2)} bps) tx=${r.hash}`
+    );
+    const rec = {
+      timestamp: startedAt,
+      type: 'CROSS_VENUE_ARB',
+      corridor: opp.corridor,
+      direction: `flash:${opp.direction}`,
+      sizeUsdt: Number(inUsdt.toFixed(4)),
+      edgeUsd: Number(realizedEdgeUsd.toFixed(6)),
+      edgeBps: Number(realizedEdgeBps.toFixed(2)),
+      txHash1: r.hash,
+      txHash2: r.hash,
+      attributionTag: CONFIG.attributionTag,
+    };
+    fs.appendFileSync(CONFIG.tradesLogPath, JSON.stringify(rec) + '\n');
+    return rec;
+  }
+
   async function ensurePermit2ForAllCorridors() {
     if (!wallet || permit2Initialized) return;
     await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.permit2, 500_000_000n);
@@ -147,6 +317,11 @@ export function createExecutionManager({
     if (!wallet) return null;
     const startedAt = new Date().toISOString();
     console.log(`[EXEC] Attempting ${opp.corridor} (${opp.direction}) size=$${opp.sizeUsdt.toFixed(4)} previewEdge=+$${opp.edgeUsd.toFixed(4)}`);
+
+    const flashPool = CONFIG.contracts?.flashPools?.[opp.symbol];
+    if (CONFIG.textileApiKey && CONFIG.flashRouterAddress && flashPool) {
+      return executeFlashOpportunity(opp, flashPool, startedAt);
+    }
 
     if (opp.direction === 'textile->uni') {
       const t2uBaitKey = `${opp.corridor}:textile->uni`;
@@ -844,6 +1019,7 @@ export function createExecutionManager({
 
   return {
     ensureErc8004Metadata,
+    ensureFlashRouterDeployed,
     settlePendingHoldings,
     executeOpportunity,
     autoManageTreasuryInventory,

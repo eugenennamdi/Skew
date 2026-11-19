@@ -101,6 +101,10 @@ echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
 : > skew-desk.log
 NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=384}" \
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
+TEXTILE_API_KEY="${TEXTILE_API_KEY:-}" \
+FLASH_ROUTER_ADDRESS="${FLASH_ROUTER_ADDRESS:-}" \
+MAX_FLASH_SLICE_USDT="${MAX_FLASH_SLICE_USDT:-3000}" \
+PRIORITY_TIP_GWEI="${PRIORITY_TIP_GWEI:-35}" \
 GEMINI_API_KEY="${GEMINI_API_KEY:-}" \
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}" \
 SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \

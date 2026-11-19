@@ -12,6 +12,7 @@
 *.slot-nonces.json
 stitch.runtime.toml
 skew-policy.json
+flash-router.json
 llm-decisions.jsonl
 markouts.jsonl
 HANDOFF_PROFIT_MAX.md
