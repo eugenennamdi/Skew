@@ -140,6 +140,8 @@ export function createExecutionManager({
   }
 
   async function executeFlashOpportunity(opp, flashPool, startedAt) {
+    const flashCooldownKey = `flash:${opp.corridor}:${opp.direction}`;
+    if ((baitCooldownUntil.get(flashCooldownKey) || 0) > Date.now()) return null;
     const isTextileToUni = opp.direction === 'textile->uni';
     const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
     let q;
@@ -234,8 +236,9 @@ export function createExecutionManager({
     try {
       r = await sendTagged({ to: CONFIG.flashRouterAddress, data: flashData }, { priorityTip: true });
     } catch (err) {
+      if (err?.receipt) baitCooldownUntil.set(flashCooldownKey, Date.now() + 20_000);
       console.log(
-        `[FLASH-SKIP] ${opp.corridor} (${opp.direction}) $${inUsdt.toFixed(2)} atomic pre-flight reverted (0 loss): ${err.message?.slice(0, 90)}`
+        `[FLASH-SKIP] ${opp.corridor} (${opp.direction}) $${inUsdt.toFixed(2)} atomic revert (${err?.receipt ? 'mined ~0.3c gas' : '0 gas pre-flight'}): ${err.message?.slice(0, 90)}`
       );
       return null;
     }
