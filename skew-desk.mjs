@@ -312,7 +312,12 @@ export async function fetchOffChainFxRates() {
   return cachedOffChainFx;
 }
 
+let cachedTextileMids = { data: {}, fetchedAt: 0 };
+
 export async function fetchTextileCorridorPrices(fetchImpl = fetch) {
+  if (fetchImpl === fetch && Date.now() - cachedTextileMids.fetchedAt < 15_000 && Object.keys(cachedTextileMids.data).length > 0) {
+    return cachedTextileMids.data;
+  }
   const pairs = [
     ['cNGN', 'cngn-usdt&corridor=cmtcq1gbl0003ykyl5n2laol9'],
     ['wARS', 'wars-usdt'],
@@ -336,6 +341,9 @@ export async function fetchTextileCorridorPrices(fetchImpl = fetch) {
       }
     })
   );
+  if (fetchImpl === fetch && Object.keys(out).length > 0) {
+    cachedTextileMids = { data: out, fetchedAt: Date.now() };
+  }
   return out;
 }
 
@@ -698,6 +706,282 @@ const corridorDepthCache = new Map();
 const DEPTH_CACHE_TTL_MS = 24000;
 const topProbeNegCache = new Map();
 const TOP_PROBE_NEG_TTL_MS = 12000;
+const dexSellExitCache = new Map();
+
+/**
+ * Piecewise linear interpolation across Textile's `/v2/rfq/levels` exact-input Maker depth knots (fee-inclusive).
+ */
+export function interpolateLadderBuyAmount(levels, sellAmountRaw) {
+  if (!Array.isArray(levels) || levels.length === 0) return 0n;
+  const x = BigInt(sellAmountRaw);
+  const pts = levels
+    .map((l) => ({ s: BigInt(l.sellAmount || 0), b: BigInt(l.buyAmount || 0) }))
+    .filter((p) => p.s > 0n && p.b > 0n)
+    .sort((a, b) => (a.s < b.s ? -1 : a.s > b.s ? 1 : 0));
+  if (pts.length === 0) return 0n;
+  if (x < pts[0].s || x > pts[pts.length - 1].s) return 0n;
+  for (let i = 0; i < pts.length; i++) {
+    if (x === pts[i].s) return pts[i].b;
+    if (i + 1 < pts.length && x > pts[i].s && x < pts[i + 1].s) {
+      const ds = pts[i + 1].s - pts[i].s;
+      if (ds <= 0n) continue;
+      return pts[i].b + ((pts[i + 1].b - pts[i].b) * (x - pts[i].s)) / ds;
+    }
+  }
+  return pts[pts.length - 1].b;
+}
+
+async function fetchTextileLadder(fetchImpl = fetch) {
+  const now = Date.now();
+  if (PREVIEW_BUDGET.resetAtMs > 0 && now >= PREVIEW_BUDGET.resetAtMs) {
+    PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
+    PREVIEW_BUDGET.resetAtMs = 0;
+  }
+  if (PREVIEW_BUDGET.remaining <= 4 && PREVIEW_BUDGET.resetAtMs > now) return null;
+  try {
+    const headers = {};
+    if (CONFIG.textileApiKey) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
+    const res = await fetchImpl(`${CONFIG.textileApi}/v2/rfq/levels?chainId=${CONFIG.chainId}`, {
+      headers,
+      signal: AbortSignal.timeout(6000),
+    });
+    const limHdr = Number(res.headers.get('x-ratelimit-limit'));
+    const remHdr = Number(res.headers.get('x-ratelimit-remaining'));
+    const rstHdr = Number(res.headers.get('x-ratelimit-reset'));
+    if (Number.isFinite(limHdr) && limHdr > 0) PREVIEW_BUDGET.limit = limHdr;
+    if (Number.isFinite(remHdr) && remHdr >= 0) PREVIEW_BUDGET.remaining = remHdr;
+    if (Number.isFinite(rstHdr) && rstHdr > 0) PREVIEW_BUDGET.resetAtMs = Date.now() + rstHdr * 1000;
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    const data = json?.data || json;
+    if (!Array.isArray(data?.pairs)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
+  if (maxRaw < minRaw) return [];
+  const validKnots = [...new Set(knotRaws.filter((v) => v >= minRaw && v <= maxRaw))].sort((a, b) =>
+    a > b ? -1 : a < b ? 1 : 0
+  );
+  const kept = [];
+  for (const k of validKnots) {
+    if (kept.length === 0 || (kept[kept.length - 1] - k >= 10_000000n && k * 100n <= kept[kept.length - 1] * 92n)) {
+      kept.push(k);
+    }
+  }
+  const validGrid = [...new Set(gridRaws.filter((v) => v >= minRaw && v <= maxRaw))].sort((a, b) =>
+    a > b ? -1 : a < b ? 1 : 0
+  );
+  for (const g of validGrid) {
+    const farFromAll = kept.every(
+      (k) => (k > g ? k - g >= 15_000000n && g * 100n <= k * 88n : g - k >= 15_000000n && k * 100n <= g * 88n)
+    );
+    if (farFromAll) kept.push(g);
+  }
+  return kept.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0)).slice(0, 12);
+}
+
+export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn = bestUniQuote) {
+  const isFlashMode = Boolean(
+    CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
+  );
+  const candidateSlices = isFlashMode
+    ? [CONFIG.maxFlashSliceUsdt, 2000, 1500, 1000, 750, 500, 300, 100, 40].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
+  const maxCapUsdt = candidateSlices[0] || 25;
+  const maxCapRaw = ethers.parseUnits(maxCapUsdt.toFixed(6), 6);
+  const rows = [];
+
+  const exitCacheEntry = dexSellExitCache.get(token.symbol);
+  let hasDexSellExit;
+  if (quoteFn === bestUniQuote && exitCacheEntry && Date.now() - exitCacheEntry.ts < 60_000) {
+    hasDexSellExit = exitCacheEntry.ok;
+  } else {
+    const sampleMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
+    const sampleUnits = sampleMidUsd > 0 ? Math.max(1, Math.floor(15 / sampleMidUsd)) : 15;
+    const sampleSellRaw = ethers.parseUnits(String(sampleUnits), token.decimals);
+    const dexSellProbe = await quoteFn(token.address, CONFIG.contracts.usdt, sampleSellRaw);
+    hasDexSellExit = dexSellProbe.amountOut > 0n;
+    if (quoteFn === bestUniQuote) dexSellExitCache.set(token.symbol, { ok: hasDexSellExit, ts: Date.now() });
+  }
+
+  const usdtLower = CONFIG.contracts.usdt.toLowerCase();
+  const tokLower = token.address.toLowerCase();
+
+  // Direction 1: TEXTILE -> UNI (sell USDT, buy FX on Textile -> sell FX on Uniswap)
+  const pT2U = pairMap.get(`${usdtLower}->${tokLower}`);
+  if (!hasDexSellExit) {
+    rows.push({
+      corridor: `${token.symbol}/USDT`,
+      symbol: token.symbol,
+      direction: 'textile->uni',
+      sizeUsdt: maxCapUsdt,
+      expectedOutUsdt: 0,
+      edgeUsd: 0,
+      edgeBps: 0,
+      sliceCandidatesUsdt: candidateSlices,
+      status: 'ILLIQUID_DEX',
+      note: 'no_uniswap_sell_exit',
+    });
+  } else if (!pT2U || !pT2U.levels?.length || BigInt(pT2U.maxSellAmount || 0) < 1_000000n) {
+    rows.push({
+      corridor: `${token.symbol}/USDT`,
+      symbol: token.symbol,
+      direction: 'textile->uni',
+      sizeUsdt: maxCapUsdt,
+      expectedOutUsdt: 0,
+      edgeUsd: 0,
+      edgeBps: 0,
+      sliceCandidatesUsdt: candidateSlices,
+      status: 'NO_MAKER',
+      note: 'no_makers_online',
+    });
+  } else {
+    const minSellRaw = BigInt(pT2U.minSellAmount || 1_000000);
+    const availMaxRaw = (BigInt(pT2U.maxSellAmount) * 98n) / 100n;
+    const effMaxRaw = availMaxRaw < maxCapRaw ? availMaxRaw : maxCapRaw;
+    const floorRaw = effMaxRaw < 15_000000n ? minSellRaw : minSellRaw > 15_000000n ? minSellRaw : 15_000000n;
+    const knotRaws = pT2U.levels.map((l) => BigInt(l.sellAmount || 0));
+    const gridRaws = candidateSlices.map((u) => ethers.parseUnits(u.toFixed(6), 6));
+    const testRaws = buildLadderCandidates([effMaxRaw, ...knotRaws], gridRaws, floorRaw, effMaxRaw);
+
+    const evals = await Promise.all(
+      testRaws.map(async (inRaw) => {
+        const fxOutRaw = interpolateLadderBuyAmount(pT2U.levels, inRaw);
+        if (fxOutRaw <= 0n) return null;
+        const uniBack = await quoteFn(token.address, CONFIG.contracts.usdt, fxOutRaw);
+        if (uniBack.amountOut <= 0n) return null;
+        const inU = Number(inRaw) / 1e6;
+        const outU = Number(uniBack.amountOut) / 1e6;
+        return { inRaw, fxOutRaw, uniBack, inU, outU, edgeUsd: outU - inU };
+      })
+    );
+    let best = null;
+    for (const ev of evals) {
+      if (ev && (!best || ev.edgeUsd > best.edgeUsd)) best = ev;
+    }
+    if (best) {
+      const edgeBps = best.inU > 0 ? (best.edgeUsd / best.inU) * 10000 : 0;
+      rows.push({
+        corridor: `${token.symbol}/USDT`,
+        symbol: token.symbol,
+        tokenAddress: token.address,
+        decimals: token.decimals,
+        direction: 'textile->uni',
+        sizeUsdt: best.inU,
+        amountInRaw: best.inRaw.toString(),
+        midTokenRaw: best.fxOutRaw.toString(),
+        expectedOutUsdt: best.outU,
+        uniFee: best.uniBack.fee,
+        edgeUsd: best.edgeUsd,
+        edgeBps,
+        sliceCandidatesUsdt: candidateSlices,
+        scannedAtMs: Date.now(),
+        status: best.edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= CONFIG.minEdgeBps ? 'ACTIONABLE' : 'WATCH',
+        note: `Ladder tier ($${best.inU.toFixed(2)})`,
+      });
+    }
+  }
+
+  // Direction 2: UNI -> TEXTILE (buy FX on Uniswap -> sell FX on Textile for USDT)
+  const pU2T = pairMap.get(`${tokLower}->${usdtLower}`);
+  const preBalUnits = Number(STATE.balances?.[token.symbol.toLowerCase()] || 0);
+  const preMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
+  const preBalUsd = preBalUnits * preMidUsd;
+  if (!hasDexSellExit && preBalUsd < 6.0 && !isFlashMode) {
+    rows.push({
+      corridor: `${token.symbol}/USDT`,
+      symbol: token.symbol,
+      direction: 'uni->textile',
+      sizeUsdt: maxCapUsdt,
+      expectedOutUsdt: 0,
+      edgeUsd: 0,
+      edgeBps: 0,
+      sliceCandidatesUsdt: candidateSlices,
+      status: 'ILLIQUID_DEX',
+      note: 'one_way_pool_blocked',
+    });
+  } else if (!pU2T || !pU2T.levels?.length || BigInt(pU2T.maxSellAmount || 0) <= 0n) {
+    rows.push({
+      corridor: `${token.symbol}/USDT`,
+      symbol: token.symbol,
+      direction: 'uni->textile',
+      sizeUsdt: maxCapUsdt,
+      expectedOutUsdt: 0,
+      edgeUsd: 0,
+      edgeBps: 0,
+      sliceCandidatesUsdt: candidateSlices,
+      status: 'NO_MAKER',
+      note: 'no_makers_online',
+    });
+  } else {
+    const maxLevelBuyRaw = pU2T.levels.reduce((m, l) => {
+      const b = BigInt(l.buyAmount || 0);
+      return b > m ? b : m;
+    }, 0n);
+    const topBookBuyUsdtRaw = (maxLevelBuyRaw * 98n) / 100n;
+    const effMaxRaw = topBookBuyUsdtRaw > 0n && topBookBuyUsdtRaw < maxCapRaw ? topBookBuyUsdtRaw : maxCapRaw;
+    const floorUsdtRaw = effMaxRaw < 15_000000n ? 1_000000n : 15_000000n;
+    const knotUsdtRaws = pU2T.levels.map((l) => BigInt(l.buyAmount || 0));
+    const gridRaws = candidateSlices.map((u) => ethers.parseUnits(u.toFixed(6), 6));
+    const testRaws = buildLadderCandidates([effMaxRaw, ...knotUsdtRaws], gridRaws, floorUsdtRaw, effMaxRaw);
+
+    const maxFxRaw = (BigInt(pU2T.maxSellAmount) * 99n) / 100n;
+    const minFxRaw = BigInt(pU2T.minSellAmount || 1);
+    const evals2 = await Promise.all(
+      testRaws.map(async (inRaw) => {
+        let effInRaw = inRaw;
+        let uniBuy = await quoteFn(CONFIG.contracts.usdt, token.address, effInRaw);
+        if (uniBuy.amountOut < minFxRaw) return null;
+        if (uniBuy.amountOut > maxFxRaw) {
+          effInRaw = (effInRaw * maxFxRaw) / uniBuy.amountOut;
+          if (effInRaw <= 0n) return null;
+          uniBuy = await quoteFn(CONFIG.contracts.usdt, token.address, effInRaw);
+          if (uniBuy.amountOut < minFxRaw || uniBuy.amountOut > BigInt(pU2T.maxSellAmount)) return null;
+        }
+        const sellFxRaw = uniBuy.amountOut;
+        const usdtOutRaw = interpolateLadderBuyAmount(pU2T.levels, sellFxRaw);
+        if (usdtOutRaw <= 0n) return null;
+        const inU = Number(effInRaw) / 1e6;
+        const outU = Number(usdtOutRaw) / 1e6;
+        return { inRaw: effInRaw, sellFxRaw, fee: uniBuy.fee, inU, outU, edgeUsd: outU - inU };
+      })
+    );
+    let best2 = null;
+    for (const ev of evals2) {
+      if (ev && (!best2 || ev.edgeUsd > best2.edgeUsd)) best2 = ev;
+    }
+    if (best2) {
+      const edgeBps = best2.inU > 0 ? (best2.edgeUsd / best2.inU) * 10000 : 0;
+      const invCoversClip = isFlashMode || preBalUsd >= Math.max(6.0, best2.inU * 0.95);
+      const minReqBps = invCoversClip ? CONFIG.minEdgeBps : CONFIG.minUniToTextileDexFirstBps;
+      const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
+      rows.push({
+        corridor: `${token.symbol}/USDT`,
+        symbol: token.symbol,
+        tokenAddress: token.address,
+        decimals: token.decimals,
+        direction: 'uni->textile',
+        sizeUsdt: best2.inU,
+        amountInRaw: best2.inRaw.toString(),
+        midTokenRaw: best2.sellFxRaw.toString(),
+        expectedOutUsdt: best2.outU,
+        uniFee: best2.fee,
+        edgeUsd: best2.edgeUsd,
+        edgeBps,
+        sliceCandidatesUsdt: candidateSlices,
+        scannedAtMs: Date.now(),
+        status: best2.edgeUsd >= minReqUsd && edgeBps >= minReqBps ? 'ACTIONABLE' : 'WATCH',
+        note: `Ladder tier ($${best2.inU.toFixed(2)})`,
+      });
+    }
+  }
+
+  return rows;
+}
 
 /**
  * Scan a single token across one or both directions with Multi-Slice (100% / 75% / 50% / 35% / 20%) + adaptive availableSellAmount sizing.
@@ -1143,12 +1427,14 @@ const {
 
 let isBusy = false;
 let isShuttingDown = false;
+let cachedRpcBalances = { data: null, ts: 0 };
 
 export async function runSingleScan() {
   if (isBusy || isShuttingDown) return STATE;
   isBusy = true;
   try {
-    if (CONFIG.liveTrading && wallet) {
+    if (CONFIG.liveTrading && wallet && !STATE.pendingSettledOnce) {
+      STATE.pendingSettledOnce = true;
       try {
         await settlePendingHoldings();
       } catch (err) {
@@ -1175,30 +1461,40 @@ export async function runSingleScan() {
     let uniCngnMid = 0.00072538;
     let uniWarsMid = 0.00067808;
 
-    const [offChainFx, fetchedTextileMids] = await Promise.all([
+    const [offChainFx, fetchedTextileMids, ladderData] = await Promise.all([
       fetchOffChainFxRates(),
       fetchTextileCorridorPrices(),
+      fetchTextileLadder(),
     ]);
     STATE.textileMids = { ...STATE.textileMids, ...fetchedTextileMids };
 
     try {
-      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, usatRaw, celoRaw, poolCngnMid, poolWarsMid, feeData] = await Promise.all([
-        usdtC.balanceOf(CONFIG.agentWallet),
-        cngnC.balanceOf(CONFIG.agentWallet),
-        warsC.balanceOf(CONFIG.agentWallet),
-        wbrlC.balanceOf(CONFIG.agentWallet),
-        usdcC.balanceOf(CONFIG.agentWallet),
-        usatC ? usatC.balanceOf(CONFIG.agentWallet) : Promise.resolve(0n),
-        provider.getBalance(CONFIG.agentWallet),
+      const needFreshBalances = !cachedRpcBalances.data || Date.now() - cachedRpcBalances.ts >= 12_000;
+      const [balTuple, poolCngnMid, poolWarsMid, feeData] = await Promise.all([
+        needFreshBalances
+          ? Promise.all([
+              usdtC.balanceOf(CONFIG.agentWallet),
+              cngnC.balanceOf(CONFIG.agentWallet),
+              warsC.balanceOf(CONFIG.agentWallet),
+              wbrlC.balanceOf(CONFIG.agentWallet),
+              usdcC.balanceOf(CONFIG.agentWallet),
+              usatC ? usatC.balanceOf(CONFIG.agentWallet) : Promise.resolve(0n),
+              provider.getBalance(CONFIG.agentWallet),
+            ])
+          : Promise.resolve(cachedRpcBalances.data),
         readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
         readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
         !cachedGasPrice.value || Date.now() - cachedGasPrice.ts >= 30_000
           ? provider.getFeeData().catch(() => null)
           : Promise.resolve(null),
       ]);
+      if (needFreshBalances && balTuple) {
+        cachedRpcBalances = { data: balTuple, ts: Date.now() };
+      }
       if (feeData?.gasPrice) {
         cachedGasPrice = { value: feeData.gasPrice, ts: Date.now() };
       }
+      const [usdtRaw, cngnRaw, warsRaw, wbrlRaw, usdcRaw, usatRaw, celoRaw] = balTuple;
       usdt = Number(usdtRaw) / 1e6;
       cngn = Number(cngnRaw) / 1e6;
       wars = Number(warsRaw) / 1e18;
@@ -1335,7 +1631,7 @@ export async function runSingleScan() {
       STATE.riskOfficer.stitchPolicySync = syncStitchRuntimePolicy(STATE.riskOfficer);
     }
 
-    // ponytail: 3.5s slot0()-driven scanning — reacts immediately whenever cNGN/wARS pool mid moves >=0.15 bps (or quota >=35), pacing flat ticks only when quota <35
+    // ponytail: 1.8s single-GET `/v2/rfq/levels` aggregator ladder scan — evaluates all 4 corridors & exact Maker depth knots in 1 HTTP call (falling back to `/preview` if ladder unavailable)
     const liquidUsdtBudget = Math.max(1, usdt);
     const cngnMoved =
       !STATE.lastSlot0Mids ||
@@ -1345,29 +1641,48 @@ export async function runSingleScan() {
       Math.abs(uniWarsMid - STATE.lastSlot0Mids.wARS) / Math.max(1e-12, uniWarsMid) >= 0.000015;
     STATE.lastSlot0Mids = { cNGN: uniCngnMid, wARS: uniWarsMid };
 
-    let activeTokens = CONFIG.tokens;
-    if (STATE.scanCount > 0 && CONFIG.tokens.length > 2) {
-      const quotaHealthy = PREVIEW_BUDGET.remaining >= 35 || STATE.scanCount % 2 === 0;
-      const hotTokens = CONFIG.tokens.filter((t) => {
-        if (t.symbol === 'cNGN') return cngnMoved || quotaHealthy;
-        if (t.symbol === 'wARS') return warsMoved || quotaHealthy;
-        return false;
-      });
-      const secondaryTokens = CONFIG.tokens.filter((t) => t.symbol !== 'cNGN' && t.symbol !== 'wARS');
-      const rotated =
-        secondaryTokens.length > 0 && STATE.scanCount % 4 === 0
-          ? [secondaryTokens[Math.floor(STATE.scanCount / 4) % secondaryTokens.length]]
-          : [];
-      activeTokens = [...hotTokens, ...rotated];
-    }
-
-    const scanBatches = await Promise.all(activeTokens.map((t) => scanCorridor(t, liquidUsdtBudget)));
-    activeTokens.forEach((tok, idx) => {
-      const freshRows = scanBatches[idx] || [];
-      if (!freshRows.every((r) => r.status === 'DEFERRED_QUOTA')) {
-        STATE.corridorRowCache[tok.symbol] = freshRows.filter((r) => r.status !== 'DEFERRED_QUOTA');
+    if (ladderData?.pairs?.length) {
+      const ladderChanged = !STATE.lastLadderAsOf || ladderData.asOf !== STATE.lastLadderAsOf;
+      STATE.lastLadderAsOf = ladderData.asOf || '';
+      const hasCachedRows = Object.keys(STATE.corridorRowCache).length > 0;
+      if (STATE.scanCount === 0 || ladderChanged || cngnMoved || warsMoved || !hasCachedRows) {
+        const pairMap = new Map();
+        for (const pItem of ladderData.pairs) {
+          if (pItem?.sellToken && pItem?.buyToken) {
+            pairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
+          }
+        }
+        const ladderBatches = await Promise.all(
+          CONFIG.tokens.map((t) => scanTokenFromLadder(t, pairMap, liquidUsdtBudget))
+        );
+        CONFIG.tokens.forEach((tok, idx) => {
+          STATE.corridorRowCache[tok.symbol] = ladderBatches[idx] || [];
+        });
       }
-    });
+    } else {
+      let activeTokens = CONFIG.tokens;
+      if (STATE.scanCount > 0 && CONFIG.tokens.length > 2) {
+        const quotaHealthy = PREVIEW_BUDGET.remaining >= 35 || STATE.scanCount % 2 === 0;
+        const hotTokens = CONFIG.tokens.filter((t) => {
+          if (t.symbol === 'cNGN') return cngnMoved || quotaHealthy;
+          if (t.symbol === 'wARS') return warsMoved || quotaHealthy;
+          return false;
+        });
+        const secondaryTokens = CONFIG.tokens.filter((t) => t.symbol !== 'cNGN' && t.symbol !== 'wARS');
+        const rotated =
+          secondaryTokens.length > 0 && STATE.scanCount % 4 === 0
+            ? [secondaryTokens[Math.floor(STATE.scanCount / 4) % secondaryTokens.length]]
+            : [];
+        activeTokens = [...hotTokens, ...rotated];
+      }
+      const scanBatches = await Promise.all(activeTokens.map((t) => scanCorridor(t, liquidUsdtBudget)));
+      activeTokens.forEach((tok, idx) => {
+        const freshRows = scanBatches[idx] || [];
+        if (!freshRows.every((r) => r.status === 'DEFERRED_QUOTA')) {
+          STATE.corridorRowCache[tok.symbol] = freshRows.filter((r) => r.status !== 'DEFERRED_QUOTA');
+        }
+      });
+    }
 
     const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : s === 'NO_MAKER' ? 2 : 3);
     const allRows = CONFIG.tokens
@@ -1398,6 +1713,8 @@ export async function runSingleScan() {
           const execRec = await executeOpportunity(candidate);
           if (execRec) {
             arbExecutedThisTick = true;
+            cachedRpcBalances = { data: null, ts: 0 };
+            STATE.lastLadderAsOf = '';
             STATE.arbExecutions.unshift(execRec);
             STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
             // ponytail: 1.0s hot-corridor chase loop uses reserved priority quota credits to drain external Makers before Kiyoshi's 30s timer
@@ -1411,7 +1728,10 @@ export async function runSingleScan() {
                 ]).catch(() => [0n, 0n]);
                 const freshUsdt = Number(freshUsdtRaw) / 1e6;
                 const freshCelo = Number(freshCeloRaw) / 1e18;
-                if (freshUsdt < 10 || freshCelo < 0.15) break;
+                const isFlashChase = Boolean(
+                  CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[corridorTok.symbol]
+                );
+                if ((!isFlashChase && freshUsdt < 10) || freshCelo < 0.15) break;
                 const chaseRows = await scanCorridor(corridorTok, freshUsdt, candidate.direction, { priority: true });
                 const chaseOpp = chaseRows.find(
                   (r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= CONFIG.minEdgeBps
@@ -1438,7 +1758,10 @@ export async function runSingleScan() {
     if (!arbExecutedThisTick && CONFIG.liveTrading && process.env.AUTO_REFILL === '1' && wallet) {
       try {
         const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, wbrl, usdc, celo, uniCngnMid, uniWarsMid });
-        if (treasuryRec) STATE.arbExecutions.unshift(treasuryRec);
+        if (treasuryRec) {
+          cachedRpcBalances = { data: null, ts: 0 };
+          STATE.arbExecutions.unshift(treasuryRec);
+        }
       } catch (err) {
         console.error(`[TREASURY-ERR] ${err.message}`);
       }

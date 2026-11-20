@@ -32,6 +32,8 @@ import {
   validatePrivateKey,
   validateOutboundTx,
   evaluateCircuitBreaker,
+  interpolateLadderBuyAmount,
+  scanTokenFromLadder,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -884,7 +886,8 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS:-4\.5\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-3500\}"/);
+  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1800\}"/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
 });
@@ -1430,5 +1433,111 @@ test('33. SkewAtomicRouter rfq:aggregator Flash Mode executes $2,000 t2u & $1,50
   } finally {
     CONFIG.flashRouterAddress = prevFlashAddr;
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});
+
+test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable mid-book & micro knots when $3,000 tier is underwater', async () => {
+  // 1. Piecewise linear interpolation + unsorted/duplicate/bounds safety
+  const sampleLevels = [
+    { sellAmount: '1500000000', buyAmount: '2163000000000' }, // $1,500 -> 2,163,000 cNGN (1442.0/USDT)
+    { sellAmount: '1000000', buyAmount: '1442000000' }, // $1 -> 1,442.0 cNGN
+    { sellAmount: '1500000000', buyAmount: '2163000000000' }, // duplicate knot safety
+    { sellAmount: '3000000000', buyAmount: '4314000000000' }, // $3,000 -> 4,314,000 cNGN (blended 1438.0/USDT)
+  ];
+  assert.equal(interpolateLadderBuyAmount(sampleLevels, 500_000n), 0n); // below min knot
+  assert.equal(interpolateLadderBuyAmount(sampleLevels, 3_500_000000n), 0n); // above max knot
+  assert.equal(interpolateLadderBuyAmount(sampleLevels, 1_500_000000n), 2_163_000_000000n); // exact knot
+  // Midpoint $2,250 between $1,500 (2,163,000) and $3,000 (4,314,000) -> 3,238,500 cNGN
+  assert.equal(interpolateLadderBuyAmount(sampleLevels, 2_250_000000n), 3_238_500_000000n);
+
+  // 2. Flash-mode ladder scan finds +$2.08 at $1,500 Maker knot even though $3,000 blended tier is -$3.99 underwater
+  const prevApiKey = CONFIG.textileApiKey;
+  const prevFlashAddr = CONFIG.flashRouterAddress;
+  CONFIG.textileApiKey = 'tx_live_test_ladder';
+  CONFIG.flashRouterAddress = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  try {
+    const cngnToken = CONFIG.tokens.find((t) => t.symbol === 'cNGN');
+    const usdtLower = CONFIG.contracts.usdt.toLowerCase();
+    const cngnLower = cngnToken.address.toLowerCase();
+
+    // Uniswap V3 pool trades at 1440.5 cNGN/USDT (including 1 bps fee)
+    const mockUniQuote = async (tokIn, _tokOut, amountIn) => {
+      const inBig = BigInt(amountIn);
+      if (tokIn.toLowerCase() === cngnLower) {
+        return { amountOut: (inBig * 10000n) / 14405000n, fee: 100 };
+      }
+      return { amountOut: (inBig * 14405000n) / 10000n, fee: 100 };
+    };
+
+    const pairMap = new Map([
+      [
+        `${usdtLower}->${cngnLower}`,
+        {
+          sellToken: CONFIG.contracts.usdt,
+          buyToken: cngnToken.address,
+          minSellAmount: '1000000',
+          maxSellAmount: '3050000000',
+          levels: [
+            { sellAmount: '1000000', buyAmount: '1442000000' },
+            { sellAmount: '304000000', buyAmount: '438368000000' },
+            { sellAmount: '1500000000', buyAmount: '2163000000000' }, // Maker A: 1442.0 cNGN/USDT (+10.4 bps vs Uni!)
+            { sellAmount: '3050000000', buyAmount: '4385000000000' }, // Maker B drags $3,050 blended rate down to 1437.7 (-19.4 bps!)
+          ],
+        },
+      ],
+      [
+        `${cngnLower}->${usdtLower}`,
+        {
+          sellToken: cngnToken.address,
+          buyToken: CONFIG.contracts.usdt,
+          minSellAmount: '1440000000',
+          maxSellAmount: '4400000000000',
+          levels: [
+            { sellAmount: '1440000000', buyAmount: '1001200' },
+            { sellAmount: '1755000000000', buyAmount: '1219800000' }, // $1,219.80 out for 1,755,000 cNGN (costs $1,218.33 on Uni -> +$1.47!)
+            { sellAmount: '4400000000000', buyAmount: '3049000000' }, // $3,049 out for 4.4M cNGN (costs $3,054.50 on Uni -> -$5.50!)
+          ],
+        },
+      ],
+    ]);
+
+    const rows = await scanTokenFromLadder(cngnToken, pairMap, 385, mockUniQuote);
+    const t2u = rows.find((r) => r.direction === 'textile->uni');
+    const u2t = rows.find((r) => r.direction === 'uni->textile');
+    assert.ok(t2u && u2t);
+    assert.equal(t2u.status, 'ACTIONABLE');
+    assert.equal(t2u.sizeUsdt, 1500);
+    assert.ok(t2u.edgeUsd > 1.5, `expected >$1.50 profit at $1,500 knot, got ${t2u.edgeUsd}`);
+    assert.equal(u2t.status, 'ACTIONABLE');
+    assert.ok(u2t.sizeUsdt >= 1200 && u2t.sizeUsdt <= 1250, `expected ~$1,219 knot, got ${u2t.sizeUsdt}`);
+    assert.ok(u2t.edgeUsd > 1.4, `expected >$1.40 profit on uni->textile knot, got ${u2t.edgeUsd}`);
+
+    // 3. Sub-$750 micro Maker knot ($122) is preserved even on a $3,050 deep ladder when larger knots are underwater
+    const microMap = new Map([
+      [
+        `${usdtLower}->${cngnLower}`,
+        {
+          sellToken: CONFIG.contracts.usdt,
+          buyToken: cngnToken.address,
+          minSellAmount: '1000000',
+          maxSellAmount: '3050000000',
+          levels: [
+            { sellAmount: '1000000', buyAmount: '1443000000' },
+            { sellAmount: '122000000', buyAmount: '176046000000' }, // $122 at 1443.0 (+$0.21 profit!)
+            { sellAmount: '609000000', buyAmount: '875742000000' }, // $609 blended 1438.0 (underwater)
+            { sellAmount: '1826000000', buyAmount: '2625788000000' },
+            { sellAmount: '3050000000', buyAmount: '4385900000000' },
+          ],
+        },
+      ],
+    ]);
+    const microRows = await scanTokenFromLadder(cngnToken, microMap, 385, mockUniQuote);
+    const microT2U = microRows.find((r) => r.direction === 'textile->uni');
+    assert.equal(microT2U.status, 'ACTIONABLE');
+    assert.equal(microT2U.sizeUsdt, 122);
+    assert.ok(microT2U.edgeUsd > 0.2, `expected >$0.20 profit at $122 micro knot, got ${microT2U.edgeUsd}`);
+  } finally {
+    CONFIG.textileApiKey = prevApiKey;
+    CONFIG.flashRouterAddress = prevFlashAddr;
   }
 });
