@@ -87,7 +87,7 @@ export const CONFIG = {
   textileApiKey: (process.env.TEXTILE_API_KEY || '').trim(),
   flashRouterAddress: loadSavedFlashRouterAddress(),
   flashRouterSavePath: FLASH_ROUTER_SAVE_PATH,
-  maxFlashSliceUsdt: Number(process.env.MAX_FLASH_SLICE_USDT || '3000'),
+  maxFlashSliceUsdt: Number(process.env.MAX_FLASH_SLICE_USDT || '5000'),
   agentWallet: addr('0xe5036100b4a32b83d5e1997d403ce64a4c7f7324'),
   agentId: 9905,
   makerId: 'cmv75ay6h00bq339u3x6gdicy',
@@ -811,7 +811,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
   );
   const candidateSlices = isFlashMode
-    ? [CONFIG.maxFlashSliceUsdt, 2000, 1500, 1000, 750, 500, 300, 100, 40].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    ? [CONFIG.maxFlashSliceUsdt, 3500, 2500, 1500, 1000, 750, 500, 300, 100, 40].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
     : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
   const maxCapUsdt = candidateSlices[0] || 25;
   const maxCapRaw = ethers.parseUnits(maxCapUsdt.toFixed(6), 6);
@@ -1013,7 +1013,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
     CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
   );
   const candidateSlices = isFlashMode
-    ? [CONFIG.maxFlashSliceUsdt, 2000, 1250, 750, 350, 100].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    ? [CONFIG.maxFlashSliceUsdt, 3500, 2000, 1250, 750, 350, 100].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
     : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
   const probeUsdt = candidateSlices[0] || 25;
   const usdtInRaw = ethers.parseUnits(probeUsdt.toFixed(6), 6);
