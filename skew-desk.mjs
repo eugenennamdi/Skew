@@ -347,7 +347,10 @@ export async function fetchTextileCorridorPrices(fetchImpl = fetch) {
   return out;
 }
 
-const provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl, CONFIG.chainId, { staticNetwork: true });
+// ponytail: hard 10s HTTP timeout on Celo JSON-RPC requests prevents hung TCP sockets from wedging isBusy forever
+const rpcFetchReq = new ethers.FetchRequest(CONFIG.rpcUrl);
+rpcFetchReq.timeout = 10_000;
+const provider = new ethers.JsonRpcProvider(rpcFetchReq, CONFIG.chainId, { staticNetwork: true });
 const quoter = new ethers.Contract(CONFIG.contracts.uniQuoterV2, QUOTER_ABI, provider);
 const routerIface = new ethers.Interface(ROUTER_ABI);
 const erc20Iface = new ethers.Interface(ERC20_ABI);
@@ -538,7 +541,19 @@ export async function sendTagged(txReq, opts = {}) {
   if (!tagged.gasLimit) tagged.gasLimit = (est * 125n) / 100n;
   if (tagged.nonce == null) tagged.nonce = pendingNonce;
   const resp = await wallet.sendTransaction(tagged);
-  const receipt = await resp.wait();
+  // ponytail: bound receipt polling to 25s on 1s-block Celo so a dropped Forno socket after broadcast never hangs runSingleScan forever
+  const receipt = await resp.wait(1, 25_000).catch(async (waitErr) => {
+    const fallbackRec = await provider.getTransactionReceipt(resp.hash).catch(() => null);
+    if (fallbackRec) {
+      if (fallbackRec.status === 0) {
+        const revErr = new Error(`transaction execution reverted (${resp.hash})`);
+        revErr.receipt = fallbackRec;
+        throw revErr;
+      }
+      return fallbackRec;
+    }
+    throw waitErr;
+  });
   return receipt;
 }
 
@@ -731,8 +746,11 @@ export function interpolateLadderBuyAmount(levels, sellAmountRaw) {
   return pts[pts.length - 1].b;
 }
 
+let ladderBackoffUntilMs = 0;
+
 async function fetchTextileLadder(fetchImpl = fetch) {
   const now = Date.now();
+  if (fetchImpl === fetch && now < ladderBackoffUntilMs) return null;
   if (PREVIEW_BUDGET.resetAtMs > 0 && now >= PREVIEW_BUDGET.resetAtMs) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
@@ -743,7 +761,7 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (CONFIG.textileApiKey) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
     const res = await fetchImpl(`${CONFIG.textileApi}/v2/rfq/levels?chainId=${CONFIG.chainId}`, {
       headers,
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(3500),
     });
     const limHdr = Number(res.headers.get('x-ratelimit-limit'));
     const remHdr = Number(res.headers.get('x-ratelimit-remaining'));
@@ -751,12 +769,16 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (Number.isFinite(limHdr) && limHdr > 0) PREVIEW_BUDGET.limit = limHdr;
     if (Number.isFinite(remHdr) && remHdr >= 0) PREVIEW_BUDGET.remaining = remHdr;
     if (Number.isFinite(rstHdr) && rstHdr > 0) PREVIEW_BUDGET.resetAtMs = Date.now() + rstHdr * 1000;
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 45_000;
+      return null;
+    }
     const json = await res.json().catch(() => null);
     const data = json?.data || json;
     if (!Array.isArray(data?.pairs)) return null;
     return data;
   } catch {
+    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 45_000;
     return null;
   }
 }
@@ -1427,6 +1449,7 @@ const {
 
 let isBusy = false;
 let isShuttingDown = false;
+let lastScanDoneMs = Date.now();
 let cachedRpcBalances = { data: null, ts: 0 };
 
 export async function runSingleScan() {
@@ -1769,6 +1792,7 @@ export async function runSingleScan() {
 
     return STATE;
   } finally {
+    lastScanDoneMs = Date.now();
     isBusy = false;
   }
 }
@@ -1942,4 +1966,11 @@ if (isMain) {
   runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message));
   setInterval(() => runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message)), CONFIG.scanIntervalMs);
   setInterval(() => loadOnChainHistory().catch(() => {}), 60000);
+  // ponytail: self-healing deadlock breaker — if isBusy wedges >90s on a hung socket, exit cleanly so cron/systemd restarts immediately
+  setInterval(() => {
+    if (!isShuttingDown && Date.now() - lastScanDoneMs > 90_000) {
+      console.error(`[WATCHDOG] Scan loop stalled for ${Math.round((Date.now() - lastScanDoneMs) / 1000)}s; exiting for clean restart.`);
+      process.exit(1);
+    }
+  }, 30_000).unref();
 }

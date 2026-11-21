@@ -888,6 +888,7 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1800\}"/);
+  assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
 });
