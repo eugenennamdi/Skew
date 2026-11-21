@@ -99,7 +99,7 @@ fi
 # 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
 : > skew-desk.log
-NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=384}" \
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=192}" \
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
 TEXTILE_API_KEY="${TEXTILE_API_KEY:-}" \
 FLASH_ROUTER_ADDRESS="${FLASH_ROUTER_ADDRESS:-}" \
