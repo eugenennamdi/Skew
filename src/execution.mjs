@@ -234,9 +234,12 @@ export function createExecutionManager({
 
     let r;
     try {
-      r = await sendTagged({ to: CONFIG.flashRouterAddress, data: flashData }, { priorityTip: true });
+      r = await sendTagged(
+        { to: CONFIG.flashRouterAddress, data: flashData },
+        { priorityTip: true, expectedProfitUsd: firmCheck.netEdgeUsd }
+      );
     } catch (err) {
-      if (err?.receipt) baitCooldownUntil.set(flashCooldownKey, Date.now() + 20_000);
+      if (err?.receipt) baitCooldownUntil.set(flashCooldownKey, Date.now() + 4_000);
       console.log(
         `[FLASH-SKIP] ${opp.corridor} (${opp.direction}) $${inUsdt.toFixed(2)} atomic revert (${err?.receipt ? 'mined ~0.3c gas' : '0 gas pre-flight'}): ${err.message?.slice(0, 90)}`
       );

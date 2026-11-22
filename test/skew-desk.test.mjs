@@ -34,6 +34,7 @@ import {
   evaluateCircuitBreaker,
   interpolateLadderBuyAmount,
   scanTokenFromLadder,
+  computeDynamicPriorityTipGwei,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -888,7 +889,8 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-5000\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1800\}"/);
+  assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1400\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
@@ -1542,4 +1544,14 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
     CONFIG.textileApiKey = prevApiKey;
     CONFIG.flashRouterAddress = prevFlashAddr;
   }
+});
+
+test('35. Profit-tiered priority gas scales from 65 gwei base to 140 gwei mid and 260 gwei on >=$2 whale clips', () => {
+  assert.equal(computeDynamicPriorityTipGwei(0.05, 65), 65);
+  assert.equal(computeDynamicPriorityTipGwei(0.249, 65), 65);
+  assert.equal(computeDynamicPriorityTipGwei(0.25, 65), 140);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 65), 140);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 65), 260);
+  assert.equal(computeDynamicPriorityTipGwei(31.58, 65), 260);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 300), 300); // respects higher operator override
 });

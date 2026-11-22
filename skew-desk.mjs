@@ -502,6 +502,14 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
   return { tripped: false, reason: 'ok', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
 }
 
+export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei = CONFIG.priorityTipGwei || 20) {
+  const base = Number(baseTipGwei) || 20;
+  const edge = Number(expectedProfitUsd) || 0;
+  if (edge >= 2.0) return Math.max(base, 260);
+  if (edge >= 0.25) return Math.max(base, 140);
+  return base;
+}
+
 export async function sendTagged(txReq, opts = {}) {
   if (!wallet) throw new Error('No STITCH_PRIVATE_KEY configured for live execution');
   validateOutboundTx(txReq, wallet.address);
@@ -523,11 +531,13 @@ export async function sendTagged(txReq, opts = {}) {
     }
     if (baseGasPrice) {
       if (opts.priorityTip) {
-        // ponytail: 20 gwei EIP-1559 priority tip (~$0.0003 on Celo) places our arb tx at idx 1 ahead of bots paying 2.5 gwei
-        const tipWei = BigInt(Math.round((CONFIG.priorityTipGwei || 20) * 1e9));
+        // ponytail: profit-tiered EIP-1559 priority tip (65 gwei base -> 140 gwei mid -> 260 gwei on >=$2 whale clips) wins idx 1 without overpaying on micro-arbs
+        const tipGwei = computeDynamicPriorityTipGwei(opts.expectedProfitUsd, CONFIG.priorityTipGwei || 20);
+        const tipWei = BigInt(Math.round(tipGwei * 1e9));
+        const baseMult = Number(opts.expectedProfitUsd || 0) >= 2.0 ? 200n : 140n;
         tagged.type = 2;
         tagged.maxPriorityFeePerGas = tipWei;
-        tagged.maxFeePerGas = (baseGasPrice * 140n) / 100n + tipWei;
+        tagged.maxFeePerGas = (baseGasPrice * baseMult) / 100n + tipWei;
       } else {
         tagged.gasPrice = baseGasPrice;
       }
@@ -746,31 +756,47 @@ export function interpolateLadderBuyAmount(levels, sellAmountRaw) {
   return pts[pts.length - 1].b;
 }
 
+const LADDER_BUDGET = { limit: 60, remaining: 60, resetAtMs: 0 };
 let ladderBackoffUntilMs = 0;
 
 async function fetchTextileLadder(fetchImpl = fetch) {
   const now = Date.now();
   if (fetchImpl === fetch && now < ladderBackoffUntilMs) return null;
+  if (LADDER_BUDGET.resetAtMs > 0 && now >= LADDER_BUDGET.resetAtMs) {
+    LADDER_BUDGET.remaining = LADDER_BUDGET.limit;
+    LADDER_BUDGET.resetAtMs = 0;
+  }
   if (PREVIEW_BUDGET.resetAtMs > 0 && now >= PREVIEW_BUDGET.resetAtMs) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
   }
-  if (PREVIEW_BUDGET.remaining <= 4 && PREVIEW_BUDGET.resetAtMs > now) return null;
+  // ponytail: /v2/rfq/levels requires no API key; draw from public IP quota first so 60/60 Partner Key credits stay free for firm quotes & chase
+  const useAuthOverflow =
+    Boolean(CONFIG.textileApiKey) && LADDER_BUDGET.remaining <= 4 && LADDER_BUDGET.resetAtMs > now;
+  if (!useAuthOverflow && LADDER_BUDGET.remaining <= 2 && LADDER_BUDGET.resetAtMs > now) return null;
+  if (useAuthOverflow && PREVIEW_BUDGET.remaining <= 15 && PREVIEW_BUDGET.resetAtMs > now) return null;
+
+  const targetBudget = useAuthOverflow ? PREVIEW_BUDGET : LADDER_BUDGET;
   try {
     const headers = {};
-    if (CONFIG.textileApiKey) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
+    if (useAuthOverflow) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
     const res = await fetchImpl(`${CONFIG.textileApi}/v2/rfq/levels?chainId=${CONFIG.chainId}`, {
       headers,
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(3200),
     });
     const limHdr = Number(res.headers.get('x-ratelimit-limit'));
     const remHdr = Number(res.headers.get('x-ratelimit-remaining'));
     const rstHdr = Number(res.headers.get('x-ratelimit-reset'));
-    if (Number.isFinite(limHdr) && limHdr > 0) PREVIEW_BUDGET.limit = limHdr;
-    if (Number.isFinite(remHdr) && remHdr >= 0) PREVIEW_BUDGET.remaining = remHdr;
-    if (Number.isFinite(rstHdr) && rstHdr > 0) PREVIEW_BUDGET.resetAtMs = Date.now() + rstHdr * 1000;
+    if (Number.isFinite(limHdr) && limHdr > 0) targetBudget.limit = limHdr;
+    if (Number.isFinite(remHdr) && remHdr >= 0) targetBudget.remaining = remHdr;
+    if (Number.isFinite(rstHdr) && rstHdr > 0) targetBudget.resetAtMs = Date.now() + rstHdr * 1000;
+    if (res.status === 429) {
+      targetBudget.remaining = 0;
+      if (targetBudget.resetAtMs <= Date.now()) targetBudget.resetAtMs = Date.now() + 15_000;
+      return null;
+    }
     if (!res.ok) {
-      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 45_000;
+      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 12_000;
       return null;
     }
     const json = await res.json().catch(() => null);
@@ -778,7 +804,7 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (!Array.isArray(data?.pairs)) return null;
     return data;
   } catch {
-    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 45_000;
+    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 12_000;
     return null;
   }
 }
@@ -1685,7 +1711,7 @@ export async function runSingleScan() {
     } else {
       let activeTokens = CONFIG.tokens;
       if (STATE.scanCount > 0 && CONFIG.tokens.length > 2) {
-        const quotaHealthy = PREVIEW_BUDGET.remaining >= 35 || STATE.scanCount % 2 === 0;
+        const quotaHealthy = STATE.scanCount % 2 === 0;
         const hotTokens = CONFIG.tokens.filter((t) => {
           if (t.symbol === 'cNGN') return cngnMoved || quotaHealthy;
           if (t.symbol === 'wARS') return warsMoved || quotaHealthy;
@@ -1720,7 +1746,7 @@ export async function runSingleScan() {
       .slice(0, 2);
     const bestRow = allRows[0];
     console.log(
-      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) quota=${PREVIEW_BUDGET.remaining}/${PREVIEW_BUDGET.limit} | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestRow.status}]` : 'none'}`
+      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) quota=${PREVIEW_BUDGET.remaining}/${PREVIEW_BUDGET.limit}(lad=${LADDER_BUDGET.remaining}) | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestRow.status}]` : 'none'}`
     );
 
     const sessionStartMs = Date.parse(STATE.startedAt) || 0;
