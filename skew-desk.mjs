@@ -109,6 +109,7 @@ export const CONFIG = {
       wARS: addr('0x5D8ef8B839be522b9E3d60a51EDB5837CD0b2391'),
       wBRL: addr('0x01c3cf91cdf7B34181C7eC8566c0236951FEA40F'),
       USDC: addr('0x1a810e0B6c2dd5629AFa2f0c898b9512C6F78846'),
+      USAT: addr('0x070D575a713EaF5025462D0865Fb0Dac4B14bC38'),
     },
   },
   // Active Textile FX corridors (cNGN, wARS, wBRL, USDC + optional USAT when ENABLE_USAT=1)

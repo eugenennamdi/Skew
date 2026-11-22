@@ -276,6 +276,8 @@ export function createExecutionManager({
     if (!wallet || permit2Initialized) return;
     await ensureAllowance(CONFIG.contracts.usdt, CONFIG.contracts.permit2, 500_000_000n);
     for (const tok of CONFIG.tokens) {
+      // ponytail: USAT executes strictly via zero-allowance SkewAtomicRouter flash swaps (never held in EOA)
+      if (tok.symbol === 'USAT') continue;
       const minPermit = tok.decimals === 18 ? 1_000_000n * 10n ** 18n : 500_000_000n;
       await ensureAllowance(tok.address, CONFIG.contracts.permit2, minPermit);
     }
