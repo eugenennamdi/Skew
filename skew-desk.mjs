@@ -83,6 +83,7 @@ function loadSavedFlashRouterAddress() {
 export const CONFIG = {
   chainId: 42220,
   rpcUrl: process.env.CELO_RPC_URL || 'https://forno.celo.org',
+  wsRpcUrl: process.env.CELO_WS_URL || 'wss://forno.celo.org/ws',
   textileApi: 'https://api.textilecredit.com',
   textileApiKey: (process.env.TEXTILE_API_KEY || '').trim(),
   flashRouterAddress: loadSavedFlashRouterAddress(),
@@ -143,6 +144,7 @@ export const CONFIG = {
   feeTiers: [100, 500, 3000, 10000],
   minEdgeUsd: Math.max(0.005, Number(process.env.MIN_EDGE_USD || '0.012')),
   minEdgeBps: Number(process.env.MIN_EDGE_BPS || '0.55'),
+  minFlashEdgeBps: Number(process.env.MIN_FLASH_EDGE_BPS || '0.05'),
   minFirmNetEdgeUsd: Number(process.env.MIN_FIRM_NET_EDGE_USD || '0.010'),
   minFirmNetEdgeBps: Number(process.env.MIN_FIRM_NET_EDGE_BPS || '0.45'),
   // Positive-EV floor for cash-first uni->textile (avoids -3 bps DEX flatten bleed when Makers reprice during Leg 2)
@@ -519,8 +521,9 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
 export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei = CONFIG.priorityTipGwei || 20) {
   const base = Number(baseTipGwei) || 20;
   const edge = Number(expectedProfitUsd) || 0;
-  if (edge >= 2.0) return Math.max(base, 260);
-  if (edge >= 0.25) return Math.max(base, 140);
+  if (edge >= 10.0) return Math.max(base, 420);
+  if (edge >= 2.0) return Math.max(base, 300);
+  if (edge >= 0.25) return Math.max(base, 165);
   return base;
 }
 
@@ -581,17 +584,20 @@ export async function sendTagged(txReq, opts = {}) {
   return receipt;
 }
 
-async function readPoolMid(poolAddr, token0IsUsdt, tokenDecimals = 6) {
-  const pool = new ethers.Contract(poolAddr, POOL_ABI, provider);
-  const [sqrtPriceX96] = await pool.slot0();
+function decodeSqrtPriceToMid(sqrtPriceX96, token0IsUsdt, tokenDecimals = 6) {
   const s = Number(sqrtPriceX96) / 2 ** 96;
   const price1Per0Raw = s * s;
   if (token0IsUsdt) {
     const tokPerUsdt = price1Per0Raw / 10 ** (tokenDecimals - 6);
     return 1 / tokPerUsdt;
-  } else {
-    return price1Per0Raw * 10 ** (tokenDecimals - 6);
   }
+  return price1Per0Raw * 10 ** (tokenDecimals - 6);
+}
+
+async function readPoolMid(poolAddr, token0IsUsdt, tokenDecimals = 6) {
+  const pool = new ethers.Contract(poolAddr, POOL_ABI, provider);
+  const [sqrtPriceX96] = await pool.slot0();
+  return decodeSqrtPriceToMid(sqrtPriceX96, token0IsUsdt, tokenDecimals);
 }
 
 export const MAX_UNI_QUOTE_GAS = 800000n;
@@ -604,9 +610,11 @@ export function isValidUniQuoteGas(amountOut, gasEstimate) {
   return BigInt(amountOut || 0n) > 0n && BigInt(gasEstimate || 0n) <= MAX_UNI_QUOTE_GAS;
 }
 
+const poolIface = new ethers.Interface(POOL_ABI);
 const quoterIface = new ethers.Interface(QUOTER_ABI);
 const multicall3Iface = new ethers.Interface([
   'function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])',
+  'function getEthBalance(address addr) view returns (uint256 balance)',
 ]);
 
 async function bestUniQuote(tokenIn, tokenOut, amountInRaw) {
@@ -864,10 +872,15 @@ export function interpolateLadderBuyAmount(levels, sellAmountRaw) {
 
 const LADDER_BUDGET = { limit: 60, remaining: 60, resetAtMs: 0 };
 let ladderBackoffUntilMs = 0;
+let lastGoodLadder = { data: null, fetchedAtMs: 0 };
 
 async function fetchTextileLadder(fetchImpl = fetch) {
   const now = Date.now();
-  if (fetchImpl === fetch && now < ladderBackoffUntilMs) return null;
+  const cachedFresh = () =>
+    fetchImpl === fetch && lastGoodLadder.data && Date.now() - lastGoodLadder.fetchedAtMs <= 8_000
+      ? lastGoodLadder.data
+      : null;
+  if (fetchImpl === fetch && now < ladderBackoffUntilMs) return cachedFresh();
   if (LADDER_BUDGET.resetAtMs > 0 && now >= LADDER_BUDGET.resetAtMs) {
     LADDER_BUDGET.remaining = LADDER_BUDGET.limit;
     LADDER_BUDGET.resetAtMs = 0;
@@ -879,8 +892,8 @@ async function fetchTextileLadder(fetchImpl = fetch) {
   // ponytail: /v2/rfq/levels requires no API key; draw from public IP quota first so 60/60 Partner Key credits stay free for firm quotes & chase
   const useAuthOverflow =
     Boolean(CONFIG.textileApiKey) && LADDER_BUDGET.remaining <= 4 && LADDER_BUDGET.resetAtMs > now;
-  if (!useAuthOverflow && LADDER_BUDGET.remaining <= 2 && LADDER_BUDGET.resetAtMs > now) return null;
-  if (useAuthOverflow && PREVIEW_BUDGET.remaining <= 15 && PREVIEW_BUDGET.resetAtMs > now) return null;
+  if (!useAuthOverflow && LADDER_BUDGET.remaining <= 2 && LADDER_BUDGET.resetAtMs > now) return cachedFresh();
+  if (useAuthOverflow && PREVIEW_BUDGET.remaining <= 15 && PREVIEW_BUDGET.resetAtMs > now) return cachedFresh();
 
   const targetBudget = useAuthOverflow ? PREVIEW_BUDGET : LADDER_BUDGET;
   try {
@@ -888,7 +901,7 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (useAuthOverflow) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
     const res = await fetchImpl(`${CONFIG.textileApi}/v2/rfq/levels?chainId=${CONFIG.chainId}`, {
       headers,
-      signal: AbortSignal.timeout(3200),
+      signal: AbortSignal.timeout(5500),
     });
     const limHdr = Number(res.headers.get('x-ratelimit-limit'));
     const remHdr = Number(res.headers.get('x-ratelimit-remaining'));
@@ -899,30 +912,40 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (res.status === 429) {
       targetBudget.remaining = 0;
       if (targetBudget.resetAtMs <= Date.now()) targetBudget.resetAtMs = Date.now() + 15_000;
-      return null;
+      return cachedFresh();
     }
     if (!res.ok) {
-      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 12_000;
-      return null;
+      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 8_000;
+      return cachedFresh();
     }
     const json = await res.json().catch(() => null);
     const data = json?.data || json;
-    if (!Array.isArray(data?.pairs)) return null;
+    if (!Array.isArray(data?.pairs)) return cachedFresh();
+    if (fetchImpl === fetch) lastGoodLadder = { data, fetchedAtMs: Date.now() };
     return data;
   } catch {
-    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 12_000;
-    return null;
+    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 1_200;
+    return cachedFresh();
   }
 }
 
-function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
+// ponytail: evaluate exact Maker knots + concave midpoints across wide gaps while ALWAYS preserving sub-$1k micro-anchors
+export function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
   if (maxRaw < minRaw) return [];
   const validKnots = [...new Set(knotRaws.filter((v) => v >= minRaw && v <= maxRaw))].sort((a, b) =>
     a > b ? -1 : a < b ? 1 : 0
   );
+  const denseKnots = [...validKnots];
+  for (let i = 0; i + 1 < validKnots.length; i++) {
+    if (validKnots[i] - validKnots[i + 1] >= 400_000000n) {
+      denseKnots.push((validKnots[i] + validKnots[i + 1]) / 2n);
+    }
+  }
+  denseKnots.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+
   const kept = [];
-  for (const k of validKnots) {
-    if (kept.length === 0 || (kept[kept.length - 1] - k >= 10_000000n && k * 100n <= kept[kept.length - 1] * 92n)) {
+  for (const k of denseKnots) {
+    if (kept.length === 0 || (kept[kept.length - 1] - k >= 8_000000n && k * 100n <= kept[kept.length - 1] * 94n)) {
       kept.push(k);
     }
   }
@@ -931,11 +954,15 @@ function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
   );
   for (const g of validGrid) {
     const farFromAll = kept.every(
-      (k) => (k > g ? k - g >= 15_000000n && g * 100n <= k * 88n : g - k >= 15_000000n && k * 100n <= g * 88n)
+      (k) => (k > g ? k - g >= 12_000000n && g * 100n <= k * 90n : g - k >= 12_000000n && k * 100n <= g * 90n)
     );
     if (farFromAll) kept.push(g);
   }
-  return kept.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0)).slice(0, 15);
+  const sorted = kept.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  if (sorted.length <= 24) return sorted;
+  const microTail = sorted.slice(-4);
+  const headAndMid = sorted.slice(0, 20);
+  return [...new Set([...headAndMid, ...microTail])].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
 }
 
 export function getMaxFlashSliceUsdt(token, cfg = CONFIG) {
@@ -1034,6 +1061,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     }
     if (best) {
       const edgeBps = best.inU > 0 ? (best.edgeUsd / best.inU) * 10000 : 0;
+      const t2uMinBps = isFlashMode ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
       rows.push({
         corridor: `${token.symbol}/USDT`,
         symbol: token.symbol,
@@ -1049,7 +1077,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
         edgeBps,
         sliceCandidatesUsdt: candidateSlices,
         scannedAtMs: Date.now(),
-        status: best.edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= CONFIG.minEdgeBps ? 'ACTIONABLE' : 'WATCH',
+        status: best.edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= t2uMinBps ? 'ACTIONABLE' : 'WATCH',
         note: `Ladder tier ($${best.inU.toFixed(2)})`,
       });
     }
@@ -1126,7 +1154,11 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     if (best2) {
       const edgeBps = best2.inU > 0 ? (best2.edgeUsd / best2.inU) * 10000 : 0;
       const invCoversClip = isFlashMode || preBalUsd >= Math.max(6.0, best2.inU * 0.95);
-      const minReqBps = invCoversClip ? CONFIG.minEdgeBps : CONFIG.minUniToTextileDexFirstBps;
+      const minReqBps = isFlashMode
+        ? (CONFIG.minFlashEdgeBps ?? 0.05)
+        : invCoversClip
+          ? CONFIG.minEdgeBps
+          : CONFIG.minUniToTextileDexFirstBps;
       const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
       rows.push({
         corridor: `${token.symbol}/USDT`,
@@ -1297,7 +1329,11 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           edgeBps,
           sliceCandidatesUsdt: candidateSlices,
           scannedAtMs: Date.now(),
-          status: edgeUsd >= CONFIG.minEdgeUsd && edgeBps >= CONFIG.minEdgeBps ? 'ACTIONABLE' : 'WATCH',
+          status:
+            edgeUsd >= CONFIG.minEdgeUsd &&
+            edgeBps >= (isFlashMode ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps)
+              ? 'ACTIONABLE'
+              : 'WATCH',
           note: sliceLabel,
         });
       } else {
@@ -1464,7 +1500,11 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           const localBalUnits = Number(STATE.balances?.[token.symbol.toLowerCase()] || 0);
           const localMidUsd = Number(STATE.textileMids?.[token.symbol] || 0);
           const invCoversClip = isFlashMode || localBalUnits * localMidUsd >= Math.max(6.0, usdtInNum * 0.95);
-          const minReqBps = invCoversClip ? CONFIG.minEdgeBps : CONFIG.minUniToTextileDexFirstBps;
+          const minReqBps = isFlashMode
+            ? (CONFIG.minFlashEdgeBps ?? 0.05)
+            : invCoversClip
+              ? CONFIG.minEdgeBps
+              : CONFIG.minUniToTextileDexFirstBps;
           const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
           rows.push({
             corridor: `${token.symbol}/USDT`,
@@ -1598,6 +1638,89 @@ let isBusy = false;
 let isShuttingDown = false;
 let lastScanDoneMs = Date.now();
 let cachedRpcBalances = { data: null, ts: 0 };
+let bgPriceRefreshInFlight = false;
+let bgFxRefreshInFlight = false;
+
+async function fetchRpcBundleMulticall(needFreshBalances, usatTok) {
+  const poolSpecs = [
+    { addr: CONFIG.contracts.cngnUsdtPool, token0IsUsdt: true, dec: 6, fallback: 0.00072538 },
+    { addr: CONFIG.contracts.warsUsdtPool, token0IsUsdt: false, dec: 18, fallback: 0.00067808 },
+    { addr: CONFIG.contracts.flashPools.USDC, token0IsUsdt: true, dec: 6, fallback: 1.0 },
+    { addr: usatTok ? CONFIG.contracts.flashPools.USAT : CONFIG.contracts.flashPools.USDC, token0IsUsdt: true, dec: 6, fallback: 1.0 },
+    { addr: CONFIG.contracts.flashPools.CELO, token0IsUsdt: false, dec: 18, fallback: 0.14 },
+    { addr: CONFIG.contracts.flashPools.VGBP, token0IsUsdt: true, dec: 18, fallback: 1.35 },
+    { addr: CONFIG.contracts.flashPools.WETH, token0IsUsdt: true, dec: 18, fallback: 2500.0 },
+    { addr: CONFIG.contracts.flashPools.COPM, token0IsUsdt: true, dec: 18, fallback: 0.00025 },
+  ];
+  const slot0Data = poolIface.encodeFunctionData('slot0');
+  const calls = poolSpecs.map((p) => ({ target: p.addr, allowFailure: true, callData: slot0Data }));
+  if (needFreshBalances) {
+    const balData = erc20Iface.encodeFunctionData('balanceOf', [CONFIG.agentWallet]);
+    const tokAddrs = [
+      CONFIG.contracts.usdt,
+      CONFIG.tokens[0].address,
+      CONFIG.tokens[1].address,
+      CONFIG.tokens[2].address,
+      CONFIG.tokens[3].address,
+      usatTok ? usatTok.address : CONFIG.contracts.usdt,
+    ];
+    for (const ta of tokAddrs) calls.push({ target: ta, allowFailure: true, callData: balData });
+    calls.push({
+      target: CONFIG.contracts.multicall3,
+      allowFailure: true,
+      callData: multicall3Iface.encodeFunctionData('getEthBalance', [CONFIG.agentWallet]),
+    });
+  }
+
+  const [rawMc, feeData] = await Promise.all([
+    provider.call({
+      to: CONFIG.contracts.multicall3,
+      data: multicall3Iface.encodeFunctionData('aggregate3', [calls]),
+    }),
+    !cachedGasPrice.value || Date.now() - cachedGasPrice.ts >= 30_000
+      ? provider.getFeeData().catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  const [resArr] = multicall3Iface.decodeFunctionResult('aggregate3', rawMc);
+  const mids = poolSpecs.map((spec, idx) => {
+    const r = resArr[idx];
+    if (r?.success && r.returnData && r.returnData.length >= 66) {
+      try {
+        const [sqrtPriceX96] = poolIface.decodeFunctionResult('slot0', r.returnData);
+        const mid = decodeSqrtPriceToMid(sqrtPriceX96, spec.token0IsUsdt, spec.dec);
+        if (Number.isFinite(mid) && mid > 0) return mid;
+      } catch {}
+    }
+    return spec.fallback;
+  });
+  if (!usatTok) mids[3] = 1.0;
+
+  let balTuple = cachedRpcBalances.data;
+  if (needFreshBalances) {
+    const decodeBal = (idx) => {
+      const r = resArr[idx];
+      if (r?.success && r.returnData && r.returnData.length >= 66) {
+        return erc20Iface.decodeFunctionResult('balanceOf', r.returnData)[0];
+      }
+      return 0n;
+    };
+    const ethRes = resArr[14];
+    const celoBal =
+      ethRes?.success && ethRes.returnData && ethRes.returnData.length >= 66
+        ? multicall3Iface.decodeFunctionResult('getEthBalance', ethRes.returnData)[0]
+        : 0n;
+    balTuple = [
+      decodeBal(8),
+      decodeBal(9),
+      decodeBal(10),
+      decodeBal(11),
+      decodeBal(12),
+      usatTok ? decodeBal(13) : 0n,
+      celoBal,
+    ];
+  }
+  return [balTuple, ...mids, feeData];
+}
 
 export async function runSingleScan() {
   if (isBusy || isShuttingDown) return STATE;
@@ -1613,13 +1736,7 @@ export async function runSingleScan() {
     }
 
     const usdtC = new ethers.Contract(CONFIG.contracts.usdt, ERC20_ABI, provider);
-    const cngnC = new ethers.Contract(CONFIG.tokens[0].address, ERC20_ABI, provider);
-    const warsC = new ethers.Contract(CONFIG.tokens[1].address, ERC20_ABI, provider);
-    const wbrlC = new ethers.Contract(CONFIG.tokens[2].address, ERC20_ABI, provider);
-    const usdcC = new ethers.Contract(CONFIG.tokens[3].address, ERC20_ABI, provider);
-
     const usatTok = CONFIG.tokens.find((t) => t.symbol === 'USAT');
-    const usatC = usatTok ? new ethers.Contract(usatTok.address, ERC20_ABI, provider) : null;
 
     let usdt = 97.6;
     let cngn = 25020.0;
@@ -1637,36 +1754,27 @@ export async function runSingleScan() {
     let uniWethMid = 2500.0;
     let uniCopmMid = 0.00025;
 
-    // ponytail: fire Textile HTTP ladder & Celo RPC slot0/balances in a single parallel round-trip (saves ~350ms per tick)
+    // ponytail: keep slow /price (1.6s) & dolarapi (0.9s) refreshes off the critical path after boot; read 8 slot0 + 7 balances in ONE Multicall3 eth_call (~500ms vs 1.73s)
+    if (STATE.scanCount > 0) {
+      if (!bgFxRefreshInFlight && Date.now() - cachedOffChainFx.fetchedAt >= 300_000) {
+        bgFxRefreshInFlight = true;
+        fetchOffChainFxRates().catch(() => {}).finally(() => { bgFxRefreshInFlight = false; });
+      }
+      if (!bgPriceRefreshInFlight && Date.now() - cachedTextileMids.fetchedAt >= 15_000) {
+        bgPriceRefreshInFlight = true;
+        fetchTextileCorridorPrices()
+          .then((m) => { STATE.textileMids = { ...STATE.textileMids, ...m }; })
+          .catch(() => {})
+          .finally(() => { bgPriceRefreshInFlight = false; });
+      }
+    }
+
     const needFreshBalances = !cachedRpcBalances.data || Date.now() - cachedRpcBalances.ts >= 12_000;
     const [offChainFx, fetchedTextileMids, ladderData, rpcBundle] = await Promise.all([
-      fetchOffChainFxRates(),
-      fetchTextileCorridorPrices(),
+      STATE.scanCount === 0 ? fetchOffChainFxRates() : Promise.resolve(cachedOffChainFx),
+      STATE.scanCount === 0 ? fetchTextileCorridorPrices() : Promise.resolve(cachedTextileMids.data),
       fetchTextileLadder(),
-      Promise.all([
-        needFreshBalances
-          ? Promise.all([
-              usdtC.balanceOf(CONFIG.agentWallet),
-              cngnC.balanceOf(CONFIG.agentWallet),
-              warsC.balanceOf(CONFIG.agentWallet),
-              wbrlC.balanceOf(CONFIG.agentWallet),
-              usdcC.balanceOf(CONFIG.agentWallet),
-              usatC ? usatC.balanceOf(CONFIG.agentWallet) : Promise.resolve(0n),
-              provider.getBalance(CONFIG.agentWallet),
-            ])
-          : Promise.resolve(cachedRpcBalances.data),
-        readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
-        readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
-        readPoolMid(CONFIG.contracts.flashPools.USDC, true, 6).catch(() => 1.0),
-        usatTok ? readPoolMid(CONFIG.contracts.flashPools.USAT, true, 6).catch(() => 1.0) : Promise.resolve(1.0),
-        readPoolMid(CONFIG.contracts.flashPools.CELO, false, 18).catch(() => 0.14),
-        readPoolMid(CONFIG.contracts.flashPools.VGBP, true, 18).catch(() => 1.35),
-        readPoolMid(CONFIG.contracts.flashPools.WETH, true, 18).catch(() => 2500.0),
-        readPoolMid(CONFIG.contracts.flashPools.COPM, true, 18).catch(() => 0.00025),
-        !cachedGasPrice.value || Date.now() - cachedGasPrice.ts >= 30_000
-          ? provider.getFeeData().catch(() => null)
-          : Promise.resolve(null),
-      ]).catch((rpcErr) => {
+      fetchRpcBundleMulticall(needFreshBalances, usatTok).catch((rpcErr) => {
         console.warn(`[RPC-FALLBACK] Using cached reference state (${rpcErr.message?.slice(0, 60)})`);
         return null;
       }),
@@ -1971,19 +2079,39 @@ export async function runSingleScan() {
             if (corridorTok && execRec.edgeUsd > 0 && !STATE.circuitBreaker.tripped && CONFIG.chaseIntervalMs > 0) {
               for (let chaseIdx = 1; chaseIdx <= CONFIG.maxChaseIterations; chaseIdx++) {
                 await new Promise((res) => setTimeout(res, CONFIG.chaseIntervalMs));
-                const [freshUsdtRaw, freshCeloRaw] = await Promise.all([
-                  usdtC.balanceOf(CONFIG.agentWallet),
-                  provider.getBalance(CONFIG.agentWallet),
-                ]).catch(() => [0n, 0n]);
-                const freshUsdt = Number(freshUsdtRaw) / 1e6;
-                const freshCelo = Number(freshCeloRaw) / 1e18;
                 const isFlashChase = Boolean(
                   CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[corridorTok.symbol]
                 );
+                let freshUsdt = usdt;
+                let freshCelo = celo;
+                if (!isFlashChase || celo < 1.0) {
+                  const [freshUsdtRaw, freshCeloRaw] = await Promise.all([
+                    usdtC.balanceOf(CONFIG.agentWallet),
+                    provider.getBalance(CONFIG.agentWallet),
+                  ]).catch(() => [0n, 0n]);
+                  freshUsdt = Number(freshUsdtRaw) / 1e6;
+                  freshCelo = Number(freshCeloRaw) / 1e18;
+                }
                 if ((!isFlashChase && freshUsdt < 10) || freshCelo < 0.15) break;
-                const chaseRows = await scanCorridor(corridorTok, freshUsdt, null, { priority: true });
+                let chaseRows = null;
+                if (isFlashChase) {
+                  const chaseLadder = await fetchTextileLadder();
+                  if (chaseLadder?.pairs?.length) {
+                    const chasePairMap = new Map();
+                    for (const pItem of chaseLadder.pairs) {
+                      if (pItem?.sellToken && pItem?.buyToken) {
+                        chasePairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
+                      }
+                    }
+                    chaseRows = await scanTokenFromLadder(corridorTok, chasePairMap, Math.max(1, freshUsdt));
+                  }
+                }
+                if (!chaseRows) {
+                  chaseRows = await scanCorridor(corridorTok, freshUsdt, null, { priority: true });
+                }
+                const chaseMinBps = isFlashChase ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
                 const chaseOpp = chaseRows
-                  .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= CONFIG.minEdgeBps)
+                  .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= chaseMinBps)
                   .sort((a, b) => b.edgeUsd - a.edgeUsd)[0];
                 if (!chaseOpp) break;
                 console.log(
@@ -2061,6 +2189,116 @@ export function runDryRunVerification() {
     simulatedShieldedAskCngnPerUsdt: sim.askCngnPerUsdt ? Number(sim.askCngnPerUsdt.toFixed(2)) : 'HALTED_HIGH_SKEW',
     simulatedReplenishEdgeBps: Number(sim.replenishEdgeBps.toFixed(2)),
   };
+}
+
+const UNI_SWAP_TOPIC = ethers.id('Swap(address,address,int256,int256,uint160,uint128,int24)');
+let activeSwapWs = null;
+let lastWsStrikeAtBySym = new Map();
+
+// ponytail: real-time Celo WebSocket Swap push (0ms wakeup on DEX whale swaps -> ~500ms Block N+1 flash strike against cached ladder)
+function startCeloSwapStream() {
+  if (typeof WebSocket === 'undefined' || !CONFIG.wsRpcUrl || isShuttingDown) return;
+  const poolToToken = new Map();
+  const allFlashUniverse = [...CONFIG.tokens, ...(CONFIG.extraFlashTokens || [])];
+  for (const tok of allFlashUniverse) {
+    const pAddr = CONFIG.contracts.flashPools?.[tok.symbol];
+    if (pAddr && tok.symbol !== 'wBRL') poolToToken.set(pAddr.toLowerCase(), tok);
+  }
+  const poolAddrs = [...poolToToken.keys()];
+  if (poolAddrs.length === 0) return;
+
+  const connect = () => {
+    if (isShuttingDown) return;
+    let ws;
+    try {
+      ws = new WebSocket(CONFIG.wsRpcUrl);
+      activeSwapWs = ws;
+    } catch {
+      setTimeout(connect, 5_000).unref?.();
+      return;
+    }
+    ws.addEventListener('open', () => {
+      try {
+        ws.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_subscribe',
+            params: ['logs', { address: poolAddrs, topics: [UNI_SWAP_TOPIC] }],
+          })
+        );
+      } catch {}
+    });
+    ws.addEventListener('message', async (ev) => {
+      if (isShuttingDown) return;
+      let msg;
+      try { msg = JSON.parse(String(ev.data)); } catch { return; }
+      if (msg?.method !== 'eth_subscription') return;
+      const poolLower = String(msg?.params?.result?.address || '').toLowerCase();
+      const tok = poolToToken.get(poolLower);
+      if (!tok) return;
+      STATE.lastSlot0Mids = null;
+      const now = Date.now();
+      if (now - (lastWsStrikeAtBySym.get(tok.symbol) || 0) < 450) return;
+      lastWsStrikeAtBySym.set(tok.symbol, now);
+      if (isBusy) return;
+
+      if (
+        CONFIG.liveTrading &&
+        wallet &&
+        CONFIG.textileApiKey &&
+        CONFIG.flashRouterAddress &&
+        (STATE.balances?.celo ?? 10) >= 0.15 &&
+        !STATE.circuitBreaker?.tripped &&
+        lastGoodLadder.data?.pairs?.length &&
+        now - lastGoodLadder.fetchedAtMs <= 8_000
+      ) {
+        isBusy = true;
+        try {
+          const pairMap = new Map();
+          for (const pItem of lastGoodLadder.data.pairs) {
+            if (pItem?.sellToken && pItem?.buyToken) {
+              pairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
+            }
+          }
+          const rows = await scanTokenFromLadder(tok, pairMap, Math.max(1, STATE.balances?.usdt || 100));
+          STATE.corridorRowCache[tok.symbol] = rows;
+          const minBps = CONFIG.minFlashEdgeBps ?? 0.05;
+          const opp = rows
+            .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= minBps)
+            .sort((a, b) => b.edgeUsd - a.edgeUsd)[0];
+          if (opp) {
+            console.log(
+              `[WS-STRIKE] Instant Swap push on ${opp.corridor}(${opp.direction}) $${opp.sizeUsdt.toFixed(2)} estEdge=+$${opp.edgeUsd.toFixed(4)} (+${opp.edgeBps.toFixed(2)} bps)`
+            );
+            const execRec = await executeOpportunity(opp);
+            if (execRec) {
+              cachedRpcBalances = { data: null, ts: 0 };
+              STATE.lastLadderAsOf = '';
+              STATE.arbExecutions.unshift(execRec);
+              const sessionStartMs = Date.parse(STATE.startedAt) || 0;
+              STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
+            }
+          }
+        } catch (err) {
+          console.error(`[WS-STRIKE-ERR] ${err.message}`);
+        } finally {
+          lastScanDoneMs = Date.now();
+          isBusy = false;
+        }
+      } else {
+        runSingleScan().catch(() => {});
+      }
+    });
+    ws.addEventListener('close', () => {
+      if (activeSwapWs === ws) activeSwapWs = null;
+      if (!isShuttingDown) setTimeout(connect, 3_000).unref?.();
+    });
+    ws.addEventListener('error', () => {
+      try { ws.close(); } catch {}
+    });
+  };
+  connect();
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -2174,6 +2412,7 @@ if (isMain) {
   const gracefulExit = (sig) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    try { activeSwapWs?.close(); } catch {}
     console.log(`[SKEW-DESK] ${sig} received; draining any in-flight 2-leg trade before exit...`);
     const t0 = Date.now();
     const poll = setInterval(() => {
@@ -2189,6 +2428,7 @@ if (isMain) {
   await ensureFlashRouterDeployed().catch((e) => console.error('[FLASH-ROUTER-ERR]', e.message));
   ensureErc8004Metadata().catch(() => {});
   loadOnChainHistory().catch(() => {});
+  startCeloSwapStream();
   runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message));
   setInterval(() => runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message)), CONFIG.scanIntervalMs);
   setInterval(() => loadOnChainHistory().catch(() => {}), 60000);

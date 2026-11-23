@@ -183,10 +183,22 @@ export function createExecutionManager({
       takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
       buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
       if (takerPays <= 0n || buyAmount <= 0n) return null;
-      const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
-      if (firmUni.amountOut <= 0n) return null;
+      const previewMidRaw = BigInt(opp.midTokenRaw || 0);
+      const canReuseFreshUni =
+        isFreshScan &&
+        Number(opp.expectedOutUsdt) > 0 &&
+        previewMidRaw > 0n &&
+        buyAmount * 100n >= previewMidRaw * 97n &&
+        buyAmount * 100n <= previewMidRaw * 103n;
+      if (canReuseFreshUni) {
+        // ponytail: skip redundant 200ms QuoterV2 RTT when firm buyAmount matches fresh (<1.5s) scan; SkewAtomicRouter enforces InsufficientProfit in estimateGas
+        firmOutUsdt = Number(opp.expectedOutUsdt) * (Number(buyAmount) / Number(previewMidRaw));
+      } else {
+        const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
+        if (firmUni.amountOut <= 0n) return null;
+        firmOutUsdt = Number(firmUni.amountOut) / 1e6;
+      }
       inUsdt = Number(takerPays) / 1e6;
-      firmOutUsdt = Number(firmUni.amountOut) / 1e6;
     } else {
       let expectedFxRaw = BigInt(opp.midTokenRaw);
       let amountUsdtRaw = BigInt(opp.amountInRaw);
@@ -235,7 +247,11 @@ export function createExecutionManager({
       firmOutUsdt = Number(buyAmount) / 1e6;
     }
 
-    const firmCheck = verifyFirmArbQuote({ inUsdt, firmOutUsdt });
+    const firmCheck = verifyFirmArbQuote({
+      inUsdt,
+      firmOutUsdt,
+      minNetEdgeBps: CONFIG.minFlashEdgeBps ?? 0.05,
+    });
     if (!firmCheck.ok) {
       console.log(
         `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason})`
@@ -246,8 +262,8 @@ export function createExecutionManager({
     const toAddr = q.transactions.swap.to;
     const calldata = q.transactions.swap.data;
     const spender = q?.quote?.spender || toAddr;
-    // ponytail: hard on-chain floor (>= gas cost) makes any losing trade mathematically impossible
-    const minProfitUsdt = BigInt(Math.max(4000, Math.floor(Number(CONFIG.estimatedArbGasUsd || 0.004) * 1e6)));
+    // ponytail: hard on-chain floor (>= 85 gwei gas cost) makes any losing trade mathematically impossible
+    const minProfitUsdt = BigInt(Math.max(6000, Math.floor(Number(CONFIG.estimatedArbGasUsd || 0.006) * 1e6)));
     const flashData = flashRouterIface.encodeFunctionData('executeFlashArb', [
       {
         pool: flashPool,

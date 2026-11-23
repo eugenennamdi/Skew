@@ -33,6 +33,7 @@ import {
   validateOutboundTx,
   evaluateCircuitBreaker,
   interpolateLadderBuyAmount,
+  buildLadderCandidates,
   scanTokenFromLadder,
   computeDynamicPriorityTipGwei,
   getMaxFlashSliceUsdt,
@@ -891,13 +892,14 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /ENABLE_USAT="\$\{ENABLE_USAT:-1\}"/);
   assert.match(runVmSh, /MIN_EDGE_USD="\$\{MIN_EDGE_USD:-0\.015\}"/);
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
+  assert.match(runVmSh, /MIN_FLASH_EDGE_BPS="\$\{MIN_FLASH_EDGE_BPS:-0\.05\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS:-4\.5\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
-  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
+  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-85\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1400\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1050\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
@@ -1554,13 +1556,15 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
 });
 
 test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20k+ USAT whale waves', async () => {
-  assert.equal(computeDynamicPriorityTipGwei(0.05, 65), 65);
-  assert.equal(computeDynamicPriorityTipGwei(0.249, 65), 65);
-  assert.equal(computeDynamicPriorityTipGwei(0.25, 65), 140);
-  assert.equal(computeDynamicPriorityTipGwei(1.85, 65), 140);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 65), 260);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 65), 260);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 300), 300);
+  assert.equal(computeDynamicPriorityTipGwei(0.05, 85), 85);
+  assert.equal(computeDynamicPriorityTipGwei(0.249, 85), 85);
+  assert.equal(computeDynamicPriorityTipGwei(0.25, 85), 165);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 85), 165);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 300);
+  assert.equal(computeDynamicPriorityTipGwei(9.5, 85), 300);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 420);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 420);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 350), 350);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 12000);
@@ -1781,5 +1785,140 @@ test('36. Adaptive partial-liquidity resize rescues partially drained flash quot
   } finally {
     CONFIG.flashRouterAddress = prevFlashAddr;
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});
+
+test('37. Double-audit upgrades: concave midpoint + micro-tail ladder retention, sub-bps ($25k @ 0.40bps = +$1.00) flash gate, and USDC 8bps lean floor', async () => {
+  // 1. Verify buildLadderCandidates preserves $40/$200/$500 micro-anchors AND inserts concave midpoints even when maxRaw = $35,000
+  const knotRaws = [1, 684, 1711, 3421, 6843, 17106, 34211].map((u) => BigInt(u) * 1_000000n);
+  const gridRaws = [35000, 30000, 25000, 20000, 15000, 10000, 7000, 5000, 3500, 2500, 1500, 1000, 500, 200, 40].map(
+    (u) => BigInt(u) * 1_000000n
+  );
+  const cands = buildLadderCandidates(knotRaws, gridRaws, 15_000000n, 35000_000000n);
+  const candUsds = cands.map((x) => Number(x) / 1e6);
+  assert.ok(cands.length <= 24, `expected <=24 candidates, got ${cands.length}`);
+  assert.ok(candUsds.includes(40), `expected $40 micro-anchor preserved at $35k cap, got ${candUsds.join(',')}`);
+  assert.ok(candUsds.includes(200), `expected $200 micro-anchor preserved at $35k cap, got ${candUsds.join(',')}`);
+  // Midpoint between $6,843 and $17,106 is ~$11,974.50
+  assert.ok(
+    candUsds.some((u) => u > 11500 && u < 12500),
+    `expected concave midpoint between $6.8k and $17.1k, got ${candUsds.join(',')}`
+  );
+
+  // 2. Verify $25,000 USAT/USDT institutional peg arb at +0.40 bps (+$1.00 pure risk-free USDT) is ACTIONABLE & passes Flash firm check
+  const prevKey = CONFIG.textileApiKey;
+  const prevRouter = CONFIG.flashRouterAddress;
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.subbps.${Date.now()}.jsonl`);
+  const tmpPolicy = path.join(os.tmpdir(), `skew-policy.usdcfloor.${Date.now()}.json`);
+  const tmpRuntimeToml = path.join(os.tmpdir(), `stitch.runtime.usdcfloor.${Date.now()}.toml`);
+  CONFIG.textileApiKey = 'tx_live_subbps_test';
+  CONFIG.flashRouterAddress = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  try {
+    const usatToken = {
+      symbol: 'USAT',
+      address: '0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771',
+      decimals: 6,
+      probeUsdt: 400,
+      fxCode: 'USD',
+    };
+    const pairMap = new Map([
+      [
+        `${CONFIG.contracts.usdt.toLowerCase()}->${usatToken.address.toLowerCase()}`,
+        {
+          sellToken: CONFIG.contracts.usdt,
+          buyToken: usatToken.address,
+          minSellAmount: '1000000',
+          maxSellAmount: '25600000000',
+          levels: [
+            { sellAmount: '1000000', buyAmount: '1000140' },
+            { sellAmount: '25000000000', buyAmount: '25003501000' }, // +1.4 bps Maker buy -> +0.40 bps (+$1.00) net of 1-bps pool!
+            { sellAmount: '25600000000', buyAmount: '25603584000' },
+          ],
+        },
+      ],
+    ]);
+    const mockUni = async (_in, _out, amt) => ({ amountOut: (BigInt(amt) * 9999n) / 10000n, fee: 100 });
+    const rows = await scanTokenFromLadder(usatToken, pairMap, 700, mockUni);
+    const t2u = rows.find((r) => r.direction === 'textile->uni');
+    assert.ok(t2u);
+    assert.equal(t2u.status, 'ACTIONABLE');
+    assert.ok(t2u.edgeBps < 0.45 && t2u.edgeBps > 0.35, `expected ~0.40 bps, got ${t2u.edgeBps}`);
+    assert.ok(t2u.edgeUsd >= 0.98, `expected >=+$0.98 pure USDT profit, got ${t2u.edgeUsd}`);
+
+    // Verify fast fresh-scan skip avoids redundant bestUniQuote call & executes +$1.00 flash sweep cleanly
+    let extraUniCalls = 0;
+    const externalCalldata =
+      '0x3f62192e' +
+      '0000000000000000000000000000000000000000000000000000000000000020' +
+      '0000000000000000000000000000000000000000000000000000000000000040' +
+      '0000000000000000000000000000000000000000000000000000000000000240' +
+      '0000000000000000000000001111111111111111111111111111111111111111'.repeat(16);
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { usdt: 700 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface: new ethers.Interface([
+        'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+      ]),
+      erc20Iface: new ethers.Interface(['function approve(address,uint256) returns (bool)']),
+      sendTagged: async (tx) => {
+        validateOutboundTx(tx, CONFIG.agentWallet);
+        return { hash: `0x${'b'.repeat(64)}`, logs: [] };
+      },
+      bestUniQuote: async () => {
+        extraUniCalls++;
+        return { amountOut: 0n, fee: 100 };
+      },
+      textileRequestQuote: async (_s, _b, amt) => ({
+        rfqId: 'rfq-usat-25k',
+        claimToken: 'claim-usat',
+        quote: {
+          takerPays: amt.toString(),
+          buyAmount: t2u.midTokenRaw,
+          spender: CONFIG.contracts.reactor,
+        },
+        transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+      }),
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) =>
+        tok === CONFIG.contracts.usdt && f.fromAddr === CONFIG.flashRouterAddress ? 1_000000n : 0n,
+      getCachedOffChainFx: () => ({}),
+    });
+    const swept = await exec.executeOpportunity(t2u);
+    assert.ok(swept);
+    assert.equal(extraUniCalls, 0, 'fresh scan within 3% buyAmount should skip redundant bestUniQuote RTT');
+    assert.equal(swept.edgeUsd, 1.0);
+
+    // 3. Verify USDC/USDT passive Maker lean_floor_bps is raised to 8.0 in both skew-policy.json and stitch.runtime.toml
+    const skewMetrics = computeSkewAndQuotes({ usdtUsd: 701, cngnBalance: 7264, textileMid: 0.000723, uniMid: 0.000725 });
+    const risk = computeRiskOfficerDecisions({
+      usdt: 701,
+      cngn: 7264,
+      wars: 8806,
+      wbrl: 30,
+      usdc: 6.5,
+      uniCngnMid: 0.000725,
+      uniWarsMid: 0.000568,
+      skewMetrics,
+    });
+    syncStitchRuntimePolicy(risk, tmpPolicy);
+    syncStitchRuntimeConfig(risk, path.join(repoRoot, 'stitch.toml'), tmpRuntimeToml);
+    const policyJson = JSON.parse(fs.readFileSync(tmpPolicy, 'utf8'));
+    const usdcAddr = CONFIG.tokens.find((t) => t.symbol === 'USDC').address;
+    assert.equal(policyJson.corridors[usdcAddr].lean_floor_bps, 8.0);
+    assert.equal(policyJson.corridors[CONFIG.tokens[0].address].lean_floor_bps, 1.0);
+    const runtimeToml = fs.readFileSync(tmpRuntimeToml, 'utf8');
+    const usdcSection = runtimeToml.split('[[pools]]').find((b) => b.includes('"usdc-usdt-celo"'));
+    assert.match(usdcSection, /lean_floor_bps\s*=\s*8\.0/);
+  } finally {
+    CONFIG.textileApiKey = prevKey;
+    CONFIG.flashRouterAddress = prevRouter;
+    for (const p of [tmpLog, tmpPolicy, tmpRuntimeToml]) {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
   }
 });
