@@ -109,7 +109,7 @@ export function createExecutionManager({
         const onChainOwner = await routerC.owner().catch(() => '');
         if (onChainOwner.toLowerCase() === wallet.address.toLowerCase()) {
           console.log(
-            `[FLASH-ROUTER] Active SkewAtomicRouter verified at ${CONFIG.flashRouterAddress} (owner=${wallet.address}, maxFlash=$${CONFIG.maxFlashSliceUsdt})`
+            `[FLASH-ROUTER] Active SkewAtomicRouter verified at ${CONFIG.flashRouterAddress} (owner=${wallet.address}, maxFlashFX=$${CONFIG.maxFlashSliceUsdt}, maxFlashUSD=$${CONFIG.maxUsdFlashSliceUsdt || CONFIG.maxFlashSliceUsdt})`
           );
           return CONFIG.flashRouterAddress;
         }

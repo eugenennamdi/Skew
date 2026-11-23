@@ -87,7 +87,8 @@ export const CONFIG = {
   textileApiKey: (process.env.TEXTILE_API_KEY || '').trim(),
   flashRouterAddress: loadSavedFlashRouterAddress(),
   flashRouterSavePath: FLASH_ROUTER_SAVE_PATH,
-  maxFlashSliceUsdt: Number(process.env.MAX_FLASH_SLICE_USDT || '5000'),
+  maxFlashSliceUsdt: Number(process.env.MAX_FLASH_SLICE_USDT || '8000'),
+  maxUsdFlashSliceUsdt: Number(process.env.MAX_USD_FLASH_SLICE_USDT || '25000'),
   agentWallet: addr('0xe5036100b4a32b83d5e1997d403ce64a4c7f7324'),
   agentId: 9905,
   makerId: 'cmv75ay6h00bq339u3x6gdicy',
@@ -830,15 +831,24 @@ function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
     );
     if (farFromAll) kept.push(g);
   }
-  return kept.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0)).slice(0, 12);
+  return kept.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0)).slice(0, 15);
+}
+
+export function getMaxFlashSliceUsdt(token, cfg = CONFIG) {
+  return token?.fxCode === 'USD'
+    ? Number(cfg.maxUsdFlashSliceUsdt || cfg.maxFlashSliceUsdt || 25000)
+    : Number(cfg.maxFlashSliceUsdt || 8000);
 }
 
 export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn = bestUniQuote) {
   const isFlashMode = Boolean(
     CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
   );
+  const flashCapUsdt = getMaxFlashSliceUsdt(token);
   const candidateSlices = isFlashMode
-    ? [CONFIG.maxFlashSliceUsdt, 3500, 2500, 1500, 1000, 750, 500, 300, 100, 40].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    ? [flashCapUsdt, 20000, 15000, 10000, 6500, 5000, 3500, 2500, 1500, 1000, 750, 500, 300, 100, 40].filter(
+        (x, i, a) => x <= flashCapUsdt && a.indexOf(x) === i
+      )
     : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
   const maxCapUsdt = candidateSlices[0] || 25;
   const maxCapRaw = ethers.parseUnits(maxCapUsdt.toFixed(6), 6);
@@ -1039,8 +1049,11 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
   const isFlashMode = Boolean(
     CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[token.symbol]
   );
+  const flashCapUsdt = getMaxFlashSliceUsdt(token);
   const candidateSlices = isFlashMode
-    ? [CONFIG.maxFlashSliceUsdt, 3500, 2000, 1250, 750, 350, 100].filter((x) => x <= CONFIG.maxFlashSliceUsdt)
+    ? [flashCapUsdt, 15000, 8000, 5000, 3500, 2000, 1250, 750, 350, 100].filter(
+        (x, i, a) => x <= flashCapUsdt && a.indexOf(x) === i
+      )
     : computeSliceSizesUsdt(maxUsdtBudget || token.probeUsdt, Math.min(CONFIG.maxSliceUsdt, token.probeUsdt));
   const probeUsdt = candidateSlices[0] || 25;
   const usdtInRaw = ethers.parseUnits(probeUsdt.toFixed(6), 6);
@@ -1100,7 +1113,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
             : `100% slice ($${(Number(actualInRaw) / 1e6).toFixed(2)})`;
 
         if (bestUniBack.amountOut > 0n && actualInRaw >= 20000000n) {
-          const subFracs = actualInRaw > 500000000n ? [75n, 50n, 33n, 17n, 10n, 4n] : [75n, 50n, 35n, 20n];
+          const subFracs = actualInRaw > 500000000n ? [75n, 50n, 33n, 20n, 10n, 4n, 2n] : [75n, 50n, 35n, 20n];
           const subChecks = await Promise.all(
             subFracs.map(async (frac) => {
               const sliceInRaw = (actualInRaw * frac) / 100n;
@@ -1272,7 +1285,7 @@ async function scanCorridor(token, maxUsdtBudget, onlyDirection = null, opts = {
           // ponytail: zero-HTTP-cost RPC multi-slice on uni->textile — scales Maker rate across exact Uniswap v3 sub-quotes, saving 3 previews/corridor
           const fullBuyAmountRaw = BigInt(preview.buyAmount);
           if (actualUsdtInRaw >= 25000000n && actualTokenRaw > 0n) {
-            const subFracs2 = actualUsdtInRaw > 500000000n ? [75n, 50n, 33n, 17n, 10n, 4n] : [75n, 50n, 35n, 20n];
+            const subFracs2 = actualUsdtInRaw > 500000000n ? [75n, 50n, 33n, 20n, 10n, 4n, 2n] : [75n, 50n, 35n, 20n];
             const subSlices = await Promise.all(
               subFracs2.map(async (frac) => {
                 const subInRaw = (actualUsdtInRaw * frac) / 100n;
@@ -1510,6 +1523,8 @@ export async function runSingleScan() {
     let celo = 10.6;
     let uniCngnMid = 0.00072538;
     let uniWarsMid = 0.00067808;
+    let uniUsdcMid = 1.0;
+    let uniUsatMid = 1.0;
 
     const [offChainFx, fetchedTextileMids, ladderData] = await Promise.all([
       fetchOffChainFxRates(),
@@ -1520,7 +1535,7 @@ export async function runSingleScan() {
 
     try {
       const needFreshBalances = !cachedRpcBalances.data || Date.now() - cachedRpcBalances.ts >= 12_000;
-      const [balTuple, poolCngnMid, poolWarsMid, feeData] = await Promise.all([
+      const [balTuple, poolCngnMid, poolWarsMid, poolUsdcMid, poolUsatMid, feeData] = await Promise.all([
         needFreshBalances
           ? Promise.all([
               usdtC.balanceOf(CONFIG.agentWallet),
@@ -1534,6 +1549,8 @@ export async function runSingleScan() {
           : Promise.resolve(cachedRpcBalances.data),
         readPoolMid(CONFIG.contracts.cngnUsdtPool, true, 6),
         readPoolMid(CONFIG.contracts.warsUsdtPool, false, 18),
+        readPoolMid(CONFIG.contracts.flashPools.USDC, true, 6).catch(() => 1.0),
+        usatTok ? readPoolMid(CONFIG.contracts.flashPools.USAT, true, 6).catch(() => 1.0) : Promise.resolve(1.0),
         !cachedGasPrice.value || Date.now() - cachedGasPrice.ts >= 30_000
           ? provider.getFeeData().catch(() => null)
           : Promise.resolve(null),
@@ -1554,6 +1571,8 @@ export async function runSingleScan() {
       celo = Number(celoRaw) / 1e18;
       uniCngnMid = poolCngnMid;
       uniWarsMid = poolWarsMid;
+      uniUsdcMid = poolUsdcMid;
+      uniUsatMid = poolUsatMid;
     } catch (rpcErr) {
       console.warn(`[RPC-FALLBACK] Using cached reference state (${rpcErr.message?.slice(0, 60)})`);
     }
@@ -1689,13 +1708,20 @@ export async function runSingleScan() {
     const warsMoved =
       !STATE.lastSlot0Mids ||
       Math.abs(uniWarsMid - STATE.lastSlot0Mids.wARS) / Math.max(1e-12, uniWarsMid) >= 0.000015;
-    STATE.lastSlot0Mids = { cNGN: uniCngnMid, wARS: uniWarsMid };
+    const usdcMoved =
+      !STATE.lastSlot0Mids ||
+      Math.abs(uniUsdcMid - (STATE.lastSlot0Mids.USDC || 1.0)) / Math.max(1e-12, uniUsdcMid) >= 0.00001;
+    const usatMoved =
+      Boolean(usatTok) &&
+      (!STATE.lastSlot0Mids ||
+        Math.abs(uniUsatMid - (STATE.lastSlot0Mids.USAT || 1.0)) / Math.max(1e-12, uniUsatMid) >= 0.00001);
+    STATE.lastSlot0Mids = { cNGN: uniCngnMid, wARS: uniWarsMid, USDC: uniUsdcMid, USAT: uniUsatMid };
 
     if (ladderData?.pairs?.length) {
       const ladderChanged = !STATE.lastLadderAsOf || ladderData.asOf !== STATE.lastLadderAsOf;
       STATE.lastLadderAsOf = ladderData.asOf || '';
       const hasCachedRows = Object.keys(STATE.corridorRowCache).length > 0;
-      if (STATE.scanCount === 0 || ladderChanged || cngnMoved || warsMoved || !hasCachedRows) {
+      if (STATE.scanCount === 0 || ladderChanged || cngnMoved || warsMoved || usdcMoved || usatMoved || !hasCachedRows) {
         const pairMap = new Map();
         for (const pItem of ladderData.pairs) {
           if (pItem?.sellToken && pItem?.buyToken) {
@@ -1716,9 +1742,13 @@ export async function runSingleScan() {
         const hotTokens = CONFIG.tokens.filter((t) => {
           if (t.symbol === 'cNGN') return cngnMoved || quotaHealthy;
           if (t.symbol === 'wARS') return warsMoved || quotaHealthy;
+          if (t.symbol === 'USAT') return usatMoved || quotaHealthy;
+          if (t.symbol === 'USDC' && usdcMoved) return true;
           return false;
         });
-        const secondaryTokens = CONFIG.tokens.filter((t) => t.symbol !== 'cNGN' && t.symbol !== 'wARS');
+        const secondaryTokens = CONFIG.tokens.filter(
+          (t) => t.symbol !== 'cNGN' && t.symbol !== 'wARS' && t.symbol !== 'USAT' && !(t.symbol === 'USDC' && usdcMoved)
+        );
         const rotated =
           secondaryTokens.length > 0 && STATE.scanCount % 4 === 0
             ? [secondaryTokens[Math.floor(STATE.scanCount / 4) % secondaryTokens.length]]

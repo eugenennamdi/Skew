@@ -35,6 +35,7 @@ import {
   interpolateLadderBuyAmount,
   scanTokenFromLadder,
   computeDynamicPriorityTipGwei,
+  getMaxFlashSliceUsdt,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -888,7 +889,8 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS:-4\.5\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
-  assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-5000\}"/);
+  assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-8000\}"/);
+  assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-25000\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1400\}"/);
@@ -1547,12 +1549,60 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
   }
 });
 
-test('35. Profit-tiered priority gas scales from 65 gwei base to 140 gwei mid and 260 gwei on >=$2 whale clips', () => {
+test('35. Profit-tiered priority gas & $25k USD / $8k FX flash caps capture $20k USAT whale waves', async () => {
   assert.equal(computeDynamicPriorityTipGwei(0.05, 65), 65);
   assert.equal(computeDynamicPriorityTipGwei(0.249, 65), 65);
   assert.equal(computeDynamicPriorityTipGwei(0.25, 65), 140);
   assert.equal(computeDynamicPriorityTipGwei(1.85, 65), 140);
   assert.equal(computeDynamicPriorityTipGwei(2.0, 65), 260);
-  assert.equal(computeDynamicPriorityTipGwei(31.58, 65), 260);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 300), 300); // respects higher operator override
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 65), 260);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 300), 300);
+
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 8000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 8000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USDC', fxCode: 'USD' }), 25000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USAT', fxCode: 'USD' }), 25000);
+
+  // Verify $20,000 USAT/USDT whale knot (+$58.85) is evaluated and selected in one shot
+  const prevKey = CONFIG.textileApiKey;
+  const prevRouter = CONFIG.flashRouterAddress;
+  CONFIG.textileApiKey = 'tx_live_test_usat_whale';
+  CONFIG.flashRouterAddress = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  try {
+    const usatToken = {
+      symbol: 'USAT',
+      address: '0xD2ab3C9A02DBBAB236BfEC45D1d755DF4267F771',
+      decimals: 6,
+      probeUsdt: 400,
+      fxCode: 'USD',
+    };
+    const usdtLower = CONFIG.contracts.usdt.toLowerCase();
+    const usatLower = usatToken.address.toLowerCase();
+    const pairMap = new Map([
+      [
+        `${usatLower}->${usdtLower}`,
+        {
+          sellToken: usatToken.address,
+          buyToken: CONFIG.contracts.usdt,
+          minSellAmount: '1000000',
+          maxSellAmount: '20408163265', // $20,408 depth -> 98% = $20,000
+          levels: [
+            { sellAmount: '1000000', buyAmount: '1003000' },
+            { sellAmount: '5000000000', buyAmount: '5015000000' },
+            { sellAmount: '20408163265', buyAmount: '20469387755' },
+          ],
+        },
+      ],
+    ]);
+    const mockUni = async (_in, _out, amt) => ({ amountOut: (BigInt(amt) * 9999n) / 10000n, fee: 100 });
+    const rows = await scanTokenFromLadder(usatToken, pairMap, 700, mockUni);
+    const u2t = rows.find((r) => r.direction === 'uni->textile');
+    assert.ok(u2t);
+    assert.equal(u2t.status, 'ACTIONABLE');
+    assert.ok(u2t.sizeUsdt >= 19900 && u2t.sizeUsdt <= 20100, `expected ~$20k USAT clip, got ${u2t.sizeUsdt}`);
+    assert.ok(u2t.edgeUsd > 55, `expected >$55 profit on $20k USAT clip, got ${u2t.edgeUsd}`);
+  } finally {
+    CONFIG.textileApiKey = prevKey;
+    CONFIG.flashRouterAddress = prevRouter;
+  }
 });
