@@ -883,14 +883,18 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.equal(PREVIEW_BUDGET.reserveForChase, 10);
   const runVmSh = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
   assert.equal(CONFIG.contracts.flashPools.USAT, '0x070D575a713EaF5025462D0865Fb0Dac4B14bC38');
+  assert.equal(CONFIG.contracts.flashPools.CELO, '0x6cde5f5a192fBf3fD84df983aa6DC30dbd9f8Fac');
+  assert.equal(CONFIG.contracts.flashPools.VGBP, '0x8C7545d227140fabB2709eA41E1A927F4e65b946');
+  assert.equal(CONFIG.contracts.flashPools.WETH, '0xF55791AfBB35aD42984f18D6Fe3e1fF73D81900c');
+  assert.equal(CONFIG.contracts.flashPools.COPM, '0x4495F525C4ECaCF9713a51eC3e8d1e81d7dFf870');
   assert.match(runVmSh, /EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"/);
   assert.match(runVmSh, /ENABLE_USAT="\$\{ENABLE_USAT:-1\}"/);
   assert.match(runVmSh, /MIN_EDGE_USD="\$\{MIN_EDGE_USD:-0\.015\}"/);
   assert.match(runVmSh, /MIN_EDGE_BPS="\$\{MIN_EDGE_BPS:-0\.80\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_BPS:-4\.5\}"/);
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
-  assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-8000\}"/);
-  assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-25000\}"/);
+  assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
+  assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-65\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1400\}"/);
@@ -1549,7 +1553,7 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
   }
 });
 
-test('35. Profit-tiered priority gas & $25k USD / $8k FX flash caps capture $20k USAT whale waves', async () => {
+test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20k+ USAT whale waves', async () => {
   assert.equal(computeDynamicPriorityTipGwei(0.05, 65), 65);
   assert.equal(computeDynamicPriorityTipGwei(0.249, 65), 65);
   assert.equal(computeDynamicPriorityTipGwei(0.25, 65), 140);
@@ -1558,10 +1562,11 @@ test('35. Profit-tiered priority gas & $25k USD / $8k FX flash caps capture $20k
   assert.equal(computeDynamicPriorityTipGwei(58.85, 65), 260);
   assert.equal(computeDynamicPriorityTipGwei(2.0, 300), 300);
 
-  assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 8000);
-  assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 8000);
-  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USDC', fxCode: 'USD' }), 25000);
-  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USAT', fxCode: 'USD' }), 25000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 12000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'CELO', fxCode: 'ASSET' }), 12000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USDC', fxCode: 'USD' }), 35000);
+  assert.equal(getMaxFlashSliceUsdt({ symbol: 'USAT', fxCode: 'USD' }), 35000);
 
   // Verify $20,000 USAT/USDT whale knot (+$58.85) is evaluated and selected in one shot
   const prevKey = CONFIG.textileApiKey;
@@ -1604,5 +1609,177 @@ test('35. Profit-tiered priority gas & $25k USD / $8k FX flash caps capture $20k
   } finally {
     CONFIG.textileApiKey = prevKey;
     CONFIG.flashRouterAddress = prevRouter;
+  }
+});
+
+test('36. Adaptive partial-liquidity resize rescues partially drained flash quotes & enforces strict flashOnly wallet isolation', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.partial.${Date.now()}.jsonl`);
+  const simRouterAddr = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  const routerIface = new ethers.Interface([
+    'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+  ]);
+  const erc20Iface = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const externalCalldata =
+    '0x3f62192e' +
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '0000000000000000000000000000000000000000000000000000000000000040' +
+    '0000000000000000000000000000000000000000000000000000000000000240' +
+    '0000000000000000000000001111111111111111111111111111111111111111'.repeat(16);
+
+  // 1. Verify validateOutboundTx STILL blocks EOA approve() and SwapRouter02 sells on non-legacy extraFlashTokens (CELO, VGBP, COPM)
+  for (const extraTok of CONFIG.extraFlashTokens) {
+    assert.equal(extraTok.flashOnly, true);
+    if (extraTok.symbol === 'WETH') continue; // WETH is in legacyUnwindTokens for startup dust settlement
+    assert.throws(
+      () =>
+        validateOutboundTx(
+          {
+            to: extraTok.address,
+            data: erc20Iface.encodeFunctionData('approve', [CONFIG.contracts.reactor, 1000n]),
+          },
+          CONFIG.agentWallet
+        ),
+      /TX_FIREWALL_BLOCKED/
+    );
+    assert.throws(
+      () =>
+        validateOutboundTx(
+          {
+            to: CONFIG.contracts.uniSwapRouter02,
+            data: routerIface.encodeFunctionData('exactInputSingle', [
+              {
+                tokenIn: extraTok.address,
+                tokenOut: CONFIG.contracts.usdt,
+                fee: 100,
+                recipient: CONFIG.agentWallet,
+                amountIn: 1000n,
+                amountOutMinimum: 1n,
+                sqrtPriceLimitX96: 0n,
+              },
+            ]),
+          },
+          CONFIG.agentWallet
+        ),
+      /TX_FIREWALL_BLOCKED/
+    );
+  }
+
+  // 2. Verify EOA fallback strictly skips flashOnly tokens (`return null`) if flash mode is disabled
+  const eoaExec = createExecutionManager({
+    CONFIG: { ...CONFIG, textileApiKey: '', flashRouterAddress: '', tradesLogPath: tmpLog },
+    STATE: { balances: { usdt: 700 } },
+    wallet: { address: CONFIG.agentWallet },
+    provider: {},
+    routerIface,
+    erc20Iface,
+    sendTagged: async () => {
+      throw new Error('should not send EOA tx for flashOnly corridor');
+    },
+    bestUniQuote: async () => ({ amountOut: 0n, fee: 100 }),
+    textileRequestQuote: async () => ({}),
+    textileSubmitTx: async () => ({}),
+    fetchJson: async () => ({}),
+    isSelfMakerOrder,
+    verifyFirmArbQuote,
+    sumReceiptTokenTransfers: () => 0n,
+    getCachedOffChainFx: () => ({}),
+  });
+  const celoExtra = CONFIG.extraFlashTokens.find((t) => t.symbol === 'CELO');
+  const skippedEoa = await eoaExec.executeOpportunity({
+    corridor: 'CELO/USDT',
+    symbol: 'CELO',
+    tokenAddress: celoExtra.address,
+    decimals: 18,
+    direction: 'textile->uni',
+    sizeUsdt: 100,
+    amountInRaw: '100000000',
+    midTokenRaw: String(700n * 10n ** 18n),
+    expectedOutUsdt: 100.5,
+    uniFee: 100,
+    edgeUsd: 0.5,
+    edgeBps: 50,
+    scannedAtMs: Date.now(),
+  });
+  assert.equal(skippedEoa, null);
+
+  // 3. Verify Flash Mode rescues $20k quote when Maker only has $15k left (availableSellAmount -> 98% = $14,700) in same tick
+  const prevFlashAddr = CONFIG.flashRouterAddress;
+  CONFIG.flashRouterAddress = simRouterAddr;
+  try {
+    const quoteAmountsRequested = [];
+    const flashExec = createExecutionManager({
+      CONFIG: {
+        ...CONFIG,
+        textileApiKey: 'tx_live_partial_test',
+        flashRouterAddress: simRouterAddr,
+        tradesLogPath: tmpLog,
+      },
+      STATE: { balances: { usdt: 700 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface,
+      erc20Iface,
+      sendTagged: async (tx) => {
+        validateOutboundTx(tx, CONFIG.agentWallet);
+        return { hash: `0x${'a'.repeat(64)}`, logs: [] };
+      },
+      bestUniQuote: async (_tokIn, _tokOut, amt) => ({
+        amountOut: (BigInt(amt) * 10025n) / 10000n, // +25 bps exit on CELO/USDT
+        fee: 100,
+      }),
+      textileRequestQuote: async (_sellTok, _buyTok, amt) => {
+        const sAmt = BigInt(amt);
+        quoteAmountsRequested.push(sAmt);
+        if (sAmt > 15_000_000000n) {
+          const e = new Error('Textile /v2/rfq/request 422: insufficient maker liquidity');
+          e.availableSellAmount = '15000000000';
+          throw e;
+        }
+        return {
+          rfqId: 'rfq-celo-resized',
+          claimToken: 'claim-celo',
+          quote: {
+            takerPays: sAmt.toString(),
+            buyAmount: sAmt.toString(),
+            spender: CONFIG.contracts.reactor,
+          },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) => {
+        if (tok === CONFIG.contracts.usdt && f.fromAddr === simRouterAddr && f.toAddr === CONFIG.agentWallet) {
+          return 36_750000n; // +$36.75 realized USDT swept!
+        }
+        return 0n;
+      },
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const won = await flashExec.executeOpportunity({
+      corridor: 'CELO/USDT',
+      symbol: 'CELO',
+      tokenAddress: celoExtra.address,
+      decimals: 18,
+      direction: 'textile->uni',
+      sizeUsdt: 20000,
+      amountInRaw: '20000000000',
+      midTokenRaw: '20000000000',
+      expectedOutUsdt: 20050,
+      uniFee: 100,
+      edgeUsd: 50,
+      edgeBps: 25,
+      scannedAtMs: Date.now(),
+    });
+    assert.ok(won);
+    assert.equal(won.direction, 'flash:textile->uni');
+    assert.equal(won.edgeUsd, 36.75);
+    assert.deepEqual(quoteAmountsRequested, [20_000_000000n, 14_700_000000n]);
+  } finally {
+    CONFIG.flashRouterAddress = prevFlashAddr;
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
   }
 });

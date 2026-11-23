@@ -151,9 +151,27 @@ export function createExecutionManager({
     let firmOutUsdt;
 
     if (isTextileToUni) {
-      q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, opp.amountInRaw, {
+      let reqInRaw = BigInt(opp.amountInRaw);
+      q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
         taker: CONFIG.flashRouterAddress,
-      });
+      }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
+      if (!q?.transactions?.swap?.data) {
+        let retryInRaw = 0n;
+        if (q?.availableSellAmount && BigInt(q.availableSellAmount) >= 10_000000n && BigInt(q.availableSellAmount) < reqInRaw) {
+          retryInRaw = (BigInt(q.availableSellAmount) * 98n) / 100n;
+        } else if (reqInRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
+          // ponytail: step down 45% in the same tick when Maker partially reloaded/drained since /levels snapshot
+          retryInRaw = (reqInRaw * 55n) / 100n;
+        }
+        if (retryInRaw >= 10_000000n) {
+          reqInRaw = retryInRaw;
+          q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
+            taker: CONFIG.flashRouterAddress,
+          }).catch(() => null);
+        } else if (q?.__err) {
+          throw q.__err;
+        }
+      }
       const toAddr = q?.transactions?.swap?.to;
       const calldata = q?.transactions?.swap?.data;
       if (!toAddr || !calldata) return null;
@@ -162,7 +180,7 @@ export function createExecutionManager({
       const expMs = typeof expRaw === 'string' ? Date.parse(expRaw) : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
       if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
 
-      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || opp.amountInRaw);
+      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
       buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
       if (takerPays <= 0n || buyAmount <= 0n) return null;
       const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
@@ -179,15 +197,27 @@ export function createExecutionManager({
       }
       q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
         taker: CONFIG.flashRouterAddress,
-      }).catch(() => null);
-      if (!q?.transactions?.swap?.data && q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
-        const availFx = (BigInt(q.availableSellAmount) * 98n) / 100n;
-        if (availFx > 0n && availFx < expectedFxRaw) {
-          amountUsdtRaw = (amountUsdtRaw * availFx) / expectedFxRaw;
-          expectedFxRaw = availFx;
-          q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
-            taker: CONFIG.flashRouterAddress,
-          }).catch(() => null);
+      }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
+      if (!q?.transactions?.swap?.data) {
+        if (q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
+          const availFx = (BigInt(q.availableSellAmount) * 98n) / 100n;
+          if (availFx > 0n && availFx < expectedFxRaw) {
+            amountUsdtRaw = (amountUsdtRaw * availFx) / expectedFxRaw;
+            expectedFxRaw = availFx;
+            q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+              taker: CONFIG.flashRouterAddress,
+            }).catch(() => null);
+          }
+        } else if (amountUsdtRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
+          const steppedUsdtRaw = (amountUsdtRaw * 55n) / 100n;
+          const steppedUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, steppedUsdtRaw);
+          if (steppedUni.amountOut > 0n) {
+            amountUsdtRaw = steppedUsdtRaw;
+            expectedFxRaw = steppedUni.amountOut;
+            q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+              taker: CONFIG.flashRouterAddress,
+            }).catch(() => null);
+          }
         }
       }
       const toAddr = q?.transactions?.swap?.to;
@@ -330,6 +360,11 @@ export function createExecutionManager({
     if (CONFIG.textileApiKey && CONFIG.flashRouterAddress && flashPool) {
       return executeFlashOpportunity(opp, flashPool, startedAt);
     }
+
+    const isFlashOnly = [...(CONFIG.tokens || []), ...(CONFIG.extraFlashTokens || [])].find(
+      (t) => t.symbol === opp.symbol
+    )?.flashOnly;
+    if (isFlashOnly) return null;
 
     if (opp.direction === 'textile->uni') {
       const t2uBaitKey = `${opp.corridor}:textile->uni`;
@@ -848,9 +883,9 @@ export function createExecutionManager({
   async function autoManageTreasuryInventory({ usdt, cngn, wars, wbrl = 0, usdc, celo = 0, uniCngnMid, uniWarsMid }) {
     if (!wallet) return null;
 
-    if (celo < 3.0 && usdt >= 2.0) {
-      const gasInRaw = ethers.parseUnits('2.0', 6);
-      return swapOnUniswap(CONFIG.contracts.usdt, CONFIG.contracts.celo, gasInRaw, 'AUTO_GAS_REFILL', 'CELO/USDT', 2.0, 0);
+    if (celo < 5.0 && usdt >= 3.5) {
+      const gasInRaw = ethers.parseUnits('3.5', 6);
+      return swapOnUniswap(CONFIG.contracts.usdt, CONFIG.contracts.celo, gasInRaw, 'AUTO_GAS_REFILL', 'CELO/USDT', 3.5, 0);
     }
 
     await ensurePermit2ForAllCorridors();
