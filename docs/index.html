@@ -6,7 +6,7 @@
   <title>Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Treasury on Celo</title>
   <meta name="description" content="Autonomous 4-corridor FX market maker (Rust Stitch + 2s zero-restart hot-reload), bounded Gemini 3.8 Flash Desk Head, EWMA volatility &amp; markout engine, and cross-venue Uniswap v3 arbitrageur on Celo Mainnet (ERC-8004 #9905)." />
   <meta property="og:title" content="Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Desk (Celo #9905)" />
-  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$685+ net USDT profit (+351% RoC on $195 seed · $754 banked in cold storage), 9 zero-custody Uniswap v3 flash corridors, and live gas &amp; RFQ markout telemetry." />
+  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$685+ net USDT profit (+351% RoC), 9 zero-custody Uniswap v3 flash corridors, and live gas &amp; RFQ markout telemetry." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://eugenennamdi.github.io/Skew/" />
   <meta property="og:image" content="https://eugenennamdi.github.io/Skew/icons/skew-logo.svg" />
@@ -1010,11 +1010,11 @@
         <div class="card stagger-item">
           <div>
             <div class="card-label">
-              <span>Active Hot Wallet &amp; Vault</span>
+              <span>Treasury Value (Liquid)</span>
               <span class="badge emerald">Live RPC</span>
             </div>
             <div class="card-value mono" id="navValue">$123.85</div>
-            <div class="mini-bar" title="Hot-wallet working float allocation (USDT · cNGN · wARS · wBRL · USDC)">
+            <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
               <div class="mini-bar-seg" id="barUsdt" style="width: 81.4%; background: var(--foreground);"></div>
               <div class="mini-bar-seg" id="barCngn" style="width: 4.1%; background: #10B981;"></div>
               <div class="mini-bar-seg" id="barWars" style="width: 4.0%; background: #38BDF8;"></div>
@@ -1023,18 +1023,11 @@
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="withdrawnVaultItem" title="Cumulative realized USDT profits swept out of hot wallet to cold storage (tracked automatically on-chain)">
-              <span class="treasury-asset-left">
-                <span class="seg-dot" style="background: var(--emerald);"></span>
-                <span>Banked Profits (Withdrawn)</span>
-              </span>
-              <span class="treasury-asset-val mono text-emerald" id="withdrawnReadout">$754.00 USDT</span>
-            </div>
-            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="Active hot-wallet USDT settlement & gas-refill buffer">
+            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="USDT Settlement Reserve">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
                 <span class="seg-dot" style="background: var(--foreground);"></span>
-                <span>USDT · Hot Working Float</span>
+                <span>USDT · Settlement Reserve</span>
               </span>
               <span class="treasury-asset-val mono" id="usdtReadout">$100.85 (81.4%)</span>
             </div>
@@ -1123,9 +1116,9 @@
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Withdrawal-Invariant Total Value = Active Hot Wallet + CELO Gas + Cumulative Withdrawn ($754.00) on $195.00 initial seed">
-              <span class="text-muted">Total Value (Banked + Hot)</span>
-              <span class="treasury-asset-val mono" id="totalStrategyVal">$880.08 ($195 Seed)</span>
+            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial bankroll + cumulative net realized profit">
+              <span class="text-muted">Total Value (incl. Gas)</span>
+              <span class="treasury-asset-val mono" id="totalStrategyVal">$880.08 (+$2.11 Gas)</span>
             </div>
             <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions (net gas-to-profit ratio)">
               <span class="text-muted">Lifetime Gas</span>
@@ -2257,7 +2250,7 @@
                 : toAddr === reactorLower
                   ? 'LimitOrderReactor'
                   : toAddr === usdtLower
-                    ? 'USDT (Vault Transfer)'
+                    ? 'USDT'
                     : (tx.to?.name || toAddr.slice(0, 10));
             const method = isFlashCall
               ? 'executeFlashArb'
@@ -2372,7 +2365,7 @@
       document.getElementById('wbrlReadout').textContent = wbrlUsd > 0.01 ? `$${wbrlUsd.toFixed(2)}` : 'BUY 1 bps';
       document.getElementById('usdcReadout').textContent = `$${usdcUsd.toFixed(2)}`;
 
-      document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%) active working float`;
+      document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
       document.getElementById('assetItemCngn').title = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)} · ${cngnPct.toFixed(1)}%)`;
       document.getElementById('assetItemWars').title = `${Math.round(STATE.balances.wARS || 0).toLocaleString('en-US')} wARS ($${warsUsd.toFixed(2)} · ${warsPct.toFixed(1)}%)`;
       document.getElementById('assetItemWbrl').title = wbrlUsd > 0.01
@@ -2410,9 +2403,6 @@
         gasBurnedBadge.textContent = `${acc.gasBurnedCelo.toFixed(2)} CELO (~$${gasBurnedUsd.toFixed(2)})`;
       }
 
-      const wdEl = document.getElementById('withdrawnReadout');
-      if (wdEl) wdEl.textContent = `$${acc.withdrawnUsdt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
-
       // Card 2: Live 24h & All-Time Flash Arbitrage Telemetry
       const f24Badge = document.getElementById('flash24hBadge');
       if (f24Badge) f24Badge.textContent = `${acc.flash24hWins.toLocaleString('en-US')} Wins / 24h`;
@@ -2446,11 +2436,11 @@
       if (rocEl) rocEl.textContent = `${fmtSignedPct(liveRocPct)} RoC`;
       const totValEl = document.getElementById('totalStrategyVal');
       if (totValEl) {
-        totValEl.textContent = `$${totalGeneratedValueUsd.toFixed(2)} ($${acc.withdrawnUsdt.toFixed(0)} Banked)`;
+        totValEl.textContent = `$${totalGeneratedValueUsd.toFixed(2)} (+$${gasReserveUsd.toFixed(2)} Gas)`;
       }
       const totValItem = document.getElementById('totalStrategyValItem');
       if (totValItem) {
-        totValItem.title = `$${totalGeneratedValueUsd.toFixed(2)} Total Value = $${acc.withdrawnUsdt.toFixed(2)} banked in cold vault + $${totalUsd.toFixed(2)} active hot wallet + $${gasReserveUsd.toFixed(2)} CELO gas (from $${INITIAL_CAPITAL_USDT.toFixed(2)} seed)`;
+        totValItem.title = `$${totalGeneratedValueUsd.toFixed(2)} Total Strategy Value = $${INITIAL_CAPITAL_USDT.toFixed(2)} initial USDT bankroll + $${livePnlUsdt.toFixed(2)} net profit (+$${gasReserveUsd.toFixed(2)} CELO gas reserve)`;
       }
       const gasLifeEl = document.getElementById('gasLifetimeCardVal');
       if (gasLifeEl) {

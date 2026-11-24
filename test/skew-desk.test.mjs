@@ -1930,7 +1930,9 @@ test('38. Dashboard Strategy PnL is withdrawal-invariant, tracks lifetime CELO g
   assert.ok(html.includes('FLASH_ROUTER = \'0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194\''));
   assert.ok(html.includes('totalUsd + gasReserveUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt'));
   assert.ok(html.includes('gasBurnedBadge'));
-  assert.ok(html.includes('withdrawnReadout'));
   assert.ok(html.includes('flash24hPnlVal'));
+  assert.ok(!html.includes('Banked Profits (Withdrawn)'));
+  assert.ok(!html.includes('Hot Working Float'));
+  assert.ok(!html.includes('Total Value (Banked + Hot)'));
   assert.ok(!html.includes('+$${livePnlUsdt.toFixed(2)}'), 'PnL formatter must use signed helper so +$- never renders');
 });
