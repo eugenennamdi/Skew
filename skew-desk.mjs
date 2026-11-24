@@ -804,6 +804,14 @@ async function textileRequestQuote(sellToken, buyToken, sellAmountRaw, opts = {}
       }),
       signal: AbortSignal.timeout(6000),
     });
+    if (CONFIG.textileApiKey) {
+      const limHdr = Number(res.headers.get('x-ratelimit-limit'));
+      const remHdr = Number(res.headers.get('x-ratelimit-remaining'));
+      const rstHdr = Number(res.headers.get('x-ratelimit-reset'));
+      if (Number.isFinite(limHdr) && limHdr > 0) PREVIEW_BUDGET.limit = limHdr;
+      if (Number.isFinite(remHdr) && remHdr >= 0) PREVIEW_BUDGET.remaining = remHdr;
+      if (Number.isFinite(rstHdr) && rstHdr > 0) PREVIEW_BUDGET.resetAtMs = Date.now() + rstHdr * 1000;
+    }
     const body = await res.json().catch(() => ({}));
     return { status: res.status, ok: res.ok, body };
   };
@@ -871,14 +879,14 @@ export function interpolateLadderBuyAmount(levels, sellAmountRaw) {
   return pts[pts.length - 1].b;
 }
 
-const LADDER_BUDGET = { limit: 60, remaining: 60, resetAtMs: 0 };
+export const LADDER_BUDGET = { limit: 60, remaining: 60, resetAtMs: 0 };
 let ladderBackoffUntilMs = 0;
 let lastGoodLadder = { data: null, fetchedAtMs: 0 };
 
-async function fetchTextileLadder(fetchImpl = fetch) {
+export async function fetchTextileLadder(fetchImpl = fetch) {
   const now = Date.now();
-  const cachedFresh = () =>
-    fetchImpl === fetch && lastGoodLadder.data && Date.now() - lastGoodLadder.fetchedAtMs <= 8_000
+  const cachedFresh = (maxAgeMs = 3_500) =>
+    fetchImpl === fetch && lastGoodLadder.data && Date.now() - lastGoodLadder.fetchedAtMs <= maxAgeMs
       ? lastGoodLadder.data
       : null;
   if (fetchImpl === fetch && now < ladderBackoffUntilMs) return cachedFresh();
@@ -890,16 +898,34 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
   }
-  // ponytail: /v2/rfq/levels requires no API key; draw from public IP quota first so 60/60 Partner Key credits stay free for firm quotes & chase
-  const useAuthOverflow =
-    Boolean(CONFIG.textileApiKey) && LADDER_BUDGET.remaining <= 4 && LADDER_BUDGET.resetAtMs > now;
-  if (!useAuthOverflow && LADDER_BUDGET.remaining <= 2 && LADDER_BUDGET.resetAtMs > now) return cachedFresh();
-  if (useAuthOverflow && PREVIEW_BUDGET.remaining <= 15 && PREVIEW_BUDGET.resetAtMs > now) return cachedFresh();
+  if (fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 450) {
+    return lastGoodLadder.data;
+  }
 
-  const targetBudget = useAuthOverflow ? PREVIEW_BUDGET : LADDER_BUDGET;
-  try {
-    const headers = {};
-    if (useAuthOverflow) headers.authorization = `Bearer ${CONFIG.textileApiKey}`;
+  // ponytail: /v2/rfq/levels draws from 60/min public IP quota first, then overflows into idle Partner Key quota (reserving 14 credits for /request) with smooth pacing so quota never hits a 20s blackout
+  const pubAvail = LADDER_BUDGET.resetAtMs > now ? Math.max(0, LADDER_BUDGET.remaining - 1) : LADDER_BUDGET.limit - 1;
+  const authAvail = CONFIG.textileApiKey
+    ? PREVIEW_BUDGET.resetAtMs > now
+      ? Math.max(0, PREVIEW_BUDGET.remaining - 14)
+      : PREVIEW_BUDGET.limit - 14
+    : 0;
+  const totalAvail = pubAvail + authAvail;
+  if (totalAvail <= 0) return cachedFresh();
+
+  if (fetchImpl === fetch && lastGoodLadder.data) {
+    const activeResets = [LADDER_BUDGET.resetAtMs, CONFIG.textileApiKey ? PREVIEW_BUDGET.resetAtMs : 0].filter(
+      (t) => t > now
+    );
+    if (activeResets.length > 0) {
+      const nextResetMs = Math.min(...activeResets);
+      const paceMs = Math.min(2_500, Math.floor((nextResetMs - now) / (totalAvail + 1)));
+      if (now - lastGoodLadder.fetchedAtMs < paceMs) return lastGoodLadder.data;
+    }
+  }
+
+  const doFetch = async (withAuth) => {
+    const targetBudget = withAuth ? PREVIEW_BUDGET : LADDER_BUDGET;
+    const headers = withAuth ? { authorization: `Bearer ${CONFIG.textileApiKey}` } : {};
     const res = await fetchImpl(`${CONFIG.textileApi}/v2/rfq/levels?chainId=${CONFIG.chainId}`, {
       headers,
       signal: AbortSignal.timeout(5500),
@@ -910,13 +936,26 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (Number.isFinite(limHdr) && limHdr > 0) targetBudget.limit = limHdr;
     if (Number.isFinite(remHdr) && remHdr >= 0) targetBudget.remaining = remHdr;
     if (Number.isFinite(rstHdr) && rstHdr > 0) targetBudget.resetAtMs = Date.now() + rstHdr * 1000;
+    return { res, targetBudget };
+  };
+
+  const useAuthFirst = Boolean(CONFIG.textileApiKey) && pubAvail <= 2 && authAvail > 0;
+  try {
+    let { res, targetBudget } = await doFetch(useAuthFirst);
     if (res.status === 429) {
       targetBudget.remaining = 0;
       if (targetBudget.resetAtMs <= Date.now()) targetBudget.resetAtMs = Date.now() + 15_000;
-      return cachedFresh();
+      if (!useAuthFirst && CONFIG.textileApiKey && authAvail > 0) {
+        ({ res, targetBudget } = await doFetch(true));
+      }
+      if (res.status === 429) {
+        targetBudget.remaining = 0;
+        if (targetBudget.resetAtMs <= Date.now()) targetBudget.resetAtMs = Date.now() + 15_000;
+        return cachedFresh();
+      }
     }
     if (!res.ok) {
-      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 8_000;
+      if (fetchImpl === fetch && res.status >= 500) ladderBackoffUntilMs = Date.now() + 4_000;
       return cachedFresh();
     }
     const json = await res.json().catch(() => null);
@@ -925,7 +964,7 @@ async function fetchTextileLadder(fetchImpl = fetch) {
     if (fetchImpl === fetch) lastGoodLadder = { data, fetchedAtMs: Date.now() };
     return data;
   } catch {
-    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 1_200;
+    if (fetchImpl === fetch) ladderBackoffUntilMs = Date.now() + 1_000;
     return cachedFresh();
   }
 }
@@ -936,22 +975,20 @@ export function buildLadderCandidates(knotRaws, gridRaws, minRaw, maxRaw) {
   const validKnots = [...new Set(knotRaws.filter((v) => v >= minRaw && v <= maxRaw))].sort((a, b) =>
     a > b ? -1 : a < b ? 1 : 0
   );
-  const denseKnots = [...validKnots];
-  for (let i = 0; i + 1 < validKnots.length; i++) {
-    if (validKnots[i] - validKnots[i + 1] >= 400_000000n) {
-      denseKnots.push((validKnots[i] + validKnots[i + 1]) / 2n);
-    }
-  }
-  denseKnots.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
-
   const kept = [];
-  for (const k of denseKnots) {
-    if (kept.length === 0 || (kept[kept.length - 1] - k >= 8_000000n && k * 100n <= kept[kept.length - 1] * 94n)) {
+  for (const k of validKnots) {
+    if (kept.length === 0 || kept[kept.length - 1] - k >= 2_000000n) {
       kept.push(k);
     }
   }
-  const validGrid = [...new Set(gridRaws.filter((v) => v >= minRaw && v <= maxRaw))].sort((a, b) =>
-    a > b ? -1 : a < b ? 1 : 0
+  const midpoints = [];
+  for (let i = 0; i + 1 < validKnots.length; i++) {
+    if (validKnots[i] - validKnots[i + 1] >= 400_000000n) {
+      midpoints.push((validKnots[i] + validKnots[i + 1]) / 2n);
+    }
+  }
+  const validGrid = [...new Set([...midpoints, ...gridRaws].filter((v) => v >= minRaw && v <= maxRaw))].sort(
+    (a, b) => (a > b ? -1 : a < b ? 1 : 0)
   );
   for (const g of validGrid) {
     const farFromAll = kept.every(
@@ -1043,7 +1080,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     const floorRaw = effMaxRaw < 15_000000n ? minSellRaw : minSellRaw > 15_000000n ? minSellRaw : 15_000000n;
     const knotRaws = pT2U.levels.map((l) => BigInt(l.sellAmount || 0));
     const gridRaws = candidateSlices.map((u) => ethers.parseUnits(u.toFixed(6), 6));
-    const testRaws = buildLadderCandidates([effMaxRaw, ...knotRaws], gridRaws, floorRaw, effMaxRaw);
+    const testRaws = buildLadderCandidates(knotRaws, [effMaxRaw, ...gridRaws], floorRaw, effMaxRaw);
 
     const evals = await Promise.all(
       testRaws.map(async (inRaw) => {
@@ -1125,7 +1162,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     const floorUsdtRaw = effMaxRaw < 15_000000n ? 1_000000n : 15_000000n;
     const knotUsdtRaws = pU2T.levels.map((l) => BigInt(l.buyAmount || 0));
     const gridRaws = candidateSlices.map((u) => ethers.parseUnits(u.toFixed(6), 6));
-    const testRaws = buildLadderCandidates([effMaxRaw, ...knotUsdtRaws], gridRaws, floorUsdtRaw, effMaxRaw);
+    const testRaws = buildLadderCandidates(knotUsdtRaws, [effMaxRaw, ...gridRaws], floorUsdtRaw, effMaxRaw);
 
     const maxFxRaw = (BigInt(pU2T.maxSellAmount) * 99n) / 100n;
     const minFxRaw = BigInt(pU2T.minSellAmount || 1);
@@ -1183,6 +1220,25 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
   }
 
   return rows;
+}
+
+// ponytail: evaluate all flash corridors against one /v2/rfq/levels payload in a single Multicall3 batch so CHASE never tunnel-visions on crumbs
+export async function scanUniverseFromLadder(tokens, ladderPairs, maxUsdtBudget, quoteFn = queuedBestUniQuote) {
+  const pairMap = new Map();
+  for (const pItem of ladderPairs || []) {
+    if (pItem?.sellToken && pItem?.buyToken) {
+      pairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
+    }
+  }
+  const batches = await Promise.all(tokens.map((t) => scanTokenFromLadder(t, pairMap, maxUsdtBudget, quoteFn)));
+  return tokens.map((tok, idx) => ({ symbol: tok.symbol, rows: batches[idx] || [] }));
+}
+
+export function selectChaseCandidates(rows, minEdgeUsd, minEdgeBps) {
+  return (rows || [])
+    .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= minEdgeUsd && r.edgeBps >= minEdgeBps)
+    .sort((a, b) => b.edgeUsd - a.edgeUsd)
+    .slice(0, 2);
 }
 
 /**
@@ -2004,18 +2060,8 @@ export async function runSingleScan() {
         copmMoved ||
         !hasCachedRows
       ) {
-        const pairMap = new Map();
-        for (const pItem of ladderData.pairs) {
-          if (pItem?.sellToken && pItem?.buyToken) {
-            pairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
-          }
-        }
-        const ladderBatches = await Promise.all(
-          fullScanUniverse.map((t) => scanTokenFromLadder(t, pairMap, liquidUsdtBudget))
-        );
-        fullScanUniverse.forEach((tok, idx) => {
-          STATE.corridorRowCache[tok.symbol] = ladderBatches[idx] || [];
-        });
+        const universeRes = await scanUniverseFromLadder(fullScanUniverse, ladderData.pairs, liquidUsdtBudget);
+        for (const { symbol, rows } of universeRes) STATE.corridorRowCache[symbol] = rows;
       }
     } else {
       let activeTokens = CONFIG.tokens;
@@ -2102,28 +2148,31 @@ export async function runSingleScan() {
                 if (isFlashChase) {
                   const chaseLadder = await fetchTextileLadder();
                   if (chaseLadder?.pairs?.length) {
-                    const chasePairMap = new Map();
-                    for (const pItem of chaseLadder.pairs) {
-                      if (pItem?.sellToken && pItem?.buyToken) {
-                        chasePairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
-                      }
-                    }
-                    chaseRows = await scanTokenFromLadder(corridorTok, chasePairMap, Math.max(1, freshUsdt));
+                    const universeRes = await scanUniverseFromLadder(
+                      fullScanUniverse,
+                      chaseLadder.pairs,
+                      Math.max(1, freshUsdt)
+                    );
+                    for (const { symbol, rows } of universeRes) STATE.corridorRowCache[symbol] = rows;
+                    chaseRows = universeRes.flatMap((u) => u.rows);
                   }
                 }
                 if (!chaseRows) {
                   chaseRows = await scanCorridor(corridorTok, freshUsdt, null, { priority: true });
                 }
                 const chaseMinBps = isFlashChase ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
-                const chaseOpp = chaseRows
-                  .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= chaseMinBps)
-                  .sort((a, b) => b.edgeUsd - a.edgeUsd)[0];
-                if (!chaseOpp) break;
-                console.log(
-                  `[CHASE #${chaseIdx}/${CONFIG.maxChaseIterations}] ${chaseOpp.corridor}(${chaseOpp.direction}) $${chaseOpp.sizeUsdt.toFixed(2)} estEdge=+$${chaseOpp.edgeUsd.toFixed(4)} (+${chaseOpp.edgeBps.toFixed(2)} bps)`
-                );
-                const chaseExec = await executeOpportunity(chaseOpp);
+                const chaseCands = selectChaseCandidates(chaseRows, CONFIG.minEdgeUsd, chaseMinBps);
+                if (chaseCands.length === 0) break;
+                let chaseExec = null;
+                for (const chaseOpp of chaseCands) {
+                  console.log(
+                    `[CHASE #${chaseIdx}/${CONFIG.maxChaseIterations}] ${chaseOpp.corridor}(${chaseOpp.direction}) $${chaseOpp.sizeUsdt.toFixed(2)} estEdge=+$${chaseOpp.edgeUsd.toFixed(4)} (+${chaseOpp.edgeBps.toFixed(2)} bps)`
+                  );
+                  chaseExec = await executeOpportunity(chaseOpp);
+                  if (chaseExec) break;
+                }
                 if (!chaseExec) break;
+                STATE.lastLadderAsOf = '';
                 pushArbExecutionBounded(chaseExec);
                 STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
                 if (chaseExec.edgeUsd <= 0 || STATE.circuitBreaker.tripped) break;
@@ -2265,9 +2314,10 @@ function startCeloSwapStream() {
         (STATE.balances?.celo ?? 10) >= 0.15 &&
         !STATE.circuitBreaker?.tripped &&
         lastGoodLadder.data?.pairs?.length &&
-        now - lastGoodLadder.fetchedAtMs <= 8_000
+        now - lastGoodLadder.fetchedAtMs <= 3_500
       ) {
         isBusy = true;
+        let wsWon = false;
         try {
           const pairMap = new Map();
           for (const pItem of lastGoodLadder.data.pairs) {
@@ -2287,6 +2337,7 @@ function startCeloSwapStream() {
             );
             const execRec = await executeOpportunity(opp);
             if (execRec) {
+              wsWon = true;
               cachedRpcBalances = { data: null, ts: 0 };
               STATE.lastLadderAsOf = '';
               pushArbExecutionBounded(execRec);
@@ -2298,6 +2349,7 @@ function startCeloSwapStream() {
           console.error(`[WS-STRIKE-ERR] ${err.message}`);
         } finally {
           isBusy = false;
+          if (wsWon && !isShuttingDown) setImmediate(() => runSingleScan().catch(() => {}));
         }
       } else {
         runSingleScan().catch(() => {});

@@ -35,6 +35,10 @@ import {
   interpolateLadderBuyAmount,
   buildLadderCandidates,
   scanTokenFromLadder,
+  scanUniverseFromLadder,
+  selectChaseCandidates,
+  fetchTextileLadder,
+  LADDER_BUDGET,
   computeDynamicPriorityTipGwei,
   getMaxFlashSliceUsdt,
 } from '../skew-desk.mjs';
@@ -1940,4 +1944,113 @@ test('38. Dashboard Strategy PnL is withdrawal-invariant, gas-subtracted, real-t
   assert.ok(!html.includes('Router Sweeps (All-Time)'));
   assert.ok(!html.includes('Total Value (incl. Gas)'));
   assert.ok(!html.includes('+$${livePnlUsdt.toFixed(2)}'), 'PnL formatter must use signed helper so +$- never renders');
+});
+
+test('39. Full-universe CHASE preempts $0.28 CELO crumb with +$14.36 wARS whale & fetchTextileLadder overflows cleanly without touching 14-credit /request reserve', async () => {
+  const prevKey = CONFIG.textileApiKey;
+  const prevRouter = CONFIG.flashRouterAddress;
+  const savedLad = { ...LADDER_BUDGET };
+  const savedPrev = { ...PREVIEW_BUDGET };
+  CONFIG.textileApiKey = 'tx_live_chase_universe_key';
+  CONFIG.flashRouterAddress = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+
+  try {
+    // 1. Multi-corridor chase scan ranks $5,000 wARS (+$14.36) #1 ahead of $200 CELO (+$0.28) #2
+    const warsTok = CONFIG.tokens.find((t) => t.symbol === 'wARS');
+    const celoTok = CONFIG.extraFlashTokens.find((t) => t.symbol === 'CELO');
+    const usdtAddr = CONFIG.contracts.usdt;
+    const ladderPairs = [
+      {
+        sellToken: usdtAddr,
+        buyToken: celoTok.address,
+        minSellAmount: '1000000',
+        maxSellAmount: '205000000',
+        levels: [
+          { sellAmount: '1000000', buyAmount: '18000000000000000000' },
+          { sellAmount: '200000000', buyAmount: '3605040000000000000000' }, // $200 -> +$0.28 on Uni
+          { sellAmount: '205000000', buyAmount: '3680000000000000000000' },
+        ],
+      },
+      {
+        sellToken: usdtAddr,
+        buyToken: warsTok.address,
+        minSellAmount: '1000000',
+        maxSellAmount: '5100000000',
+        levels: [
+          { sellAmount: '1000000', buyAmount: '1735000000000000000000' },
+          { sellAmount: '5000000000', buyAmount: '8699930000000000000000000' }, // $5,000 -> +$14.36 on Uni!
+          { sellAmount: '5100000000', buyAmount: '8840000000000000000000000' },
+        ],
+      },
+    ];
+    const mockUni = async (tokIn, _tokOut, amtRaw) => {
+      const a = BigInt(amtRaw);
+      if (tokIn.toLowerCase() === celoTok.address.toLowerCase()) {
+        // 18 CELO = $1.00 USDT
+        return { amountOut: a / 18_000_000_000_000n, fee: 100 };
+      }
+      if (tokIn.toLowerCase() === warsTok.address.toLowerCase()) {
+        // 1735 wARS = $1.00 USDT -> 8,699,930 wARS = $5,014.368 USDT (+$14.368!)
+        return { amountOut: a / 1_735_000_000_000_000n, fee: 100 };
+      }
+      return { amountOut: 100_000000n, fee: 100 };
+    };
+
+    const universeRes = await scanUniverseFromLadder([celoTok, warsTok], ladderPairs, 125, mockUni);
+    const allChaseRows = universeRes.flatMap((u) => u.rows);
+    const cands = selectChaseCandidates(allChaseRows, CONFIG.minEdgeUsd, CONFIG.minFlashEdgeBps);
+    assert.equal(cands.length, 2);
+    assert.equal(cands[0].symbol, 'wARS', 'wARS $14.36 whale must preempt CELO $0.28 crumb during CHASE');
+    assert.ok(cands[0].edgeUsd > 14.0, `expected >$14 wARS profit, got ${cands[0].edgeUsd}`);
+    assert.equal(cands[1].symbol, 'CELO', 'CELO $0.28 remains #2 fallback if #1 quote skips on 0-gas pre-flight');
+    assert.ok(cands[1].edgeUsd > 0.25 && cands[1].edgeUsd < 0.35);
+
+    // 2. fetchTextileLadder overflows cleanly on public 429 to Bearer key, and stops when Partner Key hits 14-credit reserve
+    LADDER_BUDGET.remaining = 20;
+    LADDER_BUDGET.resetAtMs = Date.now() + 30_000;
+    PREVIEW_BUDGET.remaining = 45;
+    PREVIEW_BUDGET.resetAtMs = Date.now() + 30_000;
+
+    const seenAuthHeaders = [];
+    const mockFetch429ThenOk = async (_url, opts) => {
+      const auth = opts?.headers?.authorization || '';
+      seenAuthHeaders.push(auth);
+      if (!auth) {
+        return {
+          status: 429,
+          ok: false,
+          headers: new Map([['x-ratelimit-limit', '60'], ['x-ratelimit-remaining', '0'], ['x-ratelimit-reset', '25']]),
+          json: async () => ({}),
+        };
+      }
+      return {
+        status: 200,
+        ok: true,
+        headers: new Map([['x-ratelimit-limit', '60'], ['x-ratelimit-remaining', '44'], ['x-ratelimit-reset', '25']]),
+        json: async () => ({ data: { asOf: '2026-11-24T20:30:00Z', pairs: ladderPairs } }),
+      };
+    };
+    const recovered = await fetchTextileLadder(mockFetch429ThenOk);
+    assert.equal(recovered?.pairs?.length, 2);
+    assert.deepEqual(seenAuthHeaders, ['', 'Bearer tx_live_chase_universe_key']);
+    assert.equal(PREVIEW_BUDGET.remaining, 44);
+
+    // When both public (0) and Partner Key (<=14 reserve) are at floor, never spend the 14-credit /request reserve!
+    LADDER_BUDGET.remaining = 0;
+    LADDER_BUDGET.resetAtMs = Date.now() + 20_000;
+    PREVIEW_BUDGET.remaining = 14;
+    PREVIEW_BUDGET.resetAtMs = Date.now() + 20_000;
+    let calledReserve = false;
+    const blockedRes = await fetchTextileLadder(async () => {
+      calledReserve = true;
+      throw new Error('must not touch 14-credit firm-quote reserve');
+    });
+    assert.equal(calledReserve, false);
+    assert.equal(blockedRes, null);
+  } finally {
+    CONFIG.textileApiKey = prevKey;
+    CONFIG.flashRouterAddress = prevRouter;
+    Object.assign(LADDER_BUDGET, savedLad);
+    Object.assign(PREVIEW_BUDGET, savedPrev);
+  }
 });
