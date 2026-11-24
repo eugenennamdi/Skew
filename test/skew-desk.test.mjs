@@ -1923,16 +1923,21 @@ test('37. Double-audit upgrades: concave midpoint + micro-tail ladder retention,
   }
 });
 
-test('38. Dashboard Strategy PnL is withdrawal-invariant, tracks lifetime CELO gas burned & 24h flash sweeps, and never renders +$-', () => {
+test('38. Dashboard Strategy PnL is withdrawal-invariant, gas-subtracted, real-time synced, and never renders +$-', () => {
   const html = renderDashboardHtml();
   assert.ok(html.includes('CHECKPOINT_WITHDRAWN_USDT = 754.00'));
   assert.ok(html.includes('CHECKPOINT_GAS_BURNED_CELO = 371.9328'));
+  assert.ok(html.includes('INITIAL_EXTERNAL_CELO = 7.2908'));
   assert.ok(html.includes('FLASH_ROUTER = \'0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194\''));
-  assert.ok(html.includes('totalUsd + gasReserveUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt'));
+  assert.ok(html.includes('(totalUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt) - INITIAL_CAPITAL_USDT - initialGasSeedUsd'));
+  assert.ok(!html.includes('totalUsd + gasReserveUsd + acc.withdrawnUsdt'), 'Net Profit must exclude CELO gas reserve');
+  assert.ok(html.includes('syncLiveChainLogs'));
   assert.ok(html.includes('gasBurnedBadge'));
   assert.ok(html.includes('flash24hPnlVal'));
   assert.ok(!html.includes('Banked Profits (Withdrawn)'));
   assert.ok(!html.includes('Hot Working Float'));
   assert.ok(!html.includes('Total Value (Banked + Hot)'));
+  assert.ok(!html.includes('Router Sweeps (All-Time)'));
+  assert.ok(!html.includes('Total Value (incl. Gas)'));
   assert.ok(!html.includes('+$${livePnlUsdt.toFixed(2)}'), 'PnL formatter must use signed helper so +$- never renders');
 });

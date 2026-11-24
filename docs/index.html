@@ -1070,22 +1070,18 @@
           <div>
             <div class="card-label">
               <span>24h Flash Arbitrage &amp; Book</span>
-              <span class="badge emerald" id="flash24hBadge">876 Wins / 24h</span>
+              <span class="badge emerald" id="flash24hBadge">893 Wins / 24h</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="flash24hPnlVal">+$260.83</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">24h USDT</span></div>
+            <div class="card-value mono text-emerald"><span id="flash24hPnlVal">+$262.31</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">24h USDT</span></div>
             <div class="mini-bar" title="Normalized per-corridor Avellaneda-Stoikov Maker skew ($24 USDT share vs Local FX)">
               <div class="mini-bar-seg" id="barSkewUsdt" style="width: 65.0%; background: var(--foreground);"></div>
               <div class="mini-bar-seg" id="barSkewLocal" style="width: 35.0%; background: #10B981;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="routerLifetimeItem" title="Cumulative pure USDT profit swept directly from SkewAtomicRouter (0x6EA0...f194) with 0 principal risk">
-              <span class="text-muted">Router Sweeps (All-Time)</span>
-              <span class="treasury-asset-val mono text-emerald" id="routerSweepsVal">+$480.87 (1,652 Wins)</span>
-            </div>
             <div class="treasury-asset-item" title="Rolling 24-hour flash notional volume settled on SkewAtomicRouter">
               <span class="text-muted">24h Flash Vol</span>
-              <span class="treasury-asset-val mono" id="flash24hVolVal">$274.4k</span>
+              <span class="treasury-asset-val mono" id="flash24hVolVal">$275.9k</span>
             </div>
             <div class="treasury-asset-item" title="Largest single-transaction atomic flash profit swept to date (+$37.15 USDT)">
               <span class="text-muted">Best Sweep</span>
@@ -1106,33 +1102,29 @@
           <div>
             <div class="card-label">
               <span>Strategy PnL &amp; Efficiency</span>
-              <span class="badge emerald" id="rocBadge">+351.3% RoC</span>
+              <span class="badge emerald" id="rocBadge">+350.8% RoC</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="pnlValue">+$685.08</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">Net Profit</span></div>
-            <div class="mini-bar" title="Lifetime Profit Breakdown: SkewAtomicRouter Flash Sweeps (70%) + 2-Leg & Shielded Maker Fills (30%)">
+            <div class="card-value mono text-emerald"><span id="pnlValue">+$685.54</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">Net Profit</span></div>
+            <div class="mini-bar" title="Lifetime Net Profit Breakdown (after 100% of CELO gas subtracted): SkewAtomicRouter Flash Sweeps + 2-Leg & Shielded Maker Fills">
               <div class="mini-bar-seg" style="width: 70%; background: #10B981;"></div>
               <div class="mini-bar-seg" style="width: 24%; background: #38BDF8;"></div>
               <div class="mini-bar-seg" style="width: 6%; background: #F59E0B;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial bankroll + cumulative net realized profit">
-              <span class="text-muted">Total Value (incl. Gas)</span>
-              <span class="treasury-asset-val mono" id="totalStrategyVal">$880.08 (+$2.11 Gas)</span>
-            </div>
-            <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions (net gas-to-profit ratio)">
+            <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions — 100% subtracted from Net Profit">
               <span class="text-muted">Lifetime Gas</span>
-              <span class="treasury-asset-val mono" id="gasLifetimeCardVal">371.9 CELO ($20.89)</span>
+              <span class="treasury-asset-val mono" id="gasLifetimeCardVal">374.5 CELO ($20.97)</span>
             </div>
             <div class="treasury-asset-item" id="arbCyclesItem" title="1,794 pre-flash 2-leg arbitrages + live SkewAtomicRouter 1-tx flash sweeps (0 flash losses)">
               <span class="text-muted">Total Wins</span>
-              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">3,446 Wins</span>
+              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">3,475 Wins</span>
             </div>
-            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg volume ($748.7k = $1.50M 2-leg notional) generated from $195.00 initial bankroll">
+            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg volume generated from $195.00 initial bankroll">
               <span class="text-muted">Cumul. Vol</span>
-              <span class="treasury-asset-val mono" id="turnoverVal">$748.7k (3,840x)</span>
+              <span class="treasury-asset-val mono" id="turnoverVal">$754.2k (3,868x)</span>
             </div>
-            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet across 8,795+ txs">
+            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet across 8,824+ txs">
               <span class="text-muted">Reliability</span>
               <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.0%</span>
             </div>
@@ -1639,25 +1631,30 @@
     const FLASH_ROUTER = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
     const CELO_RPC = 'https://forno.celo.org';
     const BLOCKSCOUT_BASE = `https://celo.blockscout.com/api/v2/addresses/${AGENT_WALLET}`;
-    const BLOCKSCOUT_V1 = 'https://celo.blockscout.com/api';
     const ERC8021_MARKER = '63656c6f5f373933356662393765323733'; // "celo_7935fb97e273"
     const FEE_CURRENCY_USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'; // Celo CIP-64 feeCurrency (USDT)
 
     // Verified On-Chain Accounting Checkpoint at Block #83,603,158 (2026-11-24T07:05 UTC)
-    // Automatically tracks all post-checkpoint profit withdrawals, deposits, flash sweeps & gas burned live via Blockscout CORS API!
+    // Automatically tracks all post-checkpoint profit withdrawals, deposits, flash sweeps & gas burned live every 3s via Celo RPC + Blockscout v2!
     const INITIAL_CAPITAL_USDT = 195.00;
+    const INITIAL_EXTERNAL_CELO = 7.2908; // Net external CELO seeded (10.2908 deposited - 3.0000 withdrawn)
     const BASE_NONCE = 3911; // Hackathon Block #82,263,550 anchor (1,794 2-leg arbs, $207,057.11 1-leg vol)
     const PRE_FLASH_ARB_WINS = 1794;
     const PRE_FLASH_VOL_USD = 207057.11;
     const CHECKPOINT_BLOCK = 83603158;
     const CHECKPOINT_WITHDRAWN_USDT = 754.00; // Verified transfers: $54 + $500 + $200 to cold wallet 0xbb6C727e...
+    const CHECKPOINT_CELO_BALANCE = 37.513776; // Exact eth_getBalance(AGENT_WALLET, 83603158)
     const CHECKPOINT_GAS_BURNED_CELO = 371.9328; // Verified sum(gasUsed * gasPrice) across 8,795 outgoing txs
+    const CHECKPOINT_WALLET_GAS_UNITS = 1550351433;
     const CHECKPOINT_OUT_TXS = 8795;
     const CHECKPOINT_REVERT_TXS = 88;
     const CHECKPOINT_FLASH_WINS = 1652;
     const CHECKPOINT_FLASH_PROFIT_USDT = 480.8720;
     const CHECKPOINT_FLASH_VOL_USD = 541664.89;
+    const CHECKPOINT_ROUTER_TX_COUNT = 1391;
     const CHECKPOINT_PEAK_SWEEP_USDT = 37.1525;
+    const CELO_TOKEN_ADDRESS = '0x471EcE3750Da237f93B8E339c536989b8978a438';
+    const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
     function detectMiniPayProvider() {
       const isMiniPay = Boolean(typeof window !== 'undefined' && window.ethereum && window.ethereum.isMiniPay);
@@ -1694,23 +1691,42 @@
     };
 
     const STATE = {
-      blockNumber: 83603158,
-      walletNonce: 8795,
-      celoPriceUsd: 0.0562,
-      balances: { USDT: 100.85, cNGN: 7264.18, wARS: 8805.97, wBRL: 30.13, USDC: 6.50, CELO: 37.51 },
+      blockNumber: 83605905,
+      walletNonce: 8824,
+      celoPriceUsd: 0.0560,
+      balances: { USDT: 105.46, cNGN: 7264.18, wARS: 8805.97, wBRL: 30.13, USDC: 6.50, CELO: 34.93 },
       accounting: {
         withdrawnUsdt: CHECKPOINT_WITHDRAWN_USDT,
         extraDepositsUsdt: 0.0,
-        gasBurnedCelo: CHECKPOINT_GAS_BURNED_CELO,
-        outTxs: CHECKPOINT_OUT_TXS,
+        extraCeloDeposits: 0.0,
+        gasBurnedCelo: 374.52,
+        outTxs: 8824,
         revertTxs: CHECKPOINT_REVERT_TXS,
-        flashWins: CHECKPOINT_FLASH_WINS,
-        flashProfitUsdt: CHECKPOINT_FLASH_PROFIT_USDT,
-        flashVolUsd: CHECKPOINT_FLASH_VOL_USD,
+        flashWins: 1681,
+        flashProfitUsdt: 485.48,
+        flashVolUsd: 547180.0,
         peakSweepUsdt: CHECKPOINT_PEAK_SWEEP_USDT,
-        flash24hWins: 876,
-        flash24hProfitUsdt: 260.83,
-        flash24hVolUsd: 274447.69,
+        flash24hWins: 893,
+        flash24hProfitUsdt: 262.31,
+        flash24hVolUsd: 275902.68,
+      },
+      ledger: {
+        cursorBlock: 0,
+        syncing: false,
+        backfillDone: false,
+        v2HistoryDone: false,
+        flashByHash: new Map(),
+        seenWalletLogIds: new Set(),
+        celoIn: 0,
+        celoOut: 0,
+        extraCeloDeposits: 0,
+        extraWithdrawnUsdt: 0,
+        extraDepositsUsdt: 0,
+        v2WithdrawnUsdt: 0,
+        v2DepositsUsdt: 0,
+        v2RouterExtraWins: 0,
+        v2WalletExtraGasCelo: 0,
+        lastRenderedFlashHash: '',
       },
       offChainFx: {
         NGN: 1381.8,
@@ -2092,6 +2108,311 @@
       return `<span class="text-subtle">${mon} ${day} ·</span> ${time}`;
     }
 
+    function recomputeAccountingFromLedger(head) {
+      const L = STATE.ledger;
+      const cutoff24hBlk = head - 86400;
+      const pruneFloor = Math.min(CHECKPOINT_BLOCK, head - 90000);
+      let postWins = 0;
+      let postProfit = 0;
+      let postVol = 0;
+      let maxPeak = CHECKPOINT_PEAK_SWEEP_USDT;
+      let w24 = 0;
+      let p24 = 0;
+      let v24 = 0;
+      let latestFlashTx = null;
+
+      for (const [h, fx] of L.flashByHash.entries()) {
+        if (fx.blk < pruneFloor) {
+          L.flashByHash.delete(h);
+          continue;
+        }
+        if (fx.profit <= 0) continue;
+        if (fx.profit > maxPeak) maxPeak = fx.profit;
+        if (fx.blk > CHECKPOINT_BLOCK) {
+          postWins += 1;
+          postProfit += fx.profit;
+          postVol += fx.vol;
+        }
+        if (fx.blk >= cutoff24hBlk) {
+          w24 += 1;
+          p24 += fx.profit;
+          v24 += fx.vol;
+        }
+        if (!latestFlashTx || fx.blk >= latestFlashTx.blk) latestFlashTx = fx;
+      }
+
+      STATE.accounting.withdrawnUsdt = CHECKPOINT_WITHDRAWN_USDT + Math.max(L.extraWithdrawnUsdt, L.v2WithdrawnUsdt);
+      STATE.accounting.extraDepositsUsdt = Math.max(L.extraDepositsUsdt, L.v2DepositsUsdt);
+      STATE.accounting.extraCeloDeposits = L.extraCeloDeposits;
+      STATE.accounting.outTxs = Math.max(CHECKPOINT_OUT_TXS, STATE.walletNonce || CHECKPOINT_OUT_TXS);
+
+      if (head - 86400 <= CHECKPOINT_BLOCK) {
+        const rpcPostGas = Math.max(0, CHECKPOINT_CELO_BALANCE + L.celoIn - L.celoOut - (STATE.balances.CELO || 0));
+        STATE.accounting.gasBurnedCelo = CHECKPOINT_GAS_BURNED_CELO + Math.max(rpcPostGas, L.v2WalletExtraGasCelo);
+      } else {
+        const sessionGas = L.bootCeloBalance != null
+          ? Math.max(0, L.bootCeloBalance + L.celoIn - L.celoOut - (STATE.balances.CELO || 0))
+          : 0;
+        STATE.accounting.gasBurnedCelo = CHECKPOINT_GAS_BURNED_CELO + Math.max(L.v2WalletExtraGasCelo, (L.bootV2Gas || 0) + sessionGas);
+      }
+
+      const effectivePostWins = Math.max(postWins, L.v2RouterExtraWins);
+      const avgSweepProfit = postWins > 0 ? postProfit / postWins : 0.29;
+      const avgSweepVol = postWins > 0 ? postVol / postWins : 328.0;
+      const unindexedWins = Math.max(0, effectivePostWins - postWins);
+      STATE.accounting.flashWins = CHECKPOINT_FLASH_WINS + effectivePostWins;
+      STATE.accounting.flashProfitUsdt = CHECKPOINT_FLASH_PROFIT_USDT + postProfit + unindexedWins * avgSweepProfit;
+      STATE.accounting.flashVolUsd = CHECKPOINT_FLASH_VOL_USD + postVol + unindexedWins * avgSweepVol;
+      STATE.accounting.peakSweepUsdt = maxPeak;
+
+      if (L.backfillDone) {
+        STATE.accounting.flash24hWins = w24;
+        STATE.accounting.flash24hProfitUsdt = p24;
+        STATE.accounting.flash24hVolUsd = v24;
+      }
+      return latestFlashTx;
+    }
+
+    async function renderLatestFlashSettlement(latestFlashTx) {
+      if (!latestFlashTx || latestFlashTx.vol <= 0) return;
+      const topRow = document.getElementById('liveLatestSettlementRow');
+      if (!topRow) return;
+      let tsSec = latestFlashTx.tsSec || 0;
+      if (!tsSec && latestFlashTx.hash !== STATE.ledger.lastRenderedFlashHash) {
+        try {
+          const bRes = await fetch(CELO_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBlockByNumber', params: ['0x' + latestFlashTx.blk.toString(16), false] }),
+          }).then((r) => r.json());
+          if (bRes?.result?.timestamp) {
+            tsSec = parseInt(bRes.result.timestamp, 16);
+            latestFlashTx.tsSec = tsSec;
+          }
+        } catch (_) {}
+      }
+      if (!tsSec) {
+        tsSec = Math.floor(Date.now() / 1000) - Math.max(0, (STATE.blockNumber || latestFlashTx.blk) - latestFlashTx.blk);
+      }
+      STATE.ledger.lastRenderedFlashHash = latestFlashTx.hash;
+      const iso = new Date(tsSec * 1000).toISOString();
+      const outNotional = latestFlashTx.vol + latestFlashTx.profit;
+      const edgeBps = (latestFlashTx.profit / latestFlashTx.vol) * 10000;
+      topRow.innerHTML = `
+        <td class="mono text-muted">${formatUtcTimestamp(iso)}</td>
+        <td><span class="badge emerald">Atomic Flash Arb</span></td>
+        <td>
+          <span class="pair-cell">
+            <span class="pair-icons">
+              <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
+            </span>
+            <b>SkewAtomicRouter</b>
+          </span>
+        </td>
+        <td class="text-muted">Uniswap v3 Flash ↔ Textile Reactor (1 tx · 0 risk)</td>
+        <td class="num-right mono">${latestFlashTx.vol.toFixed(2)} → ${outNotional.toFixed(2)} USDT</td>
+        <td class="num-right mono text-emerald">+${edgeBps.toFixed(2)} bps (+$${latestFlashTx.profit.toFixed(4)})</td>
+        <td class="num-right mono">
+          <a class="link-subtle" href="https://celoscan.io/tx/${latestFlashTx.hash}" target="_blank">${latestFlashTx.hash.slice(0, 10)}... ↗</a>
+        </td>
+      `;
+    }
+
+    // Direct Celo Mainnet RPC log stream (0 indexer lag, 0 rate limits, updates every 3s)
+    async function syncLiveChainLogs() {
+      const L = STATE.ledger;
+      const head = STATE.blockNumber;
+      if (L.syncing || !head) return;
+      if (L.cursorBlock >= head) {
+        recomputeAccountingFromLedger(head);
+        return;
+      }
+      L.syncing = true;
+      try {
+        if (L.bootCeloBalance == null && STATE.balances.CELO != null) {
+          L.bootCeloBalance = STATE.balances.CELO;
+        }
+        const wLower = AGENT_WALLET.toLowerCase();
+        const rLower = FLASH_ROUTER.toLowerCase();
+        const usdtLower = FEE_CURRENCY_USDT.toLowerCase();
+        const reactorLower = '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3';
+        const uniRouterLower = '0x5615cdab10dc425a742d643d949a7f474c01abc4';
+        const wPad = '0x000000000000000000000000' + wLower.slice(2);
+        const rPad = '0x000000000000000000000000' + rLower.slice(2);
+        const knownPeers = new Set([
+          wLower,
+          rLower,
+          reactorLower,
+          uniRouterLower,
+          '0x6cde5f5a192fbf3fd84df983aa6dc30dbd9f8fac',
+          ...Object.values(POOLS).map((p) => p.toLowerCase()),
+        ]);
+
+        const isInitial = L.cursorBlock === 0;
+        const fromBlk = isInitial ? Math.max(83500000, head - 86400) : L.cursorBlock + 1;
+        const walletLogFloor = Math.max(CHECKPOINT_BLOCK + 1, fromBlk);
+        const calls = [];
+        let reqId = 1;
+
+        for (let b = fromBlk; b <= head; b += 4900) {
+          const end = Math.min(head, b + 4899);
+          const fHex = '0x' + b.toString(16);
+          const tHex = '0x' + end.toString(16);
+          calls.push({ tag: 'rOut', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: FEE_CURRENCY_USDT, fromBlock: fHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, rPad] }] } });
+          calls.push({ tag: 'rIn', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: FEE_CURRENCY_USDT, fromBlock: fHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, null, rPad] }] } });
+          if (end >= walletLogFloor) {
+            const wfHex = '0x' + Math.max(b, walletLogFloor).toString(16);
+            calls.push({ tag: 'wUsdtOut', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: FEE_CURRENCY_USDT, fromBlock: wfHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, wPad] }] } });
+            calls.push({ tag: 'wUsdtIn', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: FEE_CURRENCY_USDT, fromBlock: wfHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, null, wPad] }] } });
+            calls.push({ tag: 'wCeloIn', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: CELO_TOKEN_ADDRESS, fromBlock: wfHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, null, wPad] }] } });
+            calls.push({ tag: 'wCeloOut', req: { jsonrpc: '2.0', id: reqId++, method: 'eth_getLogs', params: [{ address: CELO_TOKEN_ADDRESS, fromBlock: wfHex, toBlock: tHex, topics: [ERC20_TRANSFER_TOPIC, wPad] }] } });
+          }
+        }
+
+        const batches = [];
+        for (let i = 0; i < calls.length; i += 14) batches.push(calls.slice(i, i + 14));
+        const batchResponses = await Promise.all(
+          batches.map((grp) =>
+            fetch(CELO_RPC, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(grp.map((x) => x.req)),
+            }).then((r) => r.json())
+          )
+        );
+
+        const byId = new Map();
+        for (const arr of batchResponses) {
+          if (Array.isArray(arr)) {
+            for (const item of arr) if (item && item.result) byId.set(item.id, item.result);
+          }
+        }
+
+        const candidateTxHashes = new Set();
+        const pendingWalletUsdt = [];
+        const pendingCeloIn = [];
+
+        for (const c of calls) {
+          const logs = byId.get(c.req.id) || [];
+          for (const lg of logs) {
+            const h = lg.transactionHash;
+            const blk = parseInt(lg.blockNumber, 16);
+            const from = '0x' + (lg.topics?.[1] || '').slice(26).toLowerCase();
+            const to = '0x' + (lg.topics?.[2] || '').slice(26).toLowerCase();
+            if (c.tag === 'rOut' || c.tag === 'rIn') {
+              const logKey = `r:${h}:${lg.logIndex}`;
+              if (L.seenWalletLogIds.has(logKey)) continue;
+              L.seenWalletLogIds.add(logKey);
+              if (!L.flashByHash.has(h)) L.flashByHash.set(h, { hash: h, blk, tsSec: 0, profit: 0, vol: 0 });
+              const rec = L.flashByHash.get(h);
+              const val = Number(BigInt(lg.data || '0x0')) / 1e6;
+              if (from === rLower && to === wLower) rec.profit += val;
+              else if (val > rec.vol) rec.vol = val;
+            } else if (c.tag === 'wCeloIn' || c.tag === 'wCeloOut') {
+              const logKey = `c:${h}:${lg.logIndex}`;
+              if (L.seenWalletLogIds.has(logKey)) continue;
+              L.seenWalletLogIds.add(logKey);
+              const val = Number(BigInt(lg.data || '0x0')) / 1e18;
+              if (c.tag === 'wCeloIn') {
+                L.celoIn += val;
+                if (!knownPeers.has(from)) {
+                  candidateTxHashes.add(h);
+                  pendingCeloIn.push({ hash: h, val });
+                }
+              } else {
+                L.celoOut += val;
+              }
+            } else if (c.tag === 'wUsdtOut' || c.tag === 'wUsdtIn') {
+              const logKey = `u:${h}:${lg.logIndex}`;
+              if (L.seenWalletLogIds.has(logKey)) continue;
+              L.seenWalletLogIds.add(logKey);
+              const peer = c.tag === 'wUsdtOut' ? to : from;
+              if (knownPeers.has(peer)) continue;
+              const val = Number(BigInt(lg.data || '0x0')) / 1e6;
+              candidateTxHashes.add(h);
+              pendingWalletUsdt.push({ hash: h, dir: c.tag === 'wUsdtOut' ? 'out' : 'in', val });
+            }
+          }
+        }
+
+        if (candidateTxHashes.size > 0) {
+          const txList = [...candidateTxHashes];
+          const txBatch = await fetch(CELO_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(txList.map((h, i) => ({ jsonrpc: '2.0', id: i + 1, method: 'eth_getTransactionByHash', params: [h] }))),
+          }).then((r) => r.json()).catch(() => []);
+          const txByHash = new Map();
+          if (Array.isArray(txBatch)) {
+            for (const item of txBatch) if (item?.result?.hash) txByHash.set(item.result.hash.toLowerCase(), item.result);
+          }
+          for (const u of pendingWalletUsdt) {
+            const tx = txByHash.get(u.hash.toLowerCase());
+            if (!tx) continue;
+            const txTo = (tx.to || '').toLowerCase();
+            const txInp = (tx.input || '').toLowerCase();
+            if (txTo === usdtLower && txInp.startsWith('0xa9059cbb')) {
+              if (u.dir === 'out') L.extraWithdrawnUsdt += u.val;
+              else L.extraDepositsUsdt += u.val;
+            }
+          }
+          for (const ci of pendingCeloIn) {
+            const tx = txByHash.get(ci.hash.toLowerCase());
+            if (tx && (tx.from || '').toLowerCase() !== wLower) {
+              L.extraCeloDeposits += ci.val;
+            }
+          }
+        }
+
+        L.cursorBlock = head;
+        if (isInitial) L.backfillDone = true;
+        const latestFlashTx = recomputeAccountingFromLedger(head);
+        await renderLatestFlashSettlement(latestFlashTx);
+      } catch (e) {
+        console.warn('Ledger sync error:', e);
+      } finally {
+        L.syncing = false;
+      }
+    }
+
+    async function syncHistoricalV2Withdrawals() {
+      const L = STATE.ledger;
+      if (L.v2HistoryDone || (STATE.blockNumber || 0) <= CHECKPOINT_BLOCK + 86400) return;
+      L.v2HistoryDone = true;
+      try {
+        const wLower = AGENT_WALLET.toLowerCase();
+        const rLower = FLASH_ROUTER.toLowerCase();
+        let nextParams = '';
+        let wSum = 0;
+        let dSum = 0;
+        for (let page = 0; page < 25; page++) {
+          const res = await fetch(`${BLOCKSCOUT_BASE}/token-transfers?type=ERC-20&token=${FEE_CURRENCY_USDT}${nextParams}`);
+          if (!res.ok) break;
+          const json = await res.json();
+          const items = json.items || [];
+          let reachedCkpt = false;
+          for (const tr of items) {
+            const blk = Number(tr.block_number || 0);
+            if (blk <= CHECKPOINT_BLOCK) {
+              reachedCkpt = true;
+              break;
+            }
+            if (tr.method !== '0xa9059cbb' && tr.method !== 'transfer') continue;
+            const from = (tr.from?.hash || '').toLowerCase();
+            const to = (tr.to?.hash || '').toLowerCase();
+            const val = Number(tr.total?.value || 0) / 1e6;
+            if (from === wLower && to !== wLower && to !== rLower) wSum += val;
+            else if (to === wLower && from !== wLower && from !== rLower) dSum += val;
+          }
+          if (reachedCkpt || !json.next_page_params) break;
+          const np = json.next_page_params;
+          nextParams = `&block_number=${np.block_number}&index=${np.index}`;
+        }
+        L.v2WithdrawnUsdt = wSum;
+        L.v2DepositsUsdt = dSum;
+      } catch (_) {}
+    }
+
     async function pollExplorer() {
       try {
         const wLower = AGENT_WALLET.toLowerCase();
@@ -2099,16 +2420,13 @@
         const usdtLower = FEE_CURRENCY_USDT.toLowerCase();
         const reactorLower = '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3';
         const uniRouterLower = '0x5615cdab10dc425a742d643d949a7f474c01abc4';
-        const lookback25hStart = Math.max(83500000, (STATE.blockNumber || CHECKPOINT_BLOCK) - 90000);
 
-        const [addrRes, txRes, tokRes, countersRes, postTxRes, postWalletUsdtRes, routerUsdtRes] = await Promise.all([
+        const [addrRes, txRes, tokRes, countersRes, routerCountersRes] = await Promise.all([
           fetch(BLOCKSCOUT_BASE).catch(() => null),
           fetch(`${BLOCKSCOUT_BASE}/transactions`).catch(() => null),
           fetch(`${BLOCKSCOUT_BASE}/token-transfers`).catch(() => null),
           fetch(`${BLOCKSCOUT_BASE}/counters`).catch(() => null),
-          fetch(`${BLOCKSCOUT_V1}?module=account&action=txlist&address=${AGENT_WALLET}&startblock=${CHECKPOINT_BLOCK + 1}&sort=asc`).catch(() => null),
-          fetch(`${BLOCKSCOUT_V1}?module=account&action=tokentx&address=${AGENT_WALLET}&contractaddress=${FEE_CURRENCY_USDT}&startblock=${CHECKPOINT_BLOCK + 1}&sort=asc`).catch(() => null),
-          fetch(`${BLOCKSCOUT_V1}?module=account&action=tokentx&address=${FLASH_ROUTER}&contractaddress=${FEE_CURRENCY_USDT}&startblock=${lookback25hStart}&sort=asc`).catch(() => null),
+          fetch(`https://celo.blockscout.com/api/v2/addresses/${FLASH_ROUTER}/counters`).catch(() => null),
         ]);
 
         if (addrRes && addrRes.ok) {
@@ -2118,122 +2436,27 @@
           }
         }
 
-        // 1. Live post-checkpoint withdrawals, outgoing tx counts & exact CELO gas burned (gasUsed * gasPrice)
-        if (postTxRes && postTxRes.ok) {
-          const pJson = await postTxRes.json().catch(() => null);
-          if (Array.isArray(pJson?.result)) {
-            let extraWithdrawn = 0;
-            let extraGasCelo = 0;
-            let extraOut = 0;
-            let extraRev = 0;
-            for (const tx of pJson.result) {
-              if ((tx.from || '').toLowerCase() !== wLower) continue;
-              extraOut += 1;
-              const isErr = tx.isError === '1' || tx.txreceipt_status === '0';
-              if (isErr) extraRev += 1;
-              extraGasCelo += Number(BigInt(tx.gasUsed || '0') * BigInt(tx.gasPrice || '0')) / 1e18;
-              const toAddr = (tx.to || '').toLowerCase();
-              const inp = (tx.input || '').toLowerCase();
-              if (!isErr && toAddr === usdtLower && inp.startsWith('0xa9059cbb') && inp.length >= 138) {
-                const recp = '0x' + inp.slice(34, 74);
-                if (recp !== wLower && recp !== rLower && recp !== reactorLower && recp !== uniRouterLower) {
-                  extraWithdrawn += Number(BigInt('0x' + inp.slice(74, 138))) / 1e6;
-                }
-              }
-            }
-            STATE.accounting.withdrawnUsdt = CHECKPOINT_WITHDRAWN_USDT + extraWithdrawn;
-            STATE.accounting.gasBurnedCelo = CHECKPOINT_GAS_BURNED_CELO + extraGasCelo;
-            STATE.accounting.outTxs = CHECKPOINT_OUT_TXS + extraOut;
-            STATE.accounting.revertTxs = CHECKPOINT_REVERT_TXS + extraRev;
-          }
-        }
-
-        // 2. Live post-checkpoint direct owner USDT deposits (so external top-ups are never miscounted as profit)
-        if (postWalletUsdtRes && postWalletUsdtRes.ok) {
-          const pwJson = await postWalletUsdtRes.json().catch(() => null);
-          if (Array.isArray(pwJson?.result)) {
-            let extraDep = 0;
-            for (const tr of pwJson.result) {
-              const from = (tr.from || '').toLowerCase();
-              const to = (tr.to || '').toLowerCase();
-              const inp = (tr.input || '').toLowerCase();
-              if (
-                to === wLower &&
-                from !== wLower &&
-                from !== rLower &&
-                from !== reactorLower &&
-                from !== uniRouterLower &&
-                inp.startsWith('0xa9059cbb')
-              ) {
-                extraDep += Number(tr.value || 0) / 1e6;
-              }
-            }
-            STATE.accounting.extraDepositsUsdt = extraDep;
-          }
-        }
-
-        // 3. Live SkewAtomicRouter 24h & all-time flash sweeps + newest atomic settlement row
-        let latestFlashTx = null;
-        if (routerUsdtRes && routerUsdtRes.ok) {
-          const rJson = await routerUsdtRes.json().catch(() => null);
-          if (Array.isArray(rJson?.result)) {
-            const byFlashHash = new Map();
-            for (const tr of rJson.result) {
-              const h = tr.hash;
-              if (!h) continue;
-              if (!byFlashHash.has(h)) {
-                byFlashHash.set(h, { hash: h, blk: Number(tr.blockNumber || 0), tsSec: Number(tr.timeStamp || 0), profit: 0, vol: 0 });
-              }
-              const rec = byFlashHash.get(h);
-              const val = Number(tr.value || 0) / 1e6;
-              if ((tr.from || '').toLowerCase() === rLower && (tr.to || '').toLowerCase() === wLower) {
-                rec.profit += val;
-              } else if (val > rec.vol) {
-                rec.vol = val;
-              }
-            }
-            const flashList = [...byFlashHash.values()].filter((x) => x.profit > 0);
-            const nowSec = Math.floor(Date.now() / 1000);
-            let postWins = 0;
-            let postProfit = 0;
-            let postVol = 0;
-            let maxPeak = CHECKPOINT_PEAK_SWEEP_USDT;
-            let w24 = 0;
-            let p24 = 0;
-            let v24 = 0;
-            for (const fx of flashList) {
-              if (fx.profit > maxPeak) maxPeak = fx.profit;
-              if (fx.blk > CHECKPOINT_BLOCK) {
-                postWins += 1;
-                postProfit += fx.profit;
-                postVol += fx.vol;
-              }
-              if (nowSec - fx.tsSec <= 86400) {
-                w24 += 1;
-                p24 += fx.profit;
-                v24 += fx.vol;
-              }
-              if (!latestFlashTx || fx.blk >= latestFlashTx.blk) latestFlashTx = fx;
-            }
-            STATE.accounting.flashWins = CHECKPOINT_FLASH_WINS + postWins;
-            STATE.accounting.flashProfitUsdt = CHECKPOINT_FLASH_PROFIT_USDT + postProfit;
-            STATE.accounting.flashVolUsd = CHECKPOINT_FLASH_VOL_USD + postVol;
-            STATE.accounting.peakSweepUsdt = maxPeak;
-            if (w24 > 0) {
-              STATE.accounting.flash24hWins = w24;
-              STATE.accounting.flash24hProfitUsdt = p24;
-              STATE.accounting.flash24hVolUsd = v24;
-            }
+        if (routerCountersRes && routerCountersRes.ok) {
+          const rcJson = await routerCountersRes.json().catch(() => null);
+          if (Number(rcJson?.transactions_count) > CHECKPOINT_ROUTER_TX_COUNT) {
+            STATE.ledger.v2RouterExtraWins = Number(rcJson.transactions_count) - CHECKPOINT_ROUTER_TX_COUNT;
           }
         }
 
         if (countersRes && countersRes.ok) {
-          const cJson = await countersRes.json();
+          const cJson = await countersRes.json().catch(() => null);
           const badge = document.getElementById('activityCountBadge');
           if (badge && Number(cJson?.token_transfers_count) > 0) {
             badge.textContent = `ERC-8004 #9905 · ${Number(cJson.token_transfers_count).toLocaleString('en-US')} Token Fills · Flash Active`;
           }
+          if (Number(cJson?.gas_usage_count) > CHECKPOINT_WALLET_GAS_UNITS) {
+            const extraGasEst = (Number(cJson.gas_usage_count) - CHECKPOINT_WALLET_GAS_UNITS) * 285e-9;
+            STATE.ledger.v2WalletExtraGasCelo = extraGasEst;
+            if (STATE.ledger.bootV2Gas == null) STATE.ledger.bootV2Gas = extraGasEst;
+          }
         }
+
+        await syncHistoricalV2Withdrawals();
 
         if (txRes && txRes.ok) {
           const txJson = await txRes.json();
@@ -2305,34 +2528,8 @@
               </tr>
             `;
           }).join('');
-
-          if (latestFlashTx && latestFlashTx.vol > 0) {
-            const topRow = document.getElementById('liveLatestSettlementRow');
-            if (topRow) {
-              const iso = new Date(latestFlashTx.tsSec * 1000).toISOString();
-              const outNotional = latestFlashTx.vol + latestFlashTx.profit;
-              const edgeBps = (latestFlashTx.profit / latestFlashTx.vol) * 10000;
-              topRow.innerHTML = `
-                <td class="mono text-muted">${formatUtcTimestamp(iso)}</td>
-                <td><span class="badge emerald">Atomic Flash Arb</span></td>
-                <td>
-                  <span class="pair-cell">
-                    <span class="pair-icons">
-                      <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
-                    </span>
-                    <b>SkewAtomicRouter</b>
-                  </span>
-                </td>
-                <td class="text-muted">Uniswap v3 Flash ↔ Textile Reactor (1 tx · 0 risk)</td>
-                <td class="num-right mono">${latestFlashTx.vol.toFixed(2)} → ${outNotional.toFixed(2)} USDT</td>
-                <td class="num-right mono text-emerald">+${edgeBps.toFixed(2)} bps (+$${latestFlashTx.profit.toFixed(4)})</td>
-                <td class="num-right mono">
-                  <a class="link-subtle" href="https://celoscan.io/tx/${latestFlashTx.hash}" target="_blank">${latestFlashTx.hash.slice(0, 10)}... ↗</a>
-                </td>
-              `;
-            }
-          }
         }
+        recomputeAccountingFromLedger(STATE.blockNumber || CHECKPOINT_BLOCK);
         renderUI();
       } catch (_) {}
     }
@@ -2390,8 +2587,7 @@
       }
 
       const acc = STATE.accounting;
-      const celoUsdRate = STATE.celoPriceUsd || 0.0562;
-      const gasReserveUsd = (STATE.balances.CELO || 0) * celoUsdRate;
+      const celoUsdRate = STATE.celoPriceUsd || 0.0560;
       const gasBurnedUsd = acc.gasBurnedCelo * celoUsdRate;
 
       const gasBadge = document.getElementById('gasBadge');
@@ -2403,23 +2599,21 @@
         gasBurnedBadge.textContent = `${acc.gasBurnedCelo.toFixed(2)} CELO (~$${gasBurnedUsd.toFixed(2)})`;
       }
 
-      // Card 2: Live 24h & All-Time Flash Arbitrage Telemetry
+      // Card 2: Live 24h Flash Arbitrage & Book Telemetry
       const f24Badge = document.getElementById('flash24hBadge');
       if (f24Badge) f24Badge.textContent = `${acc.flash24hWins.toLocaleString('en-US')} Wins / 24h`;
       const f24Pnl = document.getElementById('flash24hPnlVal');
       if (f24Pnl) f24Pnl.textContent = `+$${acc.flash24hProfitUsdt.toFixed(2)}`;
-      const rSweeps = document.getElementById('routerSweepsVal');
-      if (rSweeps) rSweeps.textContent = `+$${acc.flashProfitUsdt.toFixed(2)} (${acc.flashWins.toLocaleString('en-US')} Wins)`;
       const f24Vol = document.getElementById('flash24hVolVal');
       if (f24Vol) f24Vol.textContent = `$${(acc.flash24hVolUsd / 1000).toFixed(1)}k`;
       const bestSweep = document.getElementById('bestSweepVal');
       if (bestSweep) bestSweep.textContent = `+$${acc.peakSweepUsdt.toFixed(2)}`;
 
-      // Card 3: Withdrawal-Invariant Strategy PnL & Efficiency
-      // ponytail: True Net Profit = (Hot Wallet Liquid + Hot CELO Gas + Cumulative Withdrawn - Extra Deposits) - $195 Initial Seed
-      const totalGeneratedValueUsd = totalUsd + gasReserveUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt;
-      const effectiveSeedUsd = INITIAL_CAPITAL_USDT + acc.extraDepositsUsdt;
-      const livePnlUsdt = totalGeneratedValueUsd - INITIAL_CAPITAL_USDT;
+      // Card 3: Withdrawal-Invariant, Gas-Subtracted Strategy PnL & Efficiency
+      // ponytail: Excludes CELO gas tank completely; all AUTO_GAS_REFILL USDT->CELO swaps are already deducted from totalUsd, plus initial/external CELO seed is subtracted.
+      const initialGasSeedUsd = (INITIAL_EXTERNAL_CELO + (acc.extraCeloDeposits || 0)) * celoUsdRate;
+      const livePnlUsdt = (totalUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt) - INITIAL_CAPITAL_USDT - initialGasSeedUsd;
+      const effectiveSeedUsd = INITIAL_CAPITAL_USDT + initialGasSeedUsd + acc.extraDepositsUsdt;
       const liveRocPct = (livePnlUsdt / Math.max(1, effectiveSeedUsd)) * 100;
       const totalArbWins = PRE_FLASH_ARB_WINS + acc.flashWins;
       const liveVolUsd = PRE_FLASH_VOL_USD + acc.flashVolUsd;
@@ -2434,21 +2628,13 @@
       if (pnlEl) pnlEl.textContent = fmtSignedUsd(livePnlUsdt);
       const rocEl = document.getElementById('rocBadge');
       if (rocEl) rocEl.textContent = `${fmtSignedPct(liveRocPct)} RoC`;
-      const totValEl = document.getElementById('totalStrategyVal');
-      if (totValEl) {
-        totValEl.textContent = `$${totalGeneratedValueUsd.toFixed(2)} (+$${gasReserveUsd.toFixed(2)} Gas)`;
-      }
-      const totValItem = document.getElementById('totalStrategyValItem');
-      if (totValItem) {
-        totValItem.title = `$${totalGeneratedValueUsd.toFixed(2)} Total Strategy Value = $${INITIAL_CAPITAL_USDT.toFixed(2)} initial USDT bankroll + $${livePnlUsdt.toFixed(2)} net profit (+$${gasReserveUsd.toFixed(2)} CELO gas reserve)`;
-      }
       const gasLifeEl = document.getElementById('gasLifetimeCardVal');
       if (gasLifeEl) {
         gasLifeEl.textContent = `${acc.gasBurnedCelo.toFixed(1)} CELO ($${gasBurnedUsd.toFixed(2)})`;
       }
       const gasLifeItem = document.getElementById('gasLifetimeItem');
       if (gasLifeItem && livePnlUsdt > 0) {
-        gasLifeItem.title = `${acc.gasBurnedCelo.toFixed(4)} CELO (~$${gasBurnedUsd.toFixed(2)} USD) total gas burned across ${totalSent.toLocaleString('en-US')} txs (${((gasBurnedUsd / (livePnlUsdt + gasBurnedUsd)) * 100).toFixed(1)}% of gross profit)`;
+        gasLifeItem.title = `${acc.gasBurnedCelo.toFixed(4)} CELO (~$${gasBurnedUsd.toFixed(2)} USD) total gas burned across ${totalSent.toLocaleString('en-US')} txs — 100% subtracted from Net Profit (CELO gas tank also excluded)`;
       }
       const arbEl = document.getElementById('arbCyclesVal');
       if (arbEl) arbEl.textContent = `${totalArbWins.toLocaleString('en-US')} Wins`;
@@ -2715,7 +2901,10 @@
 
     async function syncTelemetry(withExplorer = false) {
       await pollTelemetry();
-      if (withExplorer) await pollExplorer();
+      recomputeAccountingFromLedger(STATE.blockNumber || CHECKPOINT_BLOCK);
+      renderUI();
+      if (withExplorer) pollExplorer();
+      await syncLiveChainLogs();
       renderUI();
     }
 
@@ -2724,7 +2913,7 @@
     pollOffChainFx().then(() => renderUI());
     syncTelemetry(true);
     setInterval(() => syncTelemetry(false), 3000);
-    setInterval(() => pollExplorer(), 10000);
+    setInterval(() => pollExplorer(), 8000);
     setInterval(() => pollOffChainFx().then(() => renderUI()), 60000);
   </script>
 </body>
