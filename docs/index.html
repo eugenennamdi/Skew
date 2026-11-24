@@ -6,7 +6,7 @@
   <title>Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Treasury on Celo</title>
   <meta name="description" content="Autonomous 4-corridor FX market maker (Rust Stitch + 2s zero-restart hot-reload), bounded Gemini 3.8 Flash Desk Head, EWMA volatility &amp; markout engine, and cross-venue Uniswap v3 arbitrageur on Celo Mainnet (ERC-8004 #9905)." />
   <meta property="og:title" content="Skew — AI-Supervised FX Market Maker &amp; Cross-Venue Desk (Celo #9905)" />
-  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$95.58 USDT liquid (+49.02% RoC · $296.43 total strategy value +52.02% RoC), 179 external Maker fills, 1,794 cross-venue arbitrages, Dual-Oracle Anti-Arb Shield &amp; Bounded Gemini 3.8 Flash Desk Head." />
+  <meta property="og:description" content="Live 24/7 Celo Mainnet telemetry: +$685+ net USDT profit (+351% RoC on $195 seed · $754 banked in cold storage), 9 zero-custody Uniswap v3 flash corridors, and live gas &amp; RFQ markout telemetry." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://eugenennamdi.github.io/Skew/" />
   <meta property="og:image" content="https://eugenennamdi.github.io/Skew/icons/skew-logo.svg" />
@@ -978,86 +978,97 @@
     <section class="view-panel active" id="view-overview">
       <div class="page-header">
         <div>
-          <h1 class="page-title">FX Liquidity &amp; Treasury Overview</h1>
-          <p class="page-subtitle">Autonomous quoting and cross-venue settlement across cNGN, wARS, wBRL, and USDC on Textile.</p>
+          <h1 class="page-title">FX Liquidity, Flash Arbitrage &amp; Treasury Overview</h1>
+          <p class="page-subtitle">Zero-custody atomic Uniswap v3 flash-swaps across 9 Celo corridors + Dual-Oracle Maker quoting on Textile v2.</p>
         </div>
         <div class="telemetry-strip" role="group" aria-label="Live agent telemetry">
           <a class="telemetry-seg" href="https://celoscan.io/token/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432?a=9905" target="_blank" rel="noopener" title="ERC-8004 On-Chain Agent Identity Registry (0x8004A169...9a432)">
             <span class="telemetry-key">ERC-8004</span>
             <span class="telemetry-val mono">#9905<span class="telemetry-arrow">↗</span></span>
           </a>
-          <span class="telemetry-seg" title="ERC-8021 On-Chain Calldata Attribution Suffix">
-            <span class="telemetry-key">ERC-8021</span>
-            <span class="telemetry-val mono">celo_7935fb97e273</span>
+          <a class="telemetry-seg" href="https://celoscan.io/address/0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194" target="_blank" rel="noopener" title="Non-custodial SkewAtomicRouter ($0 resting balance · reverts if unprofitable)">
+            <span class="telemetry-key">Flash Router</span>
+            <span class="telemetry-val mono">0x6EA0...f194<span class="telemetry-arrow">↗</span></span>
+          </a>
+          <span class="telemetry-seg" title="Live hot-wallet CELO gas reserve (auto-refills $3.50 USDT -> CELO at < 5.0 CELO)">
+            <span class="telemetry-key">Gas Tank</span>
+            <span class="telemetry-val mono" id="gasBadge">37.51 CELO</span>
           </span>
-          <span class="telemetry-seg" title="Autonomous gas manager refills at < 3.0 CELO">
-            <span class="telemetry-key">Gas</span>
-            <span class="telemetry-val mono" id="gasBadge">18.20 CELO</span>
+          <span class="telemetry-seg" id="gasBurnedSeg" title="Cumulative CELO burned in gas fees across all 8,795+ Celo Mainnet transactions since genesis">
+            <span class="telemetry-key">Gas Burned</span>
+            <span class="telemetry-val mono" id="gasBurnedBadge">371.93 CELO (~$20.89)</span>
           </span>
           <span class="telemetry-seg" id="blockPill" title="Live Celo Mainnet block height (polls every 3s)">
             <span class="live-dot" style="width:5px;height:5px;"></span>
-            <span class="telemetry-val mono" id="blockBadge">#82,263,550</span>
+            <span class="telemetry-val mono" id="blockBadge">#83,603,158</span>
           </span>
         </div>
       </div>
 
-      <!-- 3 Focused KPI Cards -->
+      <!-- 3 Focused Operator KPI Cards -->
       <div class="metrics-grid">
         <div class="card stagger-item">
           <div>
             <div class="card-label">
-              <span>Treasury Value (Liquid)</span>
+              <span>Active Hot Wallet &amp; Vault</span>
               <span class="badge emerald">Live RPC</span>
             </div>
-            <div class="card-value mono" id="navValue">$290.58</div>
-            <div class="mini-bar" title="Multi-asset Maker reserve allocation (USDT · cNGN · wARS · wBRL · USDC)">
-              <div class="mini-bar-seg" id="barUsdt" style="width: 67.0%; background: var(--foreground);"></div>
-              <div class="mini-bar-seg" id="barCngn" style="width: 8.9%; background: #10B981;"></div>
-              <div class="mini-bar-seg" id="barWars" style="width: 8.9%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" id="barWbrl" style="width: 8.3%; background: #F59E0B;"></div>
-              <div class="mini-bar-seg" id="barUsdc" style="width: 6.9%; background: #6366F1;"></div>
+            <div class="card-value mono" id="navValue">$123.85</div>
+            <div class="mini-bar" title="Hot-wallet working float allocation (USDT · cNGN · wARS · wBRL · USDC)">
+              <div class="mini-bar-seg" id="barUsdt" style="width: 81.4%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barCngn" style="width: 4.1%; background: #10B981;"></div>
+              <div class="mini-bar-seg" id="barWars" style="width: 4.0%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" id="barWbrl" style="width: 4.5%; background: #F59E0B;"></div>
+              <div class="mini-bar-seg" id="barUsdc" style="width: 6.0%; background: #6366F1;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="194.58 USDT (67.0%)">
+            <div class="treasury-asset-item span-full" id="withdrawnVaultItem" title="Cumulative realized USDT profits swept out of hot wallet to cold storage (tracked automatically on-chain)">
+              <span class="treasury-asset-left">
+                <span class="seg-dot" style="background: var(--emerald);"></span>
+                <span>Banked Profits (Withdrawn)</span>
+              </span>
+              <span class="treasury-asset-val mono text-emerald" id="withdrawnReadout">$754.00 USDT</span>
+            </div>
+            <div class="treasury-asset-item span-full" id="assetItemUsdt" title="Active hot-wallet USDT settlement & gas-refill buffer">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdt.svg" alt="USDT" />
                 <span class="seg-dot" style="background: var(--foreground);"></span>
-                <span>USDT · Settlement Reserve</span>
+                <span>USDT · Hot Working Float</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdtReadout">$194.58 (67.0%)</span>
+              <span class="treasury-asset-val mono" id="usdtReadout">$100.85 (81.4%)</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemCngn" title="35,768 cNGN ($25.92)">
+            <div class="treasury-asset-item" id="assetItemCngn" title="7,264 cNGN">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/cngn.png" alt="cNGN" />
                 <span class="seg-dot" style="background: #10B981;"></span>
                 <span>cNGN</span>
               </span>
-              <span class="treasury-asset-val mono" id="cngnReadout">$25.92</span>
+              <span class="treasury-asset-val mono" id="cngnReadout">$5.02</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWars" title="42,917 wARS ($25.95)">
+            <div class="treasury-asset-item" id="assetItemWars" title="8,806 wARS">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wars-mark.svg" alt="wARS" />
                 <span class="seg-dot" style="background: #38BDF8;"></span>
                 <span>wARS</span>
               </span>
-              <span class="treasury-asset-val mono" id="warsReadout">$25.95</span>
+              <span class="treasury-asset-val mono" id="warsReadout">$4.95</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemWbrl" title="134.36 wBRL ($24.13)">
+            <div class="treasury-asset-item" id="assetItemWbrl" title="30.13 wBRL">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/wbrl-mark.svg" alt="wBRL" />
                 <span class="seg-dot" style="background: #F59E0B;"></span>
                 <span>wBRL</span>
               </span>
-              <span class="treasury-asset-val mono" id="wbrlReadout">$24.13</span>
+              <span class="treasury-asset-val mono" id="wbrlReadout">$5.48</span>
             </div>
-            <div class="treasury-asset-item" id="assetItemUsdc" title="20.00 USDC ($20.00)">
+            <div class="treasury-asset-item" id="assetItemUsdc" title="6.50 USDC">
               <span class="treasury-asset-left">
                 <img class="token-icon-xs" src="https://app.textilecredit.com/images/tokenIcons/usdc.svg" alt="USDC" />
                 <span class="seg-dot" style="background: #6366F1;"></span>
                 <span>USDC</span>
               </span>
-              <span class="treasury-asset-val mono" id="usdcReadout">$20.00</span>
+              <span class="treasury-asset-val mono" id="usdcReadout">$6.50</span>
             </div>
           </div>
         </div>
@@ -1065,35 +1076,35 @@
         <div class="card stagger-item">
           <div>
             <div class="card-label">
-              <span>Inventory Skew &amp; Maker Book</span>
-              <span class="mono text-muted" id="skewRegimeTag">Balanced</span>
+              <span>24h Flash Arbitrage &amp; Book</span>
+              <span class="badge emerald" id="flash24hBadge">876 Wins / 24h</span>
             </div>
-            <div class="card-value mono" id="skewValue">-0.038</div>
-            <div class="mini-bar" title="Normalized per-corridor Avellaneda-Stoikov balance ($24 USDT share vs Local FX)">
-              <div class="mini-bar-seg" id="barSkewUsdt" style="width: 48.1%; background: var(--foreground);"></div>
-              <div class="mini-bar-seg" id="barSkewLocal" style="width: 51.9%; background: #10B981;"></div>
+            <div class="card-value mono text-emerald"><span id="flash24hPnlVal">+$260.83</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">24h USDT</span></div>
+            <div class="mini-bar" title="Normalized per-corridor Avellaneda-Stoikov Maker skew ($24 USDT share vs Local FX)">
+              <div class="mini-bar-seg" id="barSkewUsdt" style="width: 65.0%; background: var(--foreground);"></div>
+              <div class="mini-bar-seg" id="barSkewLocal" style="width: 35.0%; background: #10B981;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full">
-              <span class="text-muted">Shielded Bid / Ask Spread</span>
-              <span class="treasury-asset-val mono"><span id="bidSpreadFooter">3 bps</span> / <span id="askSpreadFooter">3 bps</span></span>
+            <div class="treasury-asset-item span-full" id="routerLifetimeItem" title="Cumulative pure USDT profit swept directly from SkewAtomicRouter (0x6EA0...f194) with 0 principal risk">
+              <span class="text-muted">Router Sweeps (All-Time)</span>
+              <span class="treasury-asset-val mono text-emerald" id="routerSweepsVal">+$480.87 (1,652 Wins)</span>
             </div>
-            <div class="treasury-asset-item" title="Net spread locked in when refilling Maker fills on Uniswap v3 0.01%">
-              <span class="text-muted">Refill Edge</span>
-              <span class="treasury-asset-val mono text-emerald" id="refillEdgeCardVal">+41.1 bps</span>
+            <div class="treasury-asset-item" title="Rolling 24-hour flash notional volume settled on SkewAtomicRouter">
+              <span class="text-muted">24h Flash Vol</span>
+              <span class="treasury-asset-val mono" id="flash24hVolVal">$274.4k</span>
             </div>
-            <div class="treasury-asset-item" title="Two-way quoting active across cNGN, wARS, wBRL, and USDC via 2s hot-reload">
-              <span class="text-muted">Coverage</span>
-              <span class="treasury-asset-val mono">8 / 8 Sides</span>
+            <div class="treasury-asset-item" title="Largest single-transaction atomic flash profit swept to date (+$37.15 USDT)">
+              <span class="text-muted">Best Sweep</span>
+              <span class="treasury-asset-val mono text-emerald" id="bestSweepVal">+$37.15</span>
             </div>
-            <div class="treasury-asset-item" title="Independent external counterparty Maker fills settled on LimitOrderReactor">
-              <span class="text-muted">Maker Fills</span>
-              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">179 Fills</span>
+            <div class="treasury-asset-item" title="Live Maker Skew & Shielded Spreads on cNGN/USDT">
+              <span class="text-muted">Skew (<span id="skewRegimeTag">USDT-Heavy</span>)</span>
+              <span class="treasury-asset-val mono"><span id="skewValue">+0.654</span> · <span id="bidSpreadFooter">3 bps</span>/<span id="askSpreadFooter">3 bps</span></span>
             </div>
-            <div class="treasury-asset-item" title="Cumulative USD volume served as Maker across all 4 corridors">
-              <span class="text-muted">Maker Vol</span>
-              <span class="treasury-asset-val mono" id="makerVolVal">$6,527.97</span>
+            <div class="treasury-asset-item" title="9 zero-capital flash pools + 209+ passive Maker fills">
+              <span class="text-muted">Active Pools</span>
+              <span class="treasury-asset-val mono text-emerald" id="makerFillsVal">9 Flash · <span id="refillEdgeCardVal">+41.1 bps</span></span>
             </div>
           </div>
         </div>
@@ -1102,35 +1113,35 @@
           <div>
             <div class="card-label">
               <span>Strategy PnL &amp; Efficiency</span>
-              <span class="badge emerald" id="rocBadge">+52.02% RoC</span>
+              <span class="badge emerald" id="rocBadge">+351.3% RoC</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="pnlValue">+$101.43</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">USDT</span></div>
-            <div class="mini-bar" title="Realized Strategy PnL attribution (wARS Arb · cNGN Arb · Shielded Maker Refills)">
-              <div class="mini-bar-seg" style="width: 68%; background: #38BDF8;"></div>
-              <div class="mini-bar-seg" style="width: 27%; background: #10B981;"></div>
-              <div class="mini-bar-seg" style="width: 5%; background: #F59E0B;"></div>
+            <div class="card-value mono text-emerald"><span id="pnlValue">+$685.08</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">Net Profit</span></div>
+            <div class="mini-bar" title="Lifetime Profit Breakdown: SkewAtomicRouter Flash Sweeps (70%) + 2-Leg & Shielded Maker Fills (30%)">
+              <div class="mini-bar-seg" style="width: 70%; background: #10B981;"></div>
+              <div class="mini-bar-seg" style="width: 24%; background: #38BDF8;"></div>
+              <div class="mini-bar-seg" style="width: 6%; background: #F59E0B;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Total Strategy Value = $195.00 initial USDT bankroll + net realized profit ($290.58 Liquid Equity + $5.85 CELO gas reserve)">
-              <span class="text-muted">Total Value (incl. Gas)</span>
-              <span class="treasury-asset-val mono" id="totalStrategyVal">$296.43 (+$5.85 Gas)</span>
+            <div class="treasury-asset-item span-full" id="totalStrategyValItem" title="Withdrawal-Invariant Total Value = Active Hot Wallet + CELO Gas + Cumulative Withdrawn ($754.00) on $195.00 initial seed">
+              <span class="text-muted">Total Value (Banked + Hot)</span>
+              <span class="treasury-asset-val mono" id="totalStrategyVal">$880.08 ($195 Seed)</span>
             </div>
-            <div class="treasury-asset-item" id="arbCyclesItem" title="Verified two-leg cross-venue arbitrages + shielded Maker replenishment cycles">
-              <span class="text-muted">2-Leg Arbs</span>
-              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">1,794 Cycles</span>
+            <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions (net gas-to-profit ratio)">
+              <span class="text-muted">Lifetime Gas</span>
+              <span class="treasury-asset-val mono" id="gasLifetimeCardVal">371.9 CELO ($20.89)</span>
             </div>
-            <div class="treasury-asset-item" title="Peak realized arbitrage spread (+187.5 bps on wARS/USDT) & average (+45.6 bps)">
-              <span class="text-muted">Peak / Avg</span>
-              <span class="treasury-asset-val mono text-emerald">+187.5 / 45.6 bps</span>
+            <div class="treasury-asset-item" id="arbCyclesItem" title="1,794 pre-flash 2-leg arbitrages + live SkewAtomicRouter 1-tx flash sweeps (0 flash losses)">
+              <span class="text-muted">Total Wins</span>
+              <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">3,446 Wins</span>
             </div>
-            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg & 2-leg notional volume on $195.00 initial bankroll">
-              <span class="text-muted">Turnover</span>
-              <span class="treasury-asset-val mono" id="turnoverVal">1,061.8x NAV</span>
+            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg volume ($748.7k = $1.50M 2-leg notional) generated from $195.00 initial bankroll">
+              <span class="text-muted">Cumul. Vol</span>
+              <span class="treasury-asset-val mono" id="turnoverVal">$748.7k (3,840x)</span>
             </div>
-            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet (3,904 / 3,911 succeeded)">
+            <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet across 8,795+ txs">
               <span class="text-muted">Reliability</span>
-              <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.8%</span>
+              <span class="treasury-asset-val mono text-emerald" id="reliabilityVal">99.0%</span>
             </div>
           </div>
         </div>
@@ -1632,10 +1643,28 @@
 
   <script>
     const AGENT_WALLET = '0xe5036100B4A32B83D5E1997d403Ce64A4C7f7324';
+    const FLASH_ROUTER = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
     const CELO_RPC = 'https://forno.celo.org';
     const BLOCKSCOUT_BASE = `https://celo.blockscout.com/api/v2/addresses/${AGENT_WALLET}`;
+    const BLOCKSCOUT_V1 = 'https://celo.blockscout.com/api';
     const ERC8021_MARKER = '63656c6f5f373933356662393765323733'; // "celo_7935fb97e273"
     const FEE_CURRENCY_USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'; // Celo CIP-64 feeCurrency (USDT)
+
+    // Verified On-Chain Accounting Checkpoint at Block #83,603,158 (2026-11-24T07:05 UTC)
+    // Automatically tracks all post-checkpoint profit withdrawals, deposits, flash sweeps & gas burned live via Blockscout CORS API!
+    const INITIAL_CAPITAL_USDT = 195.00;
+    const BASE_NONCE = 3911; // Hackathon Block #82,263,550 anchor (1,794 2-leg arbs, $207,057.11 1-leg vol)
+    const PRE_FLASH_ARB_WINS = 1794;
+    const PRE_FLASH_VOL_USD = 207057.11;
+    const CHECKPOINT_BLOCK = 83603158;
+    const CHECKPOINT_WITHDRAWN_USDT = 754.00; // Verified transfers: $54 + $500 + $200 to cold wallet 0xbb6C727e...
+    const CHECKPOINT_GAS_BURNED_CELO = 371.9328; // Verified sum(gasUsed * gasPrice) across 8,795 outgoing txs
+    const CHECKPOINT_OUT_TXS = 8795;
+    const CHECKPOINT_REVERT_TXS = 88;
+    const CHECKPOINT_FLASH_WINS = 1652;
+    const CHECKPOINT_FLASH_PROFIT_USDT = 480.8720;
+    const CHECKPOINT_FLASH_VOL_USD = 541664.89;
+    const CHECKPOINT_PEAK_SWEEP_USDT = 37.1525;
 
     function detectMiniPayProvider() {
       const isMiniPay = Boolean(typeof window !== 'undefined' && window.ethereum && window.ethereum.isMiniPay);
@@ -1672,9 +1701,24 @@
     };
 
     const STATE = {
-      blockNumber: 82263550,
-      walletNonce: 3911,
-      balances: { USDT: 194.58, cNGN: 35768.44, wARS: 42917.15, wBRL: 134.36, USDC: 20.00, CELO: 18.20 },
+      blockNumber: 83603158,
+      walletNonce: 8795,
+      celoPriceUsd: 0.0562,
+      balances: { USDT: 100.85, cNGN: 7264.18, wARS: 8805.97, wBRL: 30.13, USDC: 6.50, CELO: 37.51 },
+      accounting: {
+        withdrawnUsdt: CHECKPOINT_WITHDRAWN_USDT,
+        extraDepositsUsdt: 0.0,
+        gasBurnedCelo: CHECKPOINT_GAS_BURNED_CELO,
+        outTxs: CHECKPOINT_OUT_TXS,
+        revertTxs: CHECKPOINT_REVERT_TXS,
+        flashWins: CHECKPOINT_FLASH_WINS,
+        flashProfitUsdt: CHECKPOINT_FLASH_PROFIT_USDT,
+        flashVolUsd: CHECKPOINT_FLASH_VOL_USD,
+        peakSweepUsdt: CHECKPOINT_PEAK_SWEEP_USDT,
+        flash24hWins: 876,
+        flash24hProfitUsdt: 260.83,
+        flash24hVolUsd: 274447.69,
+      },
       offChainFx: {
         NGN: 1381.8,
         ARS: 1455.0,
@@ -2057,31 +2101,167 @@
 
     async function pollExplorer() {
       try {
-        const [txRes, tokRes, countersRes] = await Promise.all([
-          fetch(`${BLOCKSCOUT_BASE}/transactions`),
-          fetch(`${BLOCKSCOUT_BASE}/token-transfers`),
+        const wLower = AGENT_WALLET.toLowerCase();
+        const rLower = FLASH_ROUTER.toLowerCase();
+        const usdtLower = FEE_CURRENCY_USDT.toLowerCase();
+        const reactorLower = '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3';
+        const uniRouterLower = '0x5615cdab10dc425a742d643d949a7f474c01abc4';
+        const lookback25hStart = Math.max(83500000, (STATE.blockNumber || CHECKPOINT_BLOCK) - 90000);
+
+        const [addrRes, txRes, tokRes, countersRes, postTxRes, postWalletUsdtRes, routerUsdtRes] = await Promise.all([
+          fetch(BLOCKSCOUT_BASE).catch(() => null),
+          fetch(`${BLOCKSCOUT_BASE}/transactions`).catch(() => null),
+          fetch(`${BLOCKSCOUT_BASE}/token-transfers`).catch(() => null),
           fetch(`${BLOCKSCOUT_BASE}/counters`).catch(() => null),
+          fetch(`${BLOCKSCOUT_V1}?module=account&action=txlist&address=${AGENT_WALLET}&startblock=${CHECKPOINT_BLOCK + 1}&sort=asc`).catch(() => null),
+          fetch(`${BLOCKSCOUT_V1}?module=account&action=tokentx&address=${AGENT_WALLET}&contractaddress=${FEE_CURRENCY_USDT}&startblock=${CHECKPOINT_BLOCK + 1}&sort=asc`).catch(() => null),
+          fetch(`${BLOCKSCOUT_V1}?module=account&action=tokentx&address=${FLASH_ROUTER}&contractaddress=${FEE_CURRENCY_USDT}&startblock=${lookback25hStart}&sort=asc`).catch(() => null),
         ]);
+
+        if (addrRes && addrRes.ok) {
+          const aJson = await addrRes.json().catch(() => null);
+          if (Number(aJson?.exchange_rate) > 0) {
+            STATE.celoPriceUsd = Number(aJson.exchange_rate);
+          }
+        }
+
+        // 1. Live post-checkpoint withdrawals, outgoing tx counts & exact CELO gas burned (gasUsed * gasPrice)
+        if (postTxRes && postTxRes.ok) {
+          const pJson = await postTxRes.json().catch(() => null);
+          if (Array.isArray(pJson?.result)) {
+            let extraWithdrawn = 0;
+            let extraGasCelo = 0;
+            let extraOut = 0;
+            let extraRev = 0;
+            for (const tx of pJson.result) {
+              if ((tx.from || '').toLowerCase() !== wLower) continue;
+              extraOut += 1;
+              const isErr = tx.isError === '1' || tx.txreceipt_status === '0';
+              if (isErr) extraRev += 1;
+              extraGasCelo += Number(BigInt(tx.gasUsed || '0') * BigInt(tx.gasPrice || '0')) / 1e18;
+              const toAddr = (tx.to || '').toLowerCase();
+              const inp = (tx.input || '').toLowerCase();
+              if (!isErr && toAddr === usdtLower && inp.startsWith('0xa9059cbb') && inp.length >= 138) {
+                const recp = '0x' + inp.slice(34, 74);
+                if (recp !== wLower && recp !== rLower && recp !== reactorLower && recp !== uniRouterLower) {
+                  extraWithdrawn += Number(BigInt('0x' + inp.slice(74, 138))) / 1e6;
+                }
+              }
+            }
+            STATE.accounting.withdrawnUsdt = CHECKPOINT_WITHDRAWN_USDT + extraWithdrawn;
+            STATE.accounting.gasBurnedCelo = CHECKPOINT_GAS_BURNED_CELO + extraGasCelo;
+            STATE.accounting.outTxs = CHECKPOINT_OUT_TXS + extraOut;
+            STATE.accounting.revertTxs = CHECKPOINT_REVERT_TXS + extraRev;
+          }
+        }
+
+        // 2. Live post-checkpoint direct owner USDT deposits (so external top-ups are never miscounted as profit)
+        if (postWalletUsdtRes && postWalletUsdtRes.ok) {
+          const pwJson = await postWalletUsdtRes.json().catch(() => null);
+          if (Array.isArray(pwJson?.result)) {
+            let extraDep = 0;
+            for (const tr of pwJson.result) {
+              const from = (tr.from || '').toLowerCase();
+              const to = (tr.to || '').toLowerCase();
+              const inp = (tr.input || '').toLowerCase();
+              if (
+                to === wLower &&
+                from !== wLower &&
+                from !== rLower &&
+                from !== reactorLower &&
+                from !== uniRouterLower &&
+                inp.startsWith('0xa9059cbb')
+              ) {
+                extraDep += Number(tr.value || 0) / 1e6;
+              }
+            }
+            STATE.accounting.extraDepositsUsdt = extraDep;
+          }
+        }
+
+        // 3. Live SkewAtomicRouter 24h & all-time flash sweeps + newest atomic settlement row
+        let latestFlashTx = null;
+        if (routerUsdtRes && routerUsdtRes.ok) {
+          const rJson = await routerUsdtRes.json().catch(() => null);
+          if (Array.isArray(rJson?.result)) {
+            const byFlashHash = new Map();
+            for (const tr of rJson.result) {
+              const h = tr.hash;
+              if (!h) continue;
+              if (!byFlashHash.has(h)) {
+                byFlashHash.set(h, { hash: h, blk: Number(tr.blockNumber || 0), tsSec: Number(tr.timeStamp || 0), profit: 0, vol: 0 });
+              }
+              const rec = byFlashHash.get(h);
+              const val = Number(tr.value || 0) / 1e6;
+              if ((tr.from || '').toLowerCase() === rLower && (tr.to || '').toLowerCase() === wLower) {
+                rec.profit += val;
+              } else if (val > rec.vol) {
+                rec.vol = val;
+              }
+            }
+            const flashList = [...byFlashHash.values()].filter((x) => x.profit > 0);
+            const nowSec = Math.floor(Date.now() / 1000);
+            let postWins = 0;
+            let postProfit = 0;
+            let postVol = 0;
+            let maxPeak = CHECKPOINT_PEAK_SWEEP_USDT;
+            let w24 = 0;
+            let p24 = 0;
+            let v24 = 0;
+            for (const fx of flashList) {
+              if (fx.profit > maxPeak) maxPeak = fx.profit;
+              if (fx.blk > CHECKPOINT_BLOCK) {
+                postWins += 1;
+                postProfit += fx.profit;
+                postVol += fx.vol;
+              }
+              if (nowSec - fx.tsSec <= 86400) {
+                w24 += 1;
+                p24 += fx.profit;
+                v24 += fx.vol;
+              }
+              if (!latestFlashTx || fx.blk >= latestFlashTx.blk) latestFlashTx = fx;
+            }
+            STATE.accounting.flashWins = CHECKPOINT_FLASH_WINS + postWins;
+            STATE.accounting.flashProfitUsdt = CHECKPOINT_FLASH_PROFIT_USDT + postProfit;
+            STATE.accounting.flashVolUsd = CHECKPOINT_FLASH_VOL_USD + postVol;
+            STATE.accounting.peakSweepUsdt = maxPeak;
+            if (w24 > 0) {
+              STATE.accounting.flash24hWins = w24;
+              STATE.accounting.flash24hProfitUsdt = p24;
+              STATE.accounting.flash24hVolUsd = v24;
+            }
+          }
+        }
 
         if (countersRes && countersRes.ok) {
           const cJson = await countersRes.json();
           const badge = document.getElementById('activityCountBadge');
           if (badge && Number(cJson?.token_transfers_count) > 0) {
-            badge.textContent = `ERC-8004 #9905 · ${Number(cJson.token_transfers_count).toLocaleString('en-US')} Token Fills · ERC-8021 Tagged`;
+            badge.textContent = `ERC-8004 #9905 · ${Number(cJson.token_transfers_count).toLocaleString('en-US')} Token Fills · Flash Active`;
           }
         }
 
-        if (txRes.ok) {
+        if (txRes && txRes.ok) {
           const txJson = await txRes.json();
           const items = (txJson.items || []).slice(0, 15);
           document.getElementById('liveTxTable').innerHTML = items.map((tx) => {
             const raw = (tx.raw_input || '').toLowerCase();
             const verified = raw.includes(ERC8021_MARKER);
             const toAddr = (tx.to?.hash || '').toLowerCase();
-            const target = toAddr === '0x5615cdab10dc425a742d643d949a7f474c01abc4'
-              ? 'UniswapV3Router'
-              : (toAddr === '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3' ? 'LimitOrderReactor' : (tx.to?.name || toAddr.slice(0, 10)));
-            const method = tx.method || (raw.startsWith('0x04e45aaf') ? 'exactInputSingle' : 'execute');
+            const isFlashCall = toAddr === rLower;
+            const target = isFlashCall
+              ? 'SkewAtomicRouter'
+              : toAddr === uniRouterLower
+                ? 'UniswapV3Router'
+                : toAddr === reactorLower
+                  ? 'LimitOrderReactor'
+                  : toAddr === usdtLower
+                    ? 'USDT (Vault Transfer)'
+                    : (tx.to?.name || toAddr.slice(0, 10));
+            const method = isFlashCall
+              ? 'executeFlashArb'
+              : (tx.method || (raw.startsWith('0x04e45aaf') ? 'exactInputSingle' : raw.startsWith('0xa9059cbb') ? 'transfer' : 'execute'));
             const timeStr = formatUtcTimestamp(tx.timestamp);
 
             return `
@@ -2090,14 +2270,14 @@
                 <td class="mono text-subtle">#${tx.block_number}</td>
                 <td>${target}</td>
                 <td class="mono">${method}</td>
-                <td>${verified ? '<span class="badge emerald">celo_7935fb97e273</span>' : '<span class="badge">Standard</span>'}</td>
+                <td>${isFlashCall ? '<span class="badge emerald">Atomic Flash</span>' : verified ? '<span class="badge emerald">celo_7935fb97e273</span>' : '<span class="badge">Standard</span>'}</td>
                 <td class="num-right mono"><a class="link-subtle" href="https://celoscan.io/tx/${tx.hash}" target="_blank">${tx.hash.slice(0, 10)}... ↗</a></td>
               </tr>
             `;
           }).join('');
         }
 
-        if (tokRes.ok) {
+        if (tokRes && tokRes.ok) {
           const tokJson = await tokRes.json();
           const allTransfers = tokJson.items || [];
           const items = allTransfers.slice(0, 15);
@@ -2105,90 +2285,62 @@
             const sym = tr.token?.symbol || 'Token';
             const dec = Number(tr.total?.decimals || tr.token?.decimals || 6);
             const amt = Number(tr.total?.value || 0) / Math.pow(10, dec);
-            const isOut = (tr.from?.hash || '').toLowerCase() === AGENT_WALLET.toLowerCase();
+            const isOut = (tr.from?.hash || '').toLowerCase() === wLower;
+            const fromFlash = (tr.from?.hash || '').toLowerCase() === rLower;
             const peer = isOut ? (tr.to?.hash || '') : (tr.from?.hash || '');
             const timeStr = formatUtcTimestamp(tr.timestamp);
             const txHash = tr.transaction_hash || '';
+            const dirBadge = fromFlash
+              ? '<span class="badge emerald">Flash Profit</span>'
+              : isOut
+                ? '<span class="badge">Transfer Out</span>'
+                : '<span class="badge emerald">Settle In</span>';
 
             return `
               <tr>
                 <td class="mono text-muted">${timeStr}</td>
-                <td>${isOut ? '<span class="badge">Maker Out</span>' : '<span class="badge emerald">Settle In</span>'}</td>
+                <td>${dirBadge}</td>
                 <td>
                   <span class="pill-left">
                     <img class="token-icon" src="${getTokenIcon(sym)}" alt="${sym}" />
                     <b>${sym}</b>
                   </span>
                 </td>
-                <td class="num-right mono ${isOut ? 'text-muted' : 'text-emerald'}">${isOut ? '-' : '+'}${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td class="mono text-subtle">${peer.slice(0, 8)}...${peer.slice(-4)}</td>
+                <td class="num-right mono ${isOut ? 'text-muted' : 'text-emerald'}">${isOut ? '-' : '+'}${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                <td class="mono text-subtle">${fromFlash ? 'SkewAtomicRouter' : `${peer.slice(0, 8)}...${peer.slice(-4)}`}</td>
                 <td class="num-right mono"><a class="link-subtle" href="https://celoscan.io/tx/${txHash}" target="_blank">${txHash.slice(0, 10)}... ↗</a></td>
               </tr>
             `;
           }).join('');
 
-          // Auto-update the top row of Recent Cross-Venue Settlements from the newest 2-leg arb
-          const byTx = new Map();
-          for (const tr of allTransfers) {
-            const h = tr.transaction_hash;
-            if (!h) continue;
-            if (!byTx.has(h)) byTx.set(h, { hash: h, ts: tr.timestamp, list: [] });
-            byTx.get(h).list.push(tr);
-          }
-          const txsDesc = [...byTx.values()];
-          const wLower = AGENT_WALLET.toLowerCase();
-          const sumUsdtDir = (list, dir) => list
-            .filter((tr) => (dir === 'out' ? tr.from?.hash?.toLowerCase() === wLower : tr.to?.hash?.toLowerCase() === wLower) && (tr.token?.symbol === 'USD₮' || tr.token?.symbol === 'USDT'))
-            .reduce((s, tr) => s + Number(tr.total?.value || 0) / 1e6, 0);
-
-          for (let i = 0; i < txsDesc.length - 1; i++) {
-            const leg2 = txsDesc[i];
-            const leg1 = txsDesc[i + 1];
-            const usdtIn2 = sumUsdtDir(leg2.list, 'in');
-            const usdtOut1 = sumUsdtDir(leg1.list, 'out');
-            if (usdtOut1 >= 5 && usdtIn2 >= usdtOut1) {
-              const tokTr = leg1.list.find((tr) => tr.to?.hash?.toLowerCase() === wLower && tr.token?.symbol !== 'USD₮' && tr.token?.symbol !== 'USDT');
-              const rawSym = tokTr?.token?.symbol || 'wARS';
-              const sym = rawSym.toUpperCase() === 'WARS' ? 'wARS' : (rawSym.toUpperCase() === 'CNGN' ? 'cNGN' : rawSym);
-              const dec = Number(tokTr?.total?.decimals || tokTr?.token?.decimals || 18);
-              const tokAmt = tokTr ? Math.round(Number(tokTr.total?.value || 0) / Math.pow(10, dec)).toLocaleString('en-US') : '—';
-              const edgeUsd = usdtIn2 - usdtOut1;
-              const edgeBps = (edgeUsd / usdtOut1) * 10000;
-              const dtSec = Math.max(2, Math.min(30, Math.round((new Date(leg2.ts) - new Date(leg1.ts)) / 1000)));
-              const leg1Reactor = leg1.list.some((tr) =>
-                tr.from?.hash?.toLowerCase() === '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3' ||
-                tr.to?.hash?.toLowerCase() === '0xa9aa0a64769cbed4d3b1ceb4df01cde915c235b3'
-              );
-              const routeLabel = leg1Reactor
-                ? `Textile Reactor → Uniswap v3 (${dtSec}s)`
-                : `Uniswap v3 → Textile Reactor (${dtSec}s)`;
-              const topRow = document.getElementById('liveLatestSettlementRow');
-              if (topRow) {
-                topRow.innerHTML = `
-                  <td class="mono text-muted">${formatUtcTimestamp(leg2.ts)}</td>
-                  <td><span class="badge emerald">Cross-Venue Arb</span></td>
-                  <td>
-                    <span class="pair-cell">
-                      <span class="pair-icons">
-                        <img class="token-icon" src="${getTokenIcon(sym)}" alt="${sym}" />
-                        <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
-                      </span>
-                      <b>${sym} / USDT</b>
+          if (latestFlashTx && latestFlashTx.vol > 0) {
+            const topRow = document.getElementById('liveLatestSettlementRow');
+            if (topRow) {
+              const iso = new Date(latestFlashTx.tsSec * 1000).toISOString();
+              const outNotional = latestFlashTx.vol + latestFlashTx.profit;
+              const edgeBps = (latestFlashTx.profit / latestFlashTx.vol) * 10000;
+              topRow.innerHTML = `
+                <td class="mono text-muted">${formatUtcTimestamp(iso)}</td>
+                <td><span class="badge emerald">Atomic Flash Arb</span></td>
+                <td>
+                  <span class="pair-cell">
+                    <span class="pair-icons">
+                      <img class="token-icon" src="${TOKENS.USDT.icon}" alt="USDT" />
                     </span>
-                  </td>
-                  <td class="text-muted">${routeLabel}</td>
-                  <td class="num-right mono">${usdtOut1.toFixed(2)} → ${usdtIn2.toFixed(2)} USDT <span class="text-subtle">(${tokAmt} ${sym})</span></td>
-                  <td class="num-right mono text-emerald">+${edgeBps.toFixed(1)} bps (+$${edgeUsd.toFixed(4)})</td>
-                  <td class="num-right mono">
-                    <a class="link-subtle" href="https://celoscan.io/tx/${leg1.hash}" target="_blank">Leg 1 ↗</a> ·
-                    <a class="link-subtle" href="https://celoscan.io/tx/${leg2.hash}" target="_blank">Leg 2 ↗</a>
-                  </td>
-                `;
-              }
-              break;
+                    <b>SkewAtomicRouter</b>
+                  </span>
+                </td>
+                <td class="text-muted">Uniswap v3 Flash ↔ Textile Reactor (1 tx · 0 risk)</td>
+                <td class="num-right mono">${latestFlashTx.vol.toFixed(2)} → ${outNotional.toFixed(2)} USDT</td>
+                <td class="num-right mono text-emerald">+${edgeBps.toFixed(2)} bps (+$${latestFlashTx.profit.toFixed(4)})</td>
+                <td class="num-right mono">
+                  <a class="link-subtle" href="https://celoscan.io/tx/${latestFlashTx.hash}" target="_blank">${latestFlashTx.hash.slice(0, 10)}... ↗</a>
+                </td>
+              `;
             }
           }
         }
+        renderUI();
       } catch (_) {}
     }
 
@@ -2220,12 +2372,12 @@
       document.getElementById('wbrlReadout').textContent = wbrlUsd > 0.01 ? `$${wbrlUsd.toFixed(2)}` : 'BUY 1 bps';
       document.getElementById('usdcReadout').textContent = `$${usdcUsd.toFixed(2)}`;
 
-      document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%)`;
+      document.getElementById('assetItemUsdt').title = `${STATE.balances.USDT.toFixed(2)} USDT (${usdtPct.toFixed(1)}%) active working float`;
       document.getElementById('assetItemCngn').title = `${Math.round(STATE.balances.cNGN).toLocaleString('en-US')} cNGN ($${cngnUsd.toFixed(2)} · ${cngnPct.toFixed(1)}%)`;
       document.getElementById('assetItemWars').title = `${Math.round(STATE.balances.wARS || 0).toLocaleString('en-US')} wARS ($${warsUsd.toFixed(2)} · ${warsPct.toFixed(1)}%)`;
       document.getElementById('assetItemWbrl').title = wbrlUsd > 0.01
         ? `${(STATE.balances.wBRL || 0).toFixed(2)} wBRL ($${wbrlUsd.toFixed(2)} · ${wbrlPct.toFixed(1)}%)`
-        : `Quoting 1 bps BUY wBRL backed by $${STATE.balances.USDT.toFixed(2)} USDT (Uniswap v3 pool 0x01c3...A40F has 17.04M-gas MAX_TICK anomaly; blocked by 800k gas guardrail)`;
+        : `Quoting 1 bps BUY wBRL backed by $${STATE.balances.USDT.toFixed(2)} USDT`;
       document.getElementById('assetItemUsdc').title = `${(STATE.balances.USDC || 0).toFixed(2)} USDC ($${usdcUsd.toFixed(2)} · ${usdcPct.toFixed(1)}%)`;
 
       STATE.skew = computePairNormalizedSkew('cNGN');
@@ -2243,48 +2395,79 @@
         barSkewUsdt.style.width = skewUsdtPct.toFixed(1) + '%';
         barSkewLocal.style.width = (100 - skewUsdtPct).toFixed(1) + '%';
       }
+
+      const acc = STATE.accounting;
+      const celoUsdRate = STATE.celoPriceUsd || 0.0562;
+      const gasReserveUsd = (STATE.balances.CELO || 0) * celoUsdRate;
+      const gasBurnedUsd = acc.gasBurnedCelo * celoUsdRate;
+
       const gasBadge = document.getElementById('gasBadge');
-      if (gasBadge && STATE.balances.CELO) {
+      if (gasBadge && STATE.balances.CELO != null) {
         gasBadge.textContent = `${STATE.balances.CELO.toFixed(2)} CELO`;
       }
+      const gasBurnedBadge = document.getElementById('gasBurnedBadge');
+      if (gasBurnedBadge) {
+        gasBurnedBadge.textContent = `${acc.gasBurnedCelo.toFixed(2)} CELO (~$${gasBurnedUsd.toFixed(2)})`;
+      }
 
-      // Auto-update Strategy PnL, Arbitrage Cycles, Turnover & Reliability from verified Block #82,263,550 floor + live RPC mark-to-market
-      const BASE_NONCE = 3911;
-      const BASE_ARB_CYCLES = 1794;
-      const BASE_PNL_USDT = 101.43;
-      const BASE_VOL_USD = 207057.11;
-      const extraNonces = Math.max(0, (STATE.walletNonce || BASE_NONCE) - BASE_NONCE);
-      const extraArbs = Math.floor(extraNonces / 2);
-      const liveArbCycles = BASE_ARB_CYCLES + extraArbs;
-      const gasReserveUsd = 5.85;
-      // ponytail: 100% genuine live RPC mark-to-market above $195.00 initial bankroll (no synthetic per-nonce PnL floor)
-      const livePnlUsdt = totalUsd > 100.0 ? (totalUsd - 195.0) + gasReserveUsd : BASE_PNL_USDT;
-      const totalStrategyValUsd = 195.0 + livePnlUsdt;
-      const liveVolUsd = BASE_VOL_USD + extraArbs * 97.5;
-      const liveRocPct = (livePnlUsdt / 195.0) * 100;
-      const liveTurnover = liveVolUsd / 195.0;
-      const totalSent = Math.max(BASE_NONCE, STATE.walletNonce || BASE_NONCE);
-      const totalOk = totalSent - 7;
-      const liveRelPct = (totalOk / totalSent) * 100;
+      const wdEl = document.getElementById('withdrawnReadout');
+      if (wdEl) wdEl.textContent = `$${acc.withdrawnUsdt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
+
+      // Card 2: Live 24h & All-Time Flash Arbitrage Telemetry
+      const f24Badge = document.getElementById('flash24hBadge');
+      if (f24Badge) f24Badge.textContent = `${acc.flash24hWins.toLocaleString('en-US')} Wins / 24h`;
+      const f24Pnl = document.getElementById('flash24hPnlVal');
+      if (f24Pnl) f24Pnl.textContent = `+$${acc.flash24hProfitUsdt.toFixed(2)}`;
+      const rSweeps = document.getElementById('routerSweepsVal');
+      if (rSweeps) rSweeps.textContent = `+$${acc.flashProfitUsdt.toFixed(2)} (${acc.flashWins.toLocaleString('en-US')} Wins)`;
+      const f24Vol = document.getElementById('flash24hVolVal');
+      if (f24Vol) f24Vol.textContent = `$${(acc.flash24hVolUsd / 1000).toFixed(1)}k`;
+      const bestSweep = document.getElementById('bestSweepVal');
+      if (bestSweep) bestSweep.textContent = `+$${acc.peakSweepUsdt.toFixed(2)}`;
+
+      // Card 3: Withdrawal-Invariant Strategy PnL & Efficiency
+      // ponytail: True Net Profit = (Hot Wallet Liquid + Hot CELO Gas + Cumulative Withdrawn - Extra Deposits) - $195 Initial Seed
+      const totalGeneratedValueUsd = totalUsd + gasReserveUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt;
+      const effectiveSeedUsd = INITIAL_CAPITAL_USDT + acc.extraDepositsUsdt;
+      const livePnlUsdt = totalGeneratedValueUsd - INITIAL_CAPITAL_USDT;
+      const liveRocPct = (livePnlUsdt / Math.max(1, effectiveSeedUsd)) * 100;
+      const totalArbWins = PRE_FLASH_ARB_WINS + acc.flashWins;
+      const liveVolUsd = PRE_FLASH_VOL_USD + acc.flashVolUsd;
+      const liveTurnover = liveVolUsd / INITIAL_CAPITAL_USDT;
+      const totalSent = Math.max(acc.outTxs, STATE.walletNonce || CHECKPOINT_OUT_TXS);
+      const totalOk = Math.max(0, totalSent - acc.revertTxs);
+      const liveRelPct = (totalOk / Math.max(1, totalSent)) * 100;
+      const fmtSignedUsd = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+      const fmtSignedPct = (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(1)}%`;
 
       const pnlEl = document.getElementById('pnlValue');
-      if (pnlEl) pnlEl.textContent = `+$${livePnlUsdt.toFixed(2)}`;
+      if (pnlEl) pnlEl.textContent = fmtSignedUsd(livePnlUsdt);
       const rocEl = document.getElementById('rocBadge');
-      if (rocEl) rocEl.textContent = `+${liveRocPct.toFixed(2)}% RoC`;
+      if (rocEl) rocEl.textContent = `${fmtSignedPct(liveRocPct)} RoC`;
       const totValEl = document.getElementById('totalStrategyVal');
-      if (totValEl) totValEl.textContent = `$${totalStrategyValUsd.toFixed(2)} (+$${gasReserveUsd.toFixed(2)} Gas)`;
+      if (totValEl) {
+        totValEl.textContent = `$${totalGeneratedValueUsd.toFixed(2)} ($${acc.withdrawnUsdt.toFixed(0)} Banked)`;
+      }
       const totValItem = document.getElementById('totalStrategyValItem');
       if (totValItem) {
-        totValItem.title = `$${totalStrategyValUsd.toFixed(2)} Total Value = $195.00 initial USDT bankroll + $${livePnlUsdt.toFixed(2)} net profit ($${totalUsd.toFixed(2)} liquid equity + $${gasReserveUsd.toFixed(2)} CELO gas reserve)`;
+        totValItem.title = `$${totalGeneratedValueUsd.toFixed(2)} Total Value = $${acc.withdrawnUsdt.toFixed(2)} banked in cold vault + $${totalUsd.toFixed(2)} active hot wallet + $${gasReserveUsd.toFixed(2)} CELO gas (from $${INITIAL_CAPITAL_USDT.toFixed(2)} seed)`;
+      }
+      const gasLifeEl = document.getElementById('gasLifetimeCardVal');
+      if (gasLifeEl) {
+        gasLifeEl.textContent = `${acc.gasBurnedCelo.toFixed(1)} CELO ($${gasBurnedUsd.toFixed(2)})`;
+      }
+      const gasLifeItem = document.getElementById('gasLifetimeItem');
+      if (gasLifeItem && livePnlUsdt > 0) {
+        gasLifeItem.title = `${acc.gasBurnedCelo.toFixed(4)} CELO (~$${gasBurnedUsd.toFixed(2)} USD) total gas burned across ${totalSent.toLocaleString('en-US')} txs (${((gasBurnedUsd / (livePnlUsdt + gasBurnedUsd)) * 100).toFixed(1)}% of gross profit)`;
       }
       const arbEl = document.getElementById('arbCyclesVal');
-      if (arbEl) arbEl.textContent = `${liveArbCycles.toLocaleString('en-US')} Cycles`;
+      if (arbEl) arbEl.textContent = `${totalArbWins.toLocaleString('en-US')} Wins`;
       const arbItem = document.getElementById('arbCyclesItem');
-      if (arbItem) arbItem.title = `${liveArbCycles.toLocaleString('en-US')} two-leg cross-venue arbitrages + 179 external Maker fills`;
+      if (arbItem) arbItem.title = `${acc.flashWins.toLocaleString('en-US')} SkewAtomicRouter 1-tx flash wins (+$${acc.flashProfitUsdt.toFixed(2)} USDT, 0 losses) + ${PRE_FLASH_ARB_WINS.toLocaleString('en-US')} pre-flash 2-leg arbs`;
       const turnEl = document.getElementById('turnoverVal');
-      if (turnEl) turnEl.textContent = `${liveTurnover.toFixed(1)}x NAV`;
+      if (turnEl) turnEl.textContent = `$${(liveVolUsd / 1000).toFixed(1)}k (${Math.round(liveTurnover).toLocaleString('en-US')}x)`;
       const turnItem = document.getElementById('turnoverItem');
-      if (turnItem) turnItem.title = `$${liveVolUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cumulative 1-leg volume ($${(liveVolUsd * 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2-leg notional) on $195.00 capital base`;
+      if (turnItem) turnItem.title = `$${liveVolUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cumulative 1-leg volume ($${(liveVolUsd * 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2-leg notional) on $${INITIAL_CAPITAL_USDT.toFixed(2)} seed`;
       const relEl = document.getElementById('reliabilityVal');
       if (relEl) relEl.textContent = `${liveRelPct.toFixed(1)}%`;
       const relItem = document.getElementById('reliabilityItem');

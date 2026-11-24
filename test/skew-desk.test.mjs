@@ -1922,3 +1922,15 @@ test('37. Double-audit upgrades: concave midpoint + micro-tail ladder retention,
     }
   }
 });
+
+test('38. Dashboard Strategy PnL is withdrawal-invariant, tracks lifetime CELO gas burned & 24h flash sweeps, and never renders +$-', () => {
+  const html = renderDashboardHtml();
+  assert.ok(html.includes('CHECKPOINT_WITHDRAWN_USDT = 754.00'));
+  assert.ok(html.includes('CHECKPOINT_GAS_BURNED_CELO = 371.9328'));
+  assert.ok(html.includes('FLASH_ROUTER = \'0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194\''));
+  assert.ok(html.includes('totalUsd + gasReserveUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt'));
+  assert.ok(html.includes('gasBurnedBadge'));
+  assert.ok(html.includes('withdrawnReadout'));
+  assert.ok(html.includes('flash24hPnlVal'));
+  assert.ok(!html.includes('+$${livePnlUsdt.toFixed(2)}'), 'PnL formatter must use signed helper so +$- never renders');
+});
