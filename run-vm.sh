@@ -3,12 +3,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Ensure cron / non-interactive restarts always find node/npm (nvm, fnm, /usr/local/bin)
+for NVM_BIN in "$HOME"/.nvm/versions/node/*/bin "$HOME/.local/share/fnm/aliases/default/bin" "$HOME/.local/bin" "/usr/local/bin"; do
+  if [ -d "$NVM_BIN" ]; then
+    PATH="$NVM_BIN:$PATH"
+  fi
+done
+export PATH
+
 echo "========================================================"
 echo "  SKEW v2 // 24/7 Production Launcher (Celo 42220)      "
 echo "========================================================"
 
-# 1. Load environment configuration from .env or textile-stitch/stitch.env if present & lock secret file permissions
-for ENV_FILE in ".env" "textile-stitch/stitch.env"; do
+# 1. Load environment configuration from .env, .env.runtime, or textile-stitch/stitch.env & lock secret file permissions
+for ENV_FILE in ".env.runtime" ".env" "textile-stitch/stitch.env"; do
   if [ -f "$ENV_FILE" ]; then
     chmod 600 "$ENV_FILE" 2>/dev/null || true
     set -a
@@ -24,6 +32,17 @@ if [ -z "${STITCH_PRIVATE_KEY:-}" ]; then
   echo "    For live Celo Mainnet execution, export STITCH_PRIVATE_KEY or configure .env"
   exit 1
 fi
+
+# Persist runtime credentials to gitignored chmod-600 .env.runtime so 2-minute cron watchdog restarts inherit shell/.bashrc exports
+(
+  umask 077
+  {
+    printf 'STITCH_PRIVATE_KEY=%q\n' "$STITCH_PRIVATE_KEY"
+    [ -n "${TEXTILE_API_KEY:-}" ] && printf 'TEXTILE_API_KEY=%q\n' "$TEXTILE_API_KEY"
+    [ -n "${FLASH_ROUTER_ADDRESS:-}" ] && printf 'FLASH_ROUTER_ADDRESS=%q\n' "$FLASH_ROUTER_ADDRESS"
+    [ -n "${GEMINI_API_KEY:-}" ] && printf 'GEMINI_API_KEY=%q\n' "$GEMINI_API_KEY"
+  } > .env.runtime.tmp && mv -f .env.runtime.tmp .env.runtime && chmod 600 .env.runtime
+) 2>/dev/null || true
 
 # 2. Ensure Node.js >= 20 and dependencies are installed
 if [ ! -d "node_modules/ethers" ]; then
@@ -45,9 +64,10 @@ done
 pkill -f "[s]kew-stitch" 2>/dev/null || true
 sleep 1
 
-# 4. Run self-check against Celo Mainnet & Textile RFQ
+# 4. Run self-check against Celo Mainnet & Textile RFQ (syntax check strict; live RPC check non-blocking so 2AM RPC hiccups never abort cron recovery)
 echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."
-SKEW_POLICY_FILE="$(pwd)/skew-policy.json" node skew-desk.mjs --check
+node --check skew-desk.mjs
+SKEW_POLICY_FILE="$(pwd)/skew-policy.json" node skew-desk.mjs --check || echo "[!] Warning: live RPC self-check timed out; proceeding with daemon startup..."
 
 # 5. Fetch & cryptographically verify SHA-256 of Engine 1 (./skew-stitch) if on Linux x86_64
 EXPECTED_STITCH_SHA256="caa5f515672f0b06b48a584cb857862dbf3138e143757675fc097f81f486338d"
@@ -99,7 +119,7 @@ fi
 # 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
 : > skew-desk.log
-NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=192}" \
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}" \
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \
 TEXTILE_API_KEY="${TEXTILE_API_KEY:-}" \
 FLASH_ROUTER_ADDRESS="${FLASH_ROUTER_ADDRESS:-}" \
@@ -132,7 +152,8 @@ echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI (loopback): ht
 # 7. Install idempotent 2-minute reboot, OOM/crash, & 50MB log-trim watchdog in user crontab (Linux VM, zero sudo required)
 if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
   REPO_DIR="$(pwd)"
-  WATCHDOG_LINE="*/2 * * * * find \"$REPO_DIR\" -maxdepth 1 -name '*.log' -size +50M -exec truncate -s 0 {} + 2>/dev/null; [ -z \"\$(find \"$LOCK_FILE\" -mmin -2 2>/dev/null)\" ] && ( ! pgrep -f \"[n]ode skew-desk.mjs\" >/dev/null 2>&1 || [ -z \"\$(find \"$REPO_DIR/skew-desk.log\" -mmin -4 2>/dev/null)\" ] || ( [ -x \"$REPO_DIR/skew-stitch\" ] && ! pgrep -f \"[s]kew-stitch\" >/dev/null 2>&1 ) ) && cd \"$REPO_DIR\" && ./run-vm.sh >> \"$REPO_DIR/watchdog.log\" 2>&1 # skew-auto-watchdog"
+  NODE_BIN_DIR="$(dirname "$(command -v node)")"
+  WATCHDOG_LINE="*/2 * * * * export PATH=\"$NODE_BIN_DIR:/usr/local/bin:/usr/bin:/bin\"; find \"$REPO_DIR\" -maxdepth 1 -name '*.log' -size +50M -exec truncate -s 0 {} + 2>/dev/null; [ -z \"\$(find \"$LOCK_FILE\" -mmin -2 2>/dev/null)\" ] && ( ! pgrep -f \"[n]ode skew-desk.mjs\" >/dev/null 2>&1 || [ -z \"\$(find \"$REPO_DIR/skew-desk.log\" -mmin -4 2>/dev/null)\" ] || ( [ -x \"$REPO_DIR/skew-stitch\" ] && ! pgrep -f \"[s]kew-stitch\" >/dev/null 2>&1 ) ) && cd \"$REPO_DIR\" && ./run-vm.sh >> \"$REPO_DIR/watchdog.log\" 2>&1 # skew-auto-watchdog"
   ( crontab -l 2>/dev/null | grep -v "# skew-auto-watchdog" || true; echo "$WATCHDOG_LINE" ) | crontab - 2>/dev/null && \
     echo "[+] Installed 2-minute reboot, log-trim & process watchdog (# skew-auto-watchdog)." || true
 fi

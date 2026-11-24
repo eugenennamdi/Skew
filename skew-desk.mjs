@@ -838,6 +838,7 @@ async function textileSubmitTx(rfqId, claimToken, txHash) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-rfq-claim': claimToken },
     body: JSON.stringify({ txHash }),
+    signal: AbortSignal.timeout(5000),
   }).catch(() => {});
 }
 
@@ -1635,6 +1636,10 @@ const {
 } = executionManager;
 
 let isBusy = false;
+function pushArbExecutionBounded(rec) {
+  STATE.arbExecutions.unshift(rec);
+  if (STATE.arbExecutions.length > 300) STATE.arbExecutions.length = 300;
+}
 let isShuttingDown = false;
 let lastScanDoneMs = Date.now();
 let cachedRpcBalances = { data: null, ts: 0 };
@@ -2072,7 +2077,7 @@ export async function runSingleScan() {
             arbExecutedThisTick = true;
             cachedRpcBalances = { data: null, ts: 0 };
             STATE.lastLadderAsOf = '';
-            STATE.arbExecutions.unshift(execRec);
+            pushArbExecutionBounded(execRec);
             STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
             // ponytail: bidirectional 0.65s hot-corridor chase catches both Maker reloads and reverse pool whip-saws
             const corridorTok = fullScanUniverse.find((t) => t.symbol === candidate.symbol);
@@ -2119,7 +2124,7 @@ export async function runSingleScan() {
                 );
                 const chaseExec = await executeOpportunity(chaseOpp);
                 if (!chaseExec) break;
-                STATE.arbExecutions.unshift(chaseExec);
+                pushArbExecutionBounded(chaseExec);
                 STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
                 if (chaseExec.edgeUsd <= 0 || STATE.circuitBreaker.tripped) break;
               }
@@ -2137,7 +2142,7 @@ export async function runSingleScan() {
         const treasuryRec = await autoManageTreasuryInventory({ usdt, cngn, wars, wbrl, usdc, celo, uniCngnMid, uniWarsMid });
         if (treasuryRec) {
           cachedRpcBalances = { data: null, ts: 0 };
-          STATE.arbExecutions.unshift(treasuryRec);
+          pushArbExecutionBounded(treasuryRec);
         }
       } catch (err) {
         console.error(`[TREASURY-ERR] ${err.message}`);
@@ -2210,6 +2215,7 @@ function startCeloSwapStream() {
   const connect = () => {
     if (isShuttingDown) return;
     let ws;
+    let lastWsMsgMs = Date.now();
     try {
       ws = new WebSocket(CONFIG.wsRpcUrl);
       activeSwapWs = ws;
@@ -2217,7 +2223,14 @@ function startCeloSwapStream() {
       setTimeout(connect, 5_000).unref?.();
       return;
     }
+    const wsWatch = setInterval(() => {
+      if (Date.now() - lastWsMsgMs > 600_000) {
+        try { ws.close(); } catch {}
+      }
+    }, 60_000);
+    wsWatch.unref?.();
     ws.addEventListener('open', () => {
+      lastWsMsgMs = Date.now();
       try {
         ws.send(
           JSON.stringify({
@@ -2230,6 +2243,7 @@ function startCeloSwapStream() {
       } catch {}
     });
     ws.addEventListener('message', async (ev) => {
+      lastWsMsgMs = Date.now();
       if (isShuttingDown) return;
       let msg;
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
@@ -2275,7 +2289,7 @@ function startCeloSwapStream() {
             if (execRec) {
               cachedRpcBalances = { data: null, ts: 0 };
               STATE.lastLadderAsOf = '';
-              STATE.arbExecutions.unshift(execRec);
+              pushArbExecutionBounded(execRec);
               const sessionStartMs = Date.parse(STATE.startedAt) || 0;
               STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
             }
@@ -2283,7 +2297,6 @@ function startCeloSwapStream() {
         } catch (err) {
           console.error(`[WS-STRIKE-ERR] ${err.message}`);
         } finally {
-          lastScanDoneMs = Date.now();
           isBusy = false;
         }
       } else {
@@ -2291,6 +2304,7 @@ function startCeloSwapStream() {
       }
     });
     ws.addEventListener('close', () => {
+      clearInterval(wsWatch);
       if (activeSwapWs === ws) activeSwapWs = null;
       if (!isShuttingDown) setTimeout(connect, 3_000).unref?.();
     });
