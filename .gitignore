@@ -24,6 +24,9 @@ target/
 **/target/
 skew-stitch
 *.log
+*.log.prev
+*.pid
+.skew-stop
 trades.jsonl
 
 # OS / Editor files

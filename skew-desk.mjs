@@ -568,6 +568,7 @@ export async function sendTagged(txReq, opts = {}) {
   if (!tagged.gasLimit) tagged.gasLimit = (est * 125n) / 100n;
   if (tagged.nonce == null) tagged.nonce = pendingNonce;
   const resp = await wallet.sendTransaction(tagged);
+  lastScanDoneMs = Date.now();
   // ponytail: bound receipt polling to 25s on 1s-block Celo so a dropped Forno socket after broadcast never hangs runSingleScan forever
   const receipt = await resp.wait(1, 25_000).catch(async (waitErr) => {
     const fallbackRec = await provider.getTransactionReceipt(resp.hash).catch(() => null);
@@ -581,6 +582,7 @@ export async function sendTagged(txReq, opts = {}) {
     }
     throw waitErr;
   });
+  lastScanDoneMs = Date.now();
   return receipt;
 }
 
@@ -2119,6 +2121,7 @@ export async function runSingleScan() {
       for (const candidate of actionableRows) {
         try {
           const execRec = await executeOpportunity(candidate);
+          lastScanDoneMs = Date.now();
           if (execRec) {
             arbExecutedThisTick = true;
             cachedRpcBalances = { data: null, ts: 0 };
@@ -2129,6 +2132,7 @@ export async function runSingleScan() {
             const corridorTok = fullScanUniverse.find((t) => t.symbol === candidate.symbol);
             if (corridorTok && execRec.edgeUsd > 0 && !STATE.circuitBreaker.tripped && CONFIG.chaseIntervalMs > 0) {
               for (let chaseIdx = 1; chaseIdx <= CONFIG.maxChaseIterations; chaseIdx++) {
+                lastScanDoneMs = Date.now();
                 await new Promise((res) => setTimeout(res, CONFIG.chaseIntervalMs));
                 const isFlashChase = Boolean(
                   CONFIG.textileApiKey && CONFIG.flashRouterAddress && CONFIG.contracts.flashPools?.[corridorTok.symbol]
@@ -2172,6 +2176,7 @@ export async function runSingleScan() {
                   if (chaseExec) break;
                 }
                 if (!chaseExec) break;
+                lastScanDoneMs = Date.now();
                 STATE.lastLadderAsOf = '';
                 pushArbExecutionBounded(chaseExec);
                 STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);

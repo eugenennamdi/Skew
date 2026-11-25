@@ -2066,6 +2066,13 @@ test('40. Cron watchdog hardening: run-vm.sh persists .env.runtime when GEMINI_A
   try {
     // Extract lines 18-62 of run-vm.sh (env load + .env.runtime persistence) and run in bare env without GEMINI_API_KEY
     const vmScript = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
+    assert.ok(vmScript.includes('skew-desk-supervisor'), 'run-vm.sh must wrap skew-desk in 2s auto-respawn supervisor loop');
+    assert.ok(vmScript.includes('skew-stitch-supervisor'), 'run-vm.sh must wrap skew-stitch in 2s auto-respawn supervisor loop');
+    const deskSrc = fs.readFileSync(path.join(repoRoot, 'skew-desk.mjs'), 'utf8');
+    assert.ok(
+      deskSrc.includes('for (let chaseIdx = 1; chaseIdx <= CONFIG.maxChaseIterations; chaseIdx++) {\n                lastScanDoneMs = Date.now();'),
+      'CHASE loop must refresh lastScanDoneMs heartbeat on every iteration so 8-win streaks never trigger 90s watchdog'
+    );
     const envBlock = vmScript.split('# 2. Ensure Node.js')[0];
     fs.writeFileSync(path.join(tmpDir, '.env'), 'STITCH_PRIVATE_KEY=""\nTEXTILE_API_KEY=""\n', 'utf8');
     execFileSync('bash', ['-c', envBlock], {

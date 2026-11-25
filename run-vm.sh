@@ -68,12 +68,20 @@ if [ ! -d "node_modules/ethers" ]; then
   npm ci --no-audit --no-fund
 fi
 
-# 3. Stop any previous skew-desk or skew-stitch processes gracefully (waits up to 12s for any in-flight Leg-2 arb to settle)
+# 3. Stop any previous skew-desk or skew-stitch supervisors & processes gracefully (waits up to 12s for any in-flight trade to settle)
 LOCK_FILE="/tmp/skew-starting-$(id -u).lock"
-touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
+touch "$LOCK_FILE" .skew-stop
+trap 'rm -f "$LOCK_FILE" .skew-stop' EXIT
 
 echo "[+] Stopping any previous instances..."
+for SUP_PID_FILE in .skew-desk-sup.pid .skew-stitch-sup.pid; do
+  if [ -f "$SUP_PID_FILE" ]; then
+    kill "$(cat "$SUP_PID_FILE" 2>/dev/null)" 2>/dev/null || true
+    rm -f "$SUP_PID_FILE"
+  fi
+done
+pkill -f "skew-desk-supervisor" 2>/dev/null || true
+pkill -f "skew-stitch-supervisor" 2>/dev/null || true
 pkill -f "[n]ode skew-desk.mjs" 2>/dev/null || true
 for _ in $(seq 1 24); do
   pgrep -f "[n]ode skew-desk.mjs" >/dev/null 2>&1 || break
@@ -118,8 +126,10 @@ if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ]; then
   fi
 fi
 
+rm -f .skew-stop
+
 if [ -x "./skew-stitch" ]; then
-  echo "[+] Starting Engine 1 (./skew-stitch) in background..."
+  echo "[+] Starting Engine 1 (./skew-stitch) with 2s auto-respawn supervisor..."
   cp stitch.toml stitch.runtime.toml
   chmod 600 "$(pwd)/rfq-api.key" "$(pwd)/textile-stitch/rfq-api.key" 2>/dev/null || true
   # ponytail: keep repo-root ./rfq-api.key authoritative so fresh `skew-stitch connect` keys are never overwritten by stale sub-dir keys
@@ -137,12 +147,13 @@ if [ -x "./skew-stitch" ]; then
   SKEW_POLICY_FILE="$(pwd)/skew-policy.json" \
   SKEW_GAMMA_BPS="${SKEW_GAMMA_BPS:-6}" \
   RUST_LOG=info \
-    setsid nohup ./skew-stitch --config ./stitch.runtime.toml </dev/null >> skew-stitch.log 2>&1 &
-  echo "    -> PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
+    setsid nohup bash -c 'while [ ! -f .skew-stop ]; do ./skew-stitch --config ./stitch.runtime.toml; rc=$?; [ -f .skew-stop ] && break; echo "[SUPERVISOR] skew-stitch exited (code=$rc); respawning in 2s..."; sleep 2; done # skew-stitch-supervisor' </dev/null >> skew-stitch.log 2>&1 &
+  echo "$!" > .skew-stitch-sup.pid
+  echo "    -> Supervisor PID $! | Logs: tail -f $(pwd)/skew-stitch.log"
 fi
 
 # 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
-echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
+echo "[+] Starting Engine 2 (skew-desk.mjs) with 2s auto-respawn supervisor..."
 [ -s skew-desk.log ] && tail -n 200 skew-desk.log > skew-desk.log.prev 2>/dev/null || true
 : > skew-desk.log
 NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}" \
@@ -172,8 +183,9 @@ CHASE_INTERVAL_MS="${CHASE_INTERVAL_MS:-650}" \
 SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-1050}" \
 BIND_HOST="${BIND_HOST:-127.0.0.1}" \
 PORT="${PORT:-8080}" \
-  setsid nohup node skew-desk.mjs </dev/null >> skew-desk.log 2>&1 &
-echo "    -> PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI (loopback): http://${BIND_HOST:-127.0.0.1}:${PORT:-8080}"
+  setsid nohup bash -c 'while [ ! -f .skew-stop ]; do node skew-desk.mjs; rc=$?; [ -f .skew-stop ] && break; echo "[SUPERVISOR] skew-desk exited (code=$rc); respawning in 2s..."; sleep 2; done # skew-desk-supervisor' </dev/null >> skew-desk.log 2>&1 &
+echo "$!" > .skew-desk-sup.pid
+echo "    -> Supervisor PID $! | Logs: tail -f $(pwd)/skew-desk.log | Web UI (loopback): http://${BIND_HOST:-127.0.0.1}:${PORT:-8080}"
 
 # 7. Install idempotent 2-minute reboot, OOM/crash, & 50MB log-trim watchdog in user crontab (Linux VM, zero sudo required)
 if [ "$(uname -s)" = "Linux" ] && command -v crontab >/dev/null 2>&1; then
