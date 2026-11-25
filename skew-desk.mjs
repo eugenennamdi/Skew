@@ -2470,9 +2470,13 @@ if (isMain) {
     res.end(renderDashboardHtml());
   });
 
+  server.on('error', (err) => {
+    console.error(`[HTTP-ERR] ${err.code || 'ERR'}: ${err.message}`);
+    if (err.code === 'EADDRINUSE') process.exit(1);
+  });
   server.listen(CONFIG.port, CONFIG.bindHost, () => {
     console.log(`[SKEW-DESK] Agent #${CONFIG.agentId} (${CONFIG.attributionTag}) listening on http://${CONFIG.bindHost}:${CONFIG.port}`);
-    console.log(`[SKEW-DESK] Mode: ${CONFIG.liveTrading ? 'LIVE ON-CHAIN EXECUTION' : 'TELEMETRY + WATCH (set LIVE=1 to execute)'}`);
+    console.log(`[SKEW-DESK] Mode: ${CONFIG.liveTrading ? 'LIVE ON-CHAIN EXECUTION' : 'TELEMETRY + WATCH (set LIVE=1 to execute)'} | Flash=${Boolean(CONFIG.textileApiKey && CONFIG.flashRouterAddress)}`);
   });
 
   const gracefulExit = (sig) => {

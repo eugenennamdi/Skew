@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Ensure cron / non-interactive restarts always find node/npm (nvm, fnm, /usr/local/bin)
-for NVM_BIN in "$HOME"/.nvm/versions/node/*/bin "$HOME/.local/share/fnm/aliases/default/bin" "$HOME/.local/bin" "/usr/local/bin"; do
+HOME_DIR="${HOME:-/root}"
+for NVM_BIN in "$HOME_DIR"/.nvm/versions/node/*/bin "$HOME_DIR/.local/share/fnm/aliases/default/bin" "$HOME_DIR/.local/bin" "/usr/local/bin"; do
   if [ -d "$NVM_BIN" ]; then
     PATH="$NVM_BIN:$PATH"
   fi
@@ -15,8 +16,13 @@ echo "========================================================"
 echo "  SKEW v2 // 24/7 Production Launcher (Celo 42220)      "
 echo "========================================================"
 
-# 1. Load environment configuration from .env, .env.runtime, or textile-stitch/stitch.env & lock secret file permissions
-for ENV_FILE in ".env.runtime" ".env" "textile-stitch/stitch.env"; do
+# 1. Load environment configuration (base files first, persisted .env.runtime last so empty .env placeholders never clobber live keys, and explicit caller env wins)
+CALLER_STITCH_KEY="${STITCH_PRIVATE_KEY:-}"
+CALLER_TEXTILE_KEY="${TEXTILE_API_KEY:-}"
+CALLER_FLASH_ROUTER="${FLASH_ROUTER_ADDRESS:-}"
+CALLER_GEMINI_KEY="${GEMINI_API_KEY:-}"
+
+for ENV_FILE in "textile-stitch/stitch.env" ".env" ".env.runtime"; do
   if [ -f "$ENV_FILE" ]; then
     chmod 600 "$ENV_FILE" 2>/dev/null || true
     set -a
@@ -25,6 +31,12 @@ for ENV_FILE in ".env.runtime" ".env" "textile-stitch/stitch.env"; do
     set +a
   fi
 done
+
+if [ -n "$CALLER_STITCH_KEY" ]; then STITCH_PRIVATE_KEY="$CALLER_STITCH_KEY"; fi
+if [ -n "$CALLER_TEXTILE_KEY" ]; then TEXTILE_API_KEY="$CALLER_TEXTILE_KEY"; fi
+if [ -n "$CALLER_FLASH_ROUTER" ]; then FLASH_ROUTER_ADDRESS="$CALLER_FLASH_ROUTER"; fi
+if [ -n "$CALLER_GEMINI_KEY" ]; then GEMINI_API_KEY="$CALLER_GEMINI_KEY"; fi
+export STITCH_PRIVATE_KEY TEXTILE_API_KEY FLASH_ROUTER_ADDRESS GEMINI_API_KEY
 
 if [ -z "${STITCH_PRIVATE_KEY:-}" ]; then
   echo "[!] STITCH_PRIVATE_KEY is not set."
@@ -38,11 +50,17 @@ fi
   umask 077
   {
     printf 'STITCH_PRIVATE_KEY=%q\n' "$STITCH_PRIVATE_KEY"
-    [ -n "${TEXTILE_API_KEY:-}" ] && printf 'TEXTILE_API_KEY=%q\n' "$TEXTILE_API_KEY"
-    [ -n "${FLASH_ROUTER_ADDRESS:-}" ] && printf 'FLASH_ROUTER_ADDRESS=%q\n' "$FLASH_ROUTER_ADDRESS"
-    [ -n "${GEMINI_API_KEY:-}" ] && printf 'GEMINI_API_KEY=%q\n' "$GEMINI_API_KEY"
-  } > .env.runtime.tmp && mv -f .env.runtime.tmp .env.runtime && chmod 600 .env.runtime
-) 2>/dev/null || true
+    if [ -n "${TEXTILE_API_KEY:-}" ]; then printf 'TEXTILE_API_KEY=%q\n' "$TEXTILE_API_KEY"; fi
+    if [ -n "${FLASH_ROUTER_ADDRESS:-}" ]; then printf 'FLASH_ROUTER_ADDRESS=%q\n' "$FLASH_ROUTER_ADDRESS"; fi
+    if [ -n "${GEMINI_API_KEY:-}" ]; then printf 'GEMINI_API_KEY=%q\n' "$GEMINI_API_KEY"; fi
+    true
+  } > .env.runtime.tmp
+  mv -f .env.runtime.tmp .env.runtime
+  chmod 600 .env.runtime
+) || echo "[!] Warning: failed to persist .env.runtime"
+if [ -s .env.runtime ]; then
+  echo "[+] Persisted runtime credentials to .env.runtime (FlashKey=$([ -n "${TEXTILE_API_KEY:-}" ] && echo yes || echo no))."
+fi
 
 # 2. Ensure Node.js >= 20 and dependencies are installed
 if [ ! -d "node_modules/ethers" ]; then
@@ -61,8 +79,15 @@ for _ in $(seq 1 24); do
   pgrep -f "[n]ode skew-desk.mjs" >/dev/null 2>&1 || break
   sleep 0.5
 done
+if pgrep -f "[n]ode skew-desk.mjs" >/dev/null 2>&1; then
+  echo "[!] Force-killing wedged skew-desk.mjs instance..."
+  pkill -9 -f "[n]ode skew-desk.mjs" 2>/dev/null || true
+  sleep 0.5
+fi
+fuser -k "${PORT:-8080}/tcp" 2>/dev/null || true
 pkill -f "[s]kew-stitch" 2>/dev/null || true
 sleep 1
+pkill -9 -f "[s]kew-stitch" 2>/dev/null || true
 
 # 4. Run self-check against Celo Mainnet & Textile RFQ (syntax check strict; live RPC check non-blocking so 2AM RPC hiccups never abort cron recovery)
 echo "[+] Running Skew Desk self-check against Celo Mainnet (Chain ID 42220)..."
@@ -118,6 +143,7 @@ fi
 
 # 6. Start Engine 2 (Autonomous Cross-Venue Arbitrage, Multi-Currency Treasury, Bounded Gemini LLM & Dashboard)
 echo "[+] Starting Engine 2 (skew-desk.mjs) in background..."
+[ -s skew-desk.log ] && tail -n 200 skew-desk.log > skew-desk.log.prev 2>/dev/null || true
 : > skew-desk.log
 NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}" \
 STITCH_PRIVATE_KEY="$STITCH_PRIVATE_KEY" \

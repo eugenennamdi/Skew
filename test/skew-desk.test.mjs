@@ -2054,3 +2054,65 @@ test('39. Full-universe CHASE preempts $0.28 CELO crumb with +$14.36 wARS whale 
     Object.assign(PREVIEW_BUDGET, savedPrev);
   }
 });
+
+test('40. Cron watchdog hardening: run-vm.sh persists .env.runtime when GEMINI_API_KEY is empty & loadOnChainHistory bounds trades.jsonl to <=300', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const os = await import('node:os');
+
+  // 1. Validate run-vm.sh bash syntax & verify .env.runtime creation when GEMINI_API_KEY="" under set -euo pipefail
+  execFileSync('bash', ['-n', path.join(repoRoot, 'run-vm.sh')]);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skew-vm-test-'));
+  const bigTradesPath = path.join(tmpDir, 'trades.jsonl');
+  try {
+    // Extract lines 18-62 of run-vm.sh (env load + .env.runtime persistence) and run in bare env without GEMINI_API_KEY
+    const vmScript = fs.readFileSync(path.join(repoRoot, 'run-vm.sh'), 'utf8');
+    const envBlock = vmScript.split('# 2. Ensure Node.js')[0];
+    fs.writeFileSync(path.join(tmpDir, '.env'), 'STITCH_PRIVATE_KEY=""\nTEXTILE_API_KEY=""\n', 'utf8');
+    execFileSync('bash', ['-c', envBlock], {
+      cwd: tmpDir,
+      env: {
+        PATH: process.env.PATH,
+        STITCH_PRIVATE_KEY: '0x' + '11'.repeat(32),
+        TEXTILE_API_KEY: 'tx_live_cron_persist_test',
+      },
+    });
+    assert.ok(fs.existsSync(path.join(tmpDir, '.env.runtime')), '.env.runtime must be written even when GEMINI_API_KEY is empty');
+    // Second run simulating bare cron (zero caller env vars, empty .env present): .env.runtime must win!
+    const cronOut = execFileSync('bash', ['-c', envBlock + '\nprintf "%s|%s" "$STITCH_PRIVATE_KEY" "$TEXTILE_API_KEY"'], {
+      cwd: tmpDir,
+      env: { PATH: process.env.PATH },
+    }).toString();
+    assert.ok(cronOut.endsWith(`${'0x' + '11'.repeat(32)}|tx_live_cron_persist_test`), `bare cron must recover keys from .env.runtime, got: ${cronOut}`);
+
+    // 2. Verify loadOnChainHistory tails 1,200-line trades.jsonl cleanly and bounds STATE.arbExecutions to <=300
+    const lines = [];
+    for (let i = 1; i <= 1200; i++) {
+      lines.push(JSON.stringify({ timestamp: new Date().toISOString(), type: 'CROSS_VENUE_ARB', seq: i, edgeUsd: 0.25 }));
+    }
+    fs.writeFileSync(bigTradesPath, lines.join('\n') + '\n', 'utf8');
+    const state = { arbExecutions: [], markoutRecords: [], quantBySymbol: {}, textileMids: {} };
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: bigTradesPath, markoutsLogPath: path.join(tmpDir, 'm.jsonl') },
+      STATE: state,
+      wallet: null,
+      provider: {},
+      routerIface: new ethers.Interface(['function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)']),
+      erc20Iface: new ethers.Interface(['function approve(address,uint256) returns (bool)']),
+      sendTagged: async () => ({}),
+      bestUniQuote: async () => ({ amountOut: 0n, fee: 100 }),
+      textileRequestQuote: async () => ({}),
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({ items: [] }),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers,
+      getCachedOffChainFx: () => ({}),
+    });
+    await exec.loadOnChainHistory();
+    assert.equal(state.arbExecutions.length, 300);
+    assert.equal(state.arbExecutions[0].seq, 1200, 'newest trade must be at index 0');
+    assert.equal(state.arbExecutions[299].seq, 901, 'oldest retained trade must be seq 901');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

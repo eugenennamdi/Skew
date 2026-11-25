@@ -985,10 +985,35 @@ export function createExecutionManager({
 
   async function loadOnChainHistory() {
     if (fs.existsSync(CONFIG.tradesLogPath)) {
-      const lines = fs.readFileSync(CONFIG.tradesLogPath, 'utf8').trim().split('\n').filter(Boolean);
-      STATE.arbExecutions = lines.map((l) => {
-        try { return JSON.parse(l); } catch { return null; }
-      }).filter(Boolean).reverse();
+      try {
+        const stat = fs.statSync(CONFIG.tradesLogPath);
+        const tailBytes = Math.min(stat.size, 98_304);
+        if (tailBytes > 0) {
+          const buf = Buffer.alloc(tailBytes);
+          const fd = fs.openSync(CONFIG.tradesLogPath, 'r');
+          try {
+            fs.readSync(fd, buf, 0, tailBytes, stat.size - tailBytes);
+          } finally {
+            fs.closeSync(fd);
+          }
+          const raw = buf.toString('utf8');
+          const sliced = stat.size > tailBytes ? raw.slice(raw.indexOf('\n') + 1) : raw;
+          STATE.arbExecutions = sliced
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => {
+              try {
+                return JSON.parse(l);
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean)
+            .reverse()
+            .slice(0, 300);
+        }
+      } catch {}
     }
 
     try {
