@@ -1072,7 +1072,7 @@
               <span>24h Flash Arbitrage &amp; Book</span>
               <span class="badge emerald" id="flash24hBadge">893 Wins / 24h</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="flash24hPnlVal">+$262.31</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">24h USDT</span></div>
+            <div class="card-value mono" title="Proprietary desk PnL redacted on public view"><span id="flash24hPnlVal">—</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">24h USDT</span></div>
             <div class="mini-bar" title="Normalized per-corridor Avellaneda-Stoikov Maker skew ($24 USDT share vs Local FX)">
               <div class="mini-bar-seg" id="barSkewUsdt" style="width: 65.0%; background: var(--foreground);"></div>
               <div class="mini-bar-seg" id="barSkewLocal" style="width: 35.0%; background: #10B981;"></div>
@@ -1083,9 +1083,9 @@
               <span class="text-muted">24h Flash Vol</span>
               <span class="treasury-asset-val mono" id="flash24hVolVal">$275.9k</span>
             </div>
-            <div class="treasury-asset-item" title="Largest single-transaction atomic flash profit swept to date (+$37.15 USDT)">
+            <div class="treasury-asset-item" title="Single-transaction flash profit redacted on public view">
               <span class="text-muted">Best Sweep</span>
-              <span class="treasury-asset-val mono text-emerald" id="bestSweepVal">+$37.15</span>
+              <span class="treasury-asset-val mono text-muted" id="bestSweepVal">—</span>
             </div>
             <div class="treasury-asset-item" title="Live Maker Skew & Shielded Spreads on cNGN/USDT">
               <span class="text-muted">Skew (<span id="skewRegimeTag">USDT-Heavy</span>)</span>
@@ -1102,17 +1102,17 @@
           <div>
             <div class="card-label">
               <span>Strategy PnL &amp; Efficiency</span>
-              <span class="badge emerald" id="rocBadge">+350.8% RoC</span>
+              <span class="badge" id="rocBadge">— RoC</span>
             </div>
-            <div class="card-value mono text-emerald"><span id="pnlValue">+$685.54</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">Net Profit</span></div>
-            <div class="mini-bar" title="Lifetime Net Profit Breakdown (after 100% of CELO gas subtracted): SkewAtomicRouter Flash Sweeps + 2-Leg & Shielded Maker Fills">
+            <div class="card-value mono" title="Proprietary strategy PnL redacted on public view"><span id="pnlValue">—</span> <span style="font-size:14px;font-weight:500;color:var(--muted-foreground);">Net Profit</span></div>
+            <div class="mini-bar" title="Execution Mix: SkewAtomicRouter Flash Sweeps + 2-Leg & Shielded Maker Fills">
               <div class="mini-bar-seg" style="width: 70%; background: #10B981;"></div>
               <div class="mini-bar-seg" style="width: 24%; background: #38BDF8;"></div>
               <div class="mini-bar-seg" style="width: 6%; background: #F59E0B;"></div>
             </div>
           </div>
           <div class="treasury-assets-grid">
-            <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions — 100% subtracted from Net Profit">
+            <div class="treasury-asset-item" id="gasLifetimeItem" title="Exact lifetime CELO burned in gas fees across all Celo Mainnet transactions">
               <span class="text-muted">Lifetime Gas</span>
               <span class="treasury-asset-val mono" id="gasLifetimeCardVal">374.5 CELO ($20.97)</span>
             </div>
@@ -1120,9 +1120,9 @@
               <span class="text-muted">Total Wins</span>
               <span class="treasury-asset-val mono text-emerald" id="arbCyclesVal">3,475 Wins</span>
             </div>
-            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg volume generated from $195.00 initial bankroll">
+            <div class="treasury-asset-item" id="turnoverItem" title="Cumulative 1-leg volume settled across Textile RFQ & Celo Uniswap v3">
               <span class="text-muted">Cumul. Vol</span>
-              <span class="treasury-asset-val mono" id="turnoverVal">$754.2k (3,868x)</span>
+              <span class="treasury-asset-val mono" id="turnoverVal">$754.2k</span>
             </div>
             <div class="treasury-asset-item" id="reliabilityItem" title="On-chain transaction execution reliability on Celo Mainnet across 8,824+ txs">
               <span class="text-muted">Reliability</span>
@@ -1634,25 +1634,20 @@
     const ERC8021_MARKER = '63656c6f5f373933356662393765323733'; // "celo_7935fb97e273"
     const FEE_CURRENCY_USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'; // Celo CIP-64 feeCurrency (USDT)
 
-    // Verified On-Chain Accounting Checkpoint at Block #83,603,158 (2026-11-24T07:05 UTC)
-    // Automatically tracks all post-checkpoint profit withdrawals, deposits, flash sweeps & gas burned live every 3s via Celo RPC + Blockscout v2!
-    const INITIAL_CAPITAL_USDT = 195.00;
-    const INITIAL_EXTERNAL_CELO = 7.2908; // Net external CELO seeded (10.2908 deposited - 3.0000 withdrawn)
+    // Verified On-Chain Telemetry Checkpoint at Block #83,603,158 (2026-11-24T07:05 UTC)
+    // Proprietary PnL figures are redacted on public view; operational volume, wins & gas stream live every 3s via Celo RPC + Blockscout v2.
     const BASE_NONCE = 3911; // Hackathon Block #82,263,550 anchor (1,794 2-leg arbs, $207,057.11 1-leg vol)
     const PRE_FLASH_ARB_WINS = 1794;
     const PRE_FLASH_VOL_USD = 207057.11;
     const CHECKPOINT_BLOCK = 83603158;
-    const CHECKPOINT_WITHDRAWN_USDT = 754.00; // Verified transfers: $54 + $500 + $200 to cold wallet 0xbb6C727e...
     const CHECKPOINT_CELO_BALANCE = 37.513776; // Exact eth_getBalance(AGENT_WALLET, 83603158)
     const CHECKPOINT_GAS_BURNED_CELO = 371.9328; // Verified sum(gasUsed * gasPrice) across 8,795 outgoing txs
     const CHECKPOINT_WALLET_GAS_UNITS = 1550351433;
     const CHECKPOINT_OUT_TXS = 8795;
     const CHECKPOINT_REVERT_TXS = 88;
     const CHECKPOINT_FLASH_WINS = 1652;
-    const CHECKPOINT_FLASH_PROFIT_USDT = 480.8720;
     const CHECKPOINT_FLASH_VOL_USD = 541664.89;
     const CHECKPOINT_ROUTER_TX_COUNT = 1391;
-    const CHECKPOINT_PEAK_SWEEP_USDT = 37.1525;
     const CELO_TOKEN_ADDRESS = '0x471EcE3750Da237f93B8E339c536989b8978a438';
     const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
@@ -1696,18 +1691,12 @@
       celoPriceUsd: 0.0560,
       balances: { USDT: 105.46, cNGN: 7264.18, wARS: 8805.97, wBRL: 30.13, USDC: 6.50, CELO: 34.93 },
       accounting: {
-        withdrawnUsdt: CHECKPOINT_WITHDRAWN_USDT,
-        extraDepositsUsdt: 0.0,
-        extraCeloDeposits: 0.0,
         gasBurnedCelo: 374.52,
         outTxs: 8824,
         revertTxs: CHECKPOINT_REVERT_TXS,
         flashWins: 1681,
-        flashProfitUsdt: 485.48,
         flashVolUsd: 547180.0,
-        peakSweepUsdt: CHECKPOINT_PEAK_SWEEP_USDT,
         flash24hWins: 893,
-        flash24hProfitUsdt: 262.31,
         flash24hVolUsd: 275902.68,
       },
       ledger: {
@@ -2113,11 +2102,8 @@
       const cutoff24hBlk = head - 86400;
       const pruneFloor = Math.min(CHECKPOINT_BLOCK, head - 90000);
       let postWins = 0;
-      let postProfit = 0;
       let postVol = 0;
-      let maxPeak = CHECKPOINT_PEAK_SWEEP_USDT;
       let w24 = 0;
-      let p24 = 0;
       let v24 = 0;
       let latestFlashTx = null;
 
@@ -2127,23 +2113,17 @@
           continue;
         }
         if (fx.profit <= 0) continue;
-        if (fx.profit > maxPeak) maxPeak = fx.profit;
         if (fx.blk > CHECKPOINT_BLOCK) {
           postWins += 1;
-          postProfit += fx.profit;
           postVol += fx.vol;
         }
         if (fx.blk >= cutoff24hBlk) {
           w24 += 1;
-          p24 += fx.profit;
           v24 += fx.vol;
         }
         if (!latestFlashTx || fx.blk >= latestFlashTx.blk) latestFlashTx = fx;
       }
 
-      STATE.accounting.withdrawnUsdt = CHECKPOINT_WITHDRAWN_USDT + Math.max(L.extraWithdrawnUsdt, L.v2WithdrawnUsdt);
-      STATE.accounting.extraDepositsUsdt = Math.max(L.extraDepositsUsdt, L.v2DepositsUsdt);
-      STATE.accounting.extraCeloDeposits = L.extraCeloDeposits;
       STATE.accounting.outTxs = Math.max(CHECKPOINT_OUT_TXS, STATE.walletNonce || CHECKPOINT_OUT_TXS);
 
       if (head - 86400 <= CHECKPOINT_BLOCK) {
@@ -2157,17 +2137,13 @@
       }
 
       const effectivePostWins = Math.max(postWins, L.v2RouterExtraWins);
-      const avgSweepProfit = postWins > 0 ? postProfit / postWins : 0.29;
       const avgSweepVol = postWins > 0 ? postVol / postWins : 328.0;
       const unindexedWins = Math.max(0, effectivePostWins - postWins);
       STATE.accounting.flashWins = CHECKPOINT_FLASH_WINS + effectivePostWins;
-      STATE.accounting.flashProfitUsdt = CHECKPOINT_FLASH_PROFIT_USDT + postProfit + unindexedWins * avgSweepProfit;
       STATE.accounting.flashVolUsd = CHECKPOINT_FLASH_VOL_USD + postVol + unindexedWins * avgSweepVol;
-      STATE.accounting.peakSweepUsdt = maxPeak;
 
       if (L.backfillDone) {
         STATE.accounting.flash24hWins = w24;
-        STATE.accounting.flash24hProfitUsdt = p24;
         STATE.accounting.flash24hVolUsd = v24;
       }
       return latestFlashTx;
@@ -2599,51 +2575,43 @@
         gasBurnedBadge.textContent = `${acc.gasBurnedCelo.toFixed(2)} CELO (~$${gasBurnedUsd.toFixed(2)})`;
       }
 
-      // Card 2: Live 24h Flash Arbitrage & Book Telemetry
+      // Card 2: Live 24h Flash Arbitrage & Book Telemetry (profits redacted on public view)
       const f24Badge = document.getElementById('flash24hBadge');
       if (f24Badge) f24Badge.textContent = `${acc.flash24hWins.toLocaleString('en-US')} Wins / 24h`;
       const f24Pnl = document.getElementById('flash24hPnlVal');
-      if (f24Pnl) f24Pnl.textContent = `+$${acc.flash24hProfitUsdt.toFixed(2)}`;
+      if (f24Pnl) f24Pnl.textContent = '—';
       const f24Vol = document.getElementById('flash24hVolVal');
       if (f24Vol) f24Vol.textContent = `$${(acc.flash24hVolUsd / 1000).toFixed(1)}k`;
       const bestSweep = document.getElementById('bestSweepVal');
-      if (bestSweep) bestSweep.textContent = `+$${acc.peakSweepUsdt.toFixed(2)}`;
+      if (bestSweep) bestSweep.textContent = '—';
 
-      // Card 3: Withdrawal-Invariant, Gas-Subtracted Strategy PnL & Efficiency
-      // ponytail: Excludes CELO gas tank completely; all AUTO_GAS_REFILL USDT->CELO swaps are already deducted from totalUsd, plus initial/external CELO seed is subtracted.
-      const initialGasSeedUsd = (INITIAL_EXTERNAL_CELO + (acc.extraCeloDeposits || 0)) * celoUsdRate;
-      const livePnlUsdt = (totalUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt) - INITIAL_CAPITAL_USDT - initialGasSeedUsd;
-      const effectiveSeedUsd = INITIAL_CAPITAL_USDT + initialGasSeedUsd + acc.extraDepositsUsdt;
-      const liveRocPct = (livePnlUsdt / Math.max(1, effectiveSeedUsd)) * 100;
+      // Card 3: Strategy Efficiency (proprietary PnL & RoC redacted on public view)
       const totalArbWins = PRE_FLASH_ARB_WINS + acc.flashWins;
       const liveVolUsd = PRE_FLASH_VOL_USD + acc.flashVolUsd;
-      const liveTurnover = liveVolUsd / INITIAL_CAPITAL_USDT;
       const totalSent = Math.max(acc.outTxs, STATE.walletNonce || CHECKPOINT_OUT_TXS);
       const totalOk = Math.max(0, totalSent - acc.revertTxs);
       const liveRelPct = (totalOk / Math.max(1, totalSent)) * 100;
-      const fmtSignedUsd = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
-      const fmtSignedPct = (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(1)}%`;
 
       const pnlEl = document.getElementById('pnlValue');
-      if (pnlEl) pnlEl.textContent = fmtSignedUsd(livePnlUsdt);
+      if (pnlEl) pnlEl.textContent = '—';
       const rocEl = document.getElementById('rocBadge');
-      if (rocEl) rocEl.textContent = `${fmtSignedPct(liveRocPct)} RoC`;
+      if (rocEl) rocEl.textContent = '— RoC';
       const gasLifeEl = document.getElementById('gasLifetimeCardVal');
       if (gasLifeEl) {
         gasLifeEl.textContent = `${acc.gasBurnedCelo.toFixed(1)} CELO ($${gasBurnedUsd.toFixed(2)})`;
       }
       const gasLifeItem = document.getElementById('gasLifetimeItem');
-      if (gasLifeItem && livePnlUsdt > 0) {
-        gasLifeItem.title = `${acc.gasBurnedCelo.toFixed(4)} CELO (~$${gasBurnedUsd.toFixed(2)} USD) total gas burned across ${totalSent.toLocaleString('en-US')} txs — 100% subtracted from Net Profit (CELO gas tank also excluded)`;
+      if (gasLifeItem) {
+        gasLifeItem.title = `${acc.gasBurnedCelo.toFixed(4)} CELO (~$${gasBurnedUsd.toFixed(2)} USD) total gas burned across ${totalSent.toLocaleString('en-US')} txs on Celo Mainnet`;
       }
       const arbEl = document.getElementById('arbCyclesVal');
       if (arbEl) arbEl.textContent = `${totalArbWins.toLocaleString('en-US')} Wins`;
       const arbItem = document.getElementById('arbCyclesItem');
-      if (arbItem) arbItem.title = `${acc.flashWins.toLocaleString('en-US')} SkewAtomicRouter 1-tx flash wins (+$${acc.flashProfitUsdt.toFixed(2)} USDT, 0 losses) + ${PRE_FLASH_ARB_WINS.toLocaleString('en-US')} pre-flash 2-leg arbs`;
+      if (arbItem) arbItem.title = `${acc.flashWins.toLocaleString('en-US')} SkewAtomicRouter 1-tx flash wins (0 losses) + ${PRE_FLASH_ARB_WINS.toLocaleString('en-US')} pre-flash 2-leg arbs`;
       const turnEl = document.getElementById('turnoverVal');
-      if (turnEl) turnEl.textContent = `$${(liveVolUsd / 1000).toFixed(1)}k (${Math.round(liveTurnover).toLocaleString('en-US')}x)`;
+      if (turnEl) turnEl.textContent = `$${(liveVolUsd / 1000).toFixed(1)}k`;
       const turnItem = document.getElementById('turnoverItem');
-      if (turnItem) turnItem.title = `$${liveVolUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cumulative 1-leg volume ($${(liveVolUsd * 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2-leg notional) on $${INITIAL_CAPITAL_USDT.toFixed(2)} seed`;
+      if (turnItem) turnItem.title = `$${liveVolUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cumulative 1-leg volume ($${(liveVolUsd * 2).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 2-leg notional)`;
       const relEl = document.getElementById('reliabilityVal');
       if (relEl) relEl.textContent = `${liveRelPct.toFixed(1)}%`;
       const relItem = document.getElementById('reliabilityItem');

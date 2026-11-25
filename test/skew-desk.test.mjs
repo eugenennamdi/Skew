@@ -1927,23 +1927,23 @@ test('37. Double-audit upgrades: concave midpoint + micro-tail ladder retention,
   }
 });
 
-test('38. Dashboard Strategy PnL is withdrawal-invariant, gas-subtracted, real-time synced, and never renders +$-', () => {
+test('38. Dashboard redacts proprietary PnL & RoC on public view while streaming live gas, wins & volume', () => {
   const html = renderDashboardHtml();
-  assert.ok(html.includes('CHECKPOINT_WITHDRAWN_USDT = 754.00'));
   assert.ok(html.includes('CHECKPOINT_GAS_BURNED_CELO = 371.9328'));
-  assert.ok(html.includes('INITIAL_EXTERNAL_CELO = 7.2908'));
   assert.ok(html.includes('FLASH_ROUTER = \'0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194\''));
-  assert.ok(html.includes('(totalUsd + acc.withdrawnUsdt - acc.extraDepositsUsdt) - INITIAL_CAPITAL_USDT - initialGasSeedUsd'));
-  assert.ok(!html.includes('totalUsd + gasReserveUsd + acc.withdrawnUsdt'), 'Net Profit must exclude CELO gas reserve');
+  assert.ok(html.includes('<span id="flash24hPnlVal">—</span>'));
+  assert.ok(html.includes('<span id="pnlValue">—</span>'));
+  assert.ok(html.includes('id="rocBadge">— RoC</span>'));
+  assert.ok(html.includes('id="bestSweepVal">—</span>'));
   assert.ok(html.includes('syncLiveChainLogs'));
   assert.ok(html.includes('gasBurnedBadge'));
-  assert.ok(html.includes('flash24hPnlVal'));
+  assert.ok(!html.includes('CHECKPOINT_WITHDRAWN_USDT'), 'Cold-wallet withdrawal history must not appear in public HTML source');
+  assert.ok(!html.includes('0xbb6C727e'), 'Cold wallet address must not appear in public HTML source');
   assert.ok(!html.includes('Banked Profits (Withdrawn)'));
   assert.ok(!html.includes('Hot Working Float'));
   assert.ok(!html.includes('Total Value (Banked + Hot)'));
   assert.ok(!html.includes('Router Sweeps (All-Time)'));
   assert.ok(!html.includes('Total Value (incl. Gas)'));
-  assert.ok(!html.includes('+$${livePnlUsdt.toFixed(2)}'), 'PnL formatter must use signed helper so +$- never renders');
 });
 
 test('39. Full-universe CHASE preempts $0.28 CELO crumb with +$14.36 wARS whale & fetchTextileLadder overflows cleanly without touching 14-credit /request reserve', async () => {
