@@ -180,7 +180,7 @@ MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="${MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0.08}" \
 MAX_DAILY_LOSS_USD="${MAX_DAILY_LOSS_USD:-1.00}" \
 MAX_CONSECUTIVE_LOSSES="${MAX_CONSECUTIVE_LOSSES:-2}" \
 CHASE_INTERVAL_MS="${CHASE_INTERVAL_MS:-650}" \
-SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-1050}" \
+SCAN_INTERVAL_MS="${SCAN_INTERVAL_MS:-620}" \
 BIND_HOST="${BIND_HOST:-127.0.0.1}" \
 PORT="${PORT:-8080}" \
   setsid nohup bash -c 'while [ ! -f .skew-stop ]; do node skew-desk.mjs; rc=$?; [ -f .skew-stop ] && break; echo "[SUPERVISOR] skew-desk exited (code=$rc); respawning in 2s..."; sleep 2; done # skew-desk-supervisor' </dev/null >> skew-desk.log 2>&1 &

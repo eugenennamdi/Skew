@@ -521,7 +521,7 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
 export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei = CONFIG.priorityTipGwei || 20) {
   const base = Number(baseTipGwei) || 20;
   const edge = Number(expectedProfitUsd) || 0;
-  if (edge >= 10.0) return Math.max(base, 420);
+  if (edge >= 10.0) return Math.max(base, 520);
   if (edge >= 2.0) return Math.max(base, 300);
   if (edge >= 0.25) return Math.max(base, 165);
   return base;
@@ -900,7 +900,7 @@ export async function fetchTextileLadder(fetchImpl = fetch) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
   }
-  if (fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 450) {
+  if (fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 320) {
     return lastGoodLadder.data;
   }
 
@@ -1785,6 +1785,39 @@ async function fetchRpcBundleMulticall(needFreshBalances, usatTok) {
   return [balTuple, ...mids, feeData];
 }
 
+export function computeNextScanDelayMs(elapsedMs, targetIntervalMs = CONFIG.scanIntervalMs, minDelayMs = 80) {
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const target = Math.max(minDelayMs, Number(targetIntervalMs) || 620);
+  return Math.max(minDelayMs, target - elapsed);
+}
+
+// ponytail: start QuoterV2 Multicall3 the instant /v2/rfq/levels resolves (~140ms) in parallel with slot0/balance Multicall3 (~500ms), shaving ~380ms off every Maker repricing scan
+export async function fetchLadderAndRpcPipelined({
+  canPipeline,
+  lastLadderAsOf,
+  hasCachedRows,
+  fullScanUniverse,
+  preBudgetUsdt,
+  fetchLadderFn,
+  fetchRpcFn,
+  scanUniverseFn,
+}) {
+  let pipelinedUniversePromise = null;
+  const ladderPromise = fetchLadderFn().then((ld) => {
+    if (
+      canPipeline &&
+      ld?.pairs?.length &&
+      (!lastLadderAsOf || ld.asOf !== lastLadderAsOf || !hasCachedRows)
+    ) {
+      pipelinedUniversePromise = scanUniverseFn(fullScanUniverse, ld.pairs, preBudgetUsdt).catch(() => null);
+    }
+    return ld;
+  });
+  const [ladderData, rpcBundle] = await Promise.all([ladderPromise, fetchRpcFn()]);
+  const pipelinedUniverse = pipelinedUniversePromise ? await pipelinedUniversePromise : null;
+  return { ladderData, rpcBundle, pipelinedUniverse };
+}
+
 export async function runSingleScan() {
   if (isBusy || isShuttingDown) return STATE;
   isBusy = true;
@@ -1832,14 +1865,26 @@ export async function runSingleScan() {
       }
     }
 
+    const isFlashReady = Boolean(CONFIG.textileApiKey && CONFIG.flashRouterAddress);
+    const fullScanUniverse = isFlashReady ? [...CONFIG.tokens, ...(CONFIG.extraFlashTokens || [])] : CONFIG.tokens;
+    const hasCachedRowsAtStart = Object.keys(STATE.corridorRowCache).length > 0;
     const needFreshBalances = !cachedRpcBalances.data || Date.now() - cachedRpcBalances.ts >= 12_000;
-    const [offChainFx, fetchedTextileMids, ladderData, rpcBundle] = await Promise.all([
+    const [offChainFx, fetchedTextileMids, { ladderData, rpcBundle, pipelinedUniverse }] = await Promise.all([
       STATE.scanCount === 0 ? fetchOffChainFxRates() : Promise.resolve(cachedOffChainFx),
       STATE.scanCount === 0 ? fetchTextileCorridorPrices() : Promise.resolve(cachedTextileMids.data),
-      fetchTextileLadder(),
-      fetchRpcBundleMulticall(needFreshBalances, usatTok).catch((rpcErr) => {
-        console.warn(`[RPC-FALLBACK] Using cached reference state (${rpcErr.message?.slice(0, 60)})`);
-        return null;
+      fetchLadderAndRpcPipelined({
+        canPipeline: STATE.scanCount > 0 && isFlashReady,
+        lastLadderAsOf: STATE.lastLadderAsOf,
+        hasCachedRows: hasCachedRowsAtStart,
+        fullScanUniverse,
+        preBudgetUsdt: Math.max(1, STATE.balances?.usdt || usdt),
+        fetchLadderFn: () => fetchTextileLadder(),
+        fetchRpcFn: () =>
+          fetchRpcBundleMulticall(needFreshBalances, usatTok).catch((rpcErr) => {
+            console.warn(`[RPC-FALLBACK] Using cached reference state (${rpcErr.message?.slice(0, 60)})`);
+            return null;
+          }),
+        scanUniverseFn: scanUniverseFromLadder,
       }),
     ]);
     STATE.textileMids = { ...STATE.textileMids, ...fetchedTextileMids };
@@ -2042,9 +2087,6 @@ export async function runSingleScan() {
       COPM: uniCopmMid,
     };
 
-    const isFlashReady = Boolean(CONFIG.textileApiKey && CONFIG.flashRouterAddress);
-    const fullScanUniverse = isFlashReady ? [...CONFIG.tokens, ...(CONFIG.extraFlashTokens || [])] : CONFIG.tokens;
-
     if (ladderData?.pairs?.length) {
       const ladderChanged = !STATE.lastLadderAsOf || ladderData.asOf !== STATE.lastLadderAsOf;
       STATE.lastLadderAsOf = ladderData.asOf || '';
@@ -2062,7 +2104,8 @@ export async function runSingleScan() {
         copmMoved ||
         !hasCachedRows
       ) {
-        const universeRes = await scanUniverseFromLadder(fullScanUniverse, ladderData.pairs, liquidUsdtBudget);
+        const universeRes =
+          pipelinedUniverse || (await scanUniverseFromLadder(fullScanUniverse, ladderData.pairs, liquidUsdtBudget));
         for (const { symbol, rows } of universeRes) STATE.corridorRowCache[symbol] = rows;
       }
     } else {
@@ -2504,8 +2547,16 @@ if (isMain) {
   ensureErc8004Metadata().catch(() => {});
   loadOnChainHistory().catch(() => {});
   startCeloSwapStream();
-  runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message));
-  setInterval(() => runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message)), CONFIG.scanIntervalMs);
+  // ponytail: self-pacing setTimeout loop eliminates setInterval beat-frequency skipped ticks (e.g. 1060ms scan -> 2100ms dead gap)
+  (async () => {
+    while (!isShuttingDown) {
+      const t0 = Date.now();
+      await runSingleScan().catch((e) => console.error('[SCAN-ERR]', e.message));
+      if (isShuttingDown) break;
+      const waitMs = computeNextScanDelayMs(Date.now() - t0, CONFIG.scanIntervalMs);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  })();
   setInterval(() => loadOnChainHistory().catch(() => {}), 60000);
   // ponytail: self-healing deadlock breaker — if isBusy wedges >90s on a hung socket, exit cleanly so cron/systemd restarts immediately
   setInterval(() => {

@@ -41,6 +41,8 @@ import {
   LADDER_BUDGET,
   computeDynamicPriorityTipGwei,
   getMaxFlashSliceUsdt,
+  computeNextScanDelayMs,
+  fetchLadderAndRpcPipelined,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -903,7 +905,7 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-85\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-1050\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-620\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
@@ -1566,8 +1568,8 @@ test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20
   assert.equal(computeDynamicPriorityTipGwei(1.85, 85), 165);
   assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 300);
   assert.equal(computeDynamicPriorityTipGwei(9.5, 85), 300);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 420);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 420);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 520);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 520);
   assert.equal(computeDynamicPriorityTipGwei(2.0, 350), 350);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
@@ -2122,4 +2124,70 @@ test('40. Cron watchdog hardening: run-vm.sh persists .env.runtime when GEMINI_A
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self-pacing scheduler, and 520-gwei whale tip', async () => {
+  // 1. Self-pacing scheduler hits exact 620ms target cadence and avoids 2.1s skipped-tick gaps on slight overruns
+  assert.equal(computeNextScanDelayMs(520, 620), 100);
+  assert.equal(computeNextScanDelayMs(0, 620), 620);
+  assert.equal(computeNextScanDelayMs(680, 620), 80, 'slight overrun waits 80ms floor instead of dropping a full 1050ms tick');
+  assert.equal(computeNextScanDelayMs(18_500, 620), 80, 'post-CHASE scan resumes after 80ms');
+
+  // 2. Whale priority tip outbids 700-gwei EOA rivals (~200 base + 520 tip = 720 gwei) while keeping <$10 gas unchanged
+  assert.equal(computeDynamicPriorityTipGwei(9.99, 85), 300);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 520);
+
+  // 3. Parallel pipeline starts QuoterV2 universe scan as soon as /levels resolves (~30ms) while RPC bundle (~95ms) is still in flight
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let scanCalls = 0;
+  let scanStartedBeforeRpcDone = false;
+  let rpcDone = false;
+
+  const t0 = Date.now();
+  const res = await fetchLadderAndRpcPipelined({
+    canPipeline: true,
+    lastLadderAsOf: '2026-11-25T16:00:00Z',
+    hasCachedRows: true,
+    fullScanUniverse: [{ symbol: 'wARS' }, { symbol: 'USAT' }],
+    preBudgetUsdt: 200,
+    fetchLadderFn: async () => {
+      await sleep(25);
+      return { asOf: '2026-11-25T16:00:01Z', pairs: [{ sellToken: '0x1', buyToken: '0x2' }] };
+    },
+    fetchRpcFn: async () => {
+      await sleep(95);
+      rpcDone = true;
+      return ['mock_rpc_bundle'];
+    },
+    scanUniverseFn: async (univ) => {
+      scanCalls += 1;
+      if (!rpcDone) scanStartedBeforeRpcDone = true;
+      await sleep(60);
+      return univ.map((t) => ({ symbol: t.symbol, rows: [{ status: 'ACTIONABLE', edgeUsd: 44.53 }] }));
+    },
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(scanCalls, 1);
+  assert.equal(scanStartedBeforeRpcDone, true, 'QuoterV2 universe scan must launch before slow RPC bundle finishes');
+  assert.equal(res.pipelinedUniverse?.length, 2);
+  assert.equal(res.rpcBundle?.[0], 'mock_rpc_bundle');
+  assert.ok(elapsed < 145, `pipelined scan should overlap (~95ms vs 180ms sequential), took ${elapsed}ms`);
+
+  // 4. Unchanged ladder asOf skips redundant QuoterV2 RPC work during pipeline stage
+  let redundantCalls = 0;
+  const unchanged = await fetchLadderAndRpcPipelined({
+    canPipeline: true,
+    lastLadderAsOf: '2026-11-25T16:00:01Z',
+    hasCachedRows: true,
+    fullScanUniverse: [{ symbol: 'wARS' }],
+    preBudgetUsdt: 200,
+    fetchLadderFn: async () => ({ asOf: '2026-11-25T16:00:01Z', pairs: [{ sellToken: '0x1', buyToken: '0x2' }] }),
+    fetchRpcFn: async () => ['ok'],
+    scanUniverseFn: async () => {
+      redundantCalls += 1;
+      return [];
+    },
+  });
+  assert.equal(redundantCalls, 0);
+  assert.equal(unchanged.pipelinedUniverse, null);
 });
