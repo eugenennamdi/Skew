@@ -40,8 +40,37 @@ export function createExecutionManager({
 }) {
   const allowanceCache = new Map();
   const baitCooldownUntil = new Map();
+  const phantomQuoteCooldown = new Map();
   let permit2Initialized = false;
   let erc8004MetadataSynced = false;
+
+  function isOpportunityCoolingDown(opp, now = Date.now()) {
+    if (!opp?.corridor || !opp?.direction) return false;
+    const flashKey = `flash:${opp.corridor}:${opp.direction}`;
+    if ((baitCooldownUntil.get(flashKey) || 0) > now) return true;
+    const pKey = `phantom:${opp.corridor}:${opp.direction}`;
+    const entry = phantomQuoteCooldown.get(pKey);
+    if (!entry) return false;
+    if (entry.untilMs <= now) return false;
+    // Instant wakeup if spread jumps >= +15 bps or clip size shifts >= 30% (real Maker reload or DEX move)
+    if (Number(opp.edgeBps || 0) >= entry.edgeBps + 15) return false;
+    if (Math.abs(Number(opp.sizeUsdt || 0) - entry.sizeUsdt) / Math.max(1, entry.sizeUsdt) >= 0.3) return false;
+    return true;
+  }
+
+  function recordPhantomQuoteStrike(opp, baseMs = 45_000) {
+    const pKey = `phantom:${opp.corridor}:${opp.direction}`;
+    const prev = phantomQuoteCooldown.get(pKey);
+    const strikes = (prev?.strikes || 0) + 1;
+    const ttlMs = Math.min(180_000, baseMs * (strikes === 1 ? 1 : strikes === 2 ? 2 : 4));
+    phantomQuoteCooldown.set(pKey, {
+      untilMs: Date.now() + ttlMs,
+      edgeBps: Number(opp.edgeBps || 0),
+      sizeUsdt: Number(opp.sizeUsdt || 0),
+      strikes,
+    });
+    return ttlMs;
+  }
 
   async function ensureAllowance(tokenAddr, spender, minAmount) {
     const key = `${tokenAddr.toLowerCase()}:${spender.toLowerCase()}`;
@@ -141,10 +170,11 @@ export function createExecutionManager({
 
   async function executeFlashOpportunity(opp, flashPool, startedAt) {
     const flashCooldownKey = `flash:${opp.corridor}:${opp.direction}`;
-    if ((baitCooldownUntil.get(flashCooldownKey) || 0) > Date.now()) return null;
+    if (isOpportunityCoolingDown(opp)) return null;
     const isTextileToUni = opp.direction === 'textile->uni';
     const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
     const initialAmountRaw = BigInt(opp.amountInRaw);
+    let lastDeclineReason = 'no_firm_quote';
 
     // ponytail: inner quote+verify pass lets [FIRM-GUARD] step down once when a synthetic/large slice falls off a tight Maker's cap onto a wide backstop Maker
     const requestAndCheckFlashSlice = async (sliceUsdtRaw, isPrimaryAttempt) => {
@@ -181,14 +211,23 @@ export function createExecutionManager({
         }
         const toAddr = q?.transactions?.swap?.to;
         const calldata = q?.transactions?.swap?.data;
-        if (!toAddr || !calldata) return null;
-        if (isSelfMakerOrder(calldata)) return null;
+        if (!toAddr || !calldata) {
+          lastDeclineReason = q?.feed?.status === 'market_closed' ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
+          return null;
+        }
+        if (isSelfMakerOrder(calldata)) {
+          lastDeclineReason = 'self_maker_order';
+          return null;
+        }
         const expRaw = q?.quote?.expiresAt;
         const expMs =
           typeof expRaw === 'string'
             ? Date.parse(expRaw)
             : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
-        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) {
+          lastDeclineReason = 'quote_expired_on_arrival';
+          return null;
+        }
 
         takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
         buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
@@ -247,14 +286,23 @@ export function createExecutionManager({
         }
         const toAddr = q?.transactions?.swap?.to;
         const calldata = q?.transactions?.swap?.data;
-        if (!toAddr || !calldata) return null;
-        if (isSelfMakerOrder(calldata)) return null;
+        if (!toAddr || !calldata) {
+          lastDeclineReason = q?.feed?.status === 'market_closed' ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
+          return null;
+        }
+        if (isSelfMakerOrder(calldata)) {
+          lastDeclineReason = 'self_maker_order';
+          return null;
+        }
         const expRaw = q?.quote?.expiresAt;
         const expMs =
           typeof expRaw === 'string'
             ? Date.parse(expRaw)
             : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
-        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) {
+          lastDeclineReason = 'quote_expired_on_arrival';
+          return null;
+        }
 
         takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
         buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
@@ -272,7 +320,13 @@ export function createExecutionManager({
     };
 
     let attempt = await requestAndCheckFlashSlice(initialAmountRaw, true);
-    if (!attempt) return null;
+    if (!attempt) {
+      const ttlMs = recordPhantomQuoteStrike(opp, 45_000);
+      console.log(
+        `[QUOTE-SKIP] ${opp.corridor} (${opp.direction}) $${(Number(initialAmountRaw) / 1e6).toFixed(2)}: Maker declined firm quote (${lastDeclineReason}); quarantining ${Math.round(ttlMs / 1000)}s (0 gas)`
+      );
+      return null;
+    }
     if (!attempt.firmCheck.ok && attempt.inUsdt >= 250) {
       const safeKnotRaw = opp.safeKnotInRaw ? BigInt(opp.safeKnotInRaw) : 0n;
       const stepDownRaw =
@@ -289,8 +343,9 @@ export function createExecutionManager({
     }
     const { q, inUsdt, takerPays, buyAmount, firmCheck } = attempt;
     if (!firmCheck.ok) {
+      const ttlMs = recordPhantomQuoteStrike(opp, 25_000);
       console.log(
-        `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason})`
+        `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason}; cooldown ${Math.round(ttlMs / 1000)}s)`
       );
       return null;
     }
@@ -328,6 +383,7 @@ export function createExecutionManager({
       return null;
     }
 
+    phantomQuoteCooldown.delete(`phantom:${opp.corridor}:${opp.direction}`);
     textileSubmitTx(q.rfqId, q.claimToken, r.hash).catch(() => {});
     const sweptProfitRaw = sumReceiptTokenTransfers(r, CONFIG.contracts.usdt, {
       fromAddr: CONFIG.flashRouterAddress,
@@ -1142,6 +1198,7 @@ export function createExecutionManager({
     ensureFlashRouterDeployed,
     settlePendingHoldings,
     executeOpportunity,
+    isOpportunityCoolingDown,
     autoManageTreasuryInventory,
     persistMarkoutRecords,
     loadOnChainHistory,

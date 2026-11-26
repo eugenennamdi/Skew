@@ -2333,3 +2333,77 @@ test('42. Backstop Maker cliff step-down rescues +$11.55 wARS when $5,322 hits -
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
   }
 });
+
+test('43. Closed-market phantom quote quarantine stops COPM $25 no_quote quota drain and auto-wakes on >=15bps real move', async () => {
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.phantom.${Date.now()}.jsonl`);
+  const simRouterAddr = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  const copmTok = CONFIG.extraFlashTokens.find((t) => t.symbol === 'COPM');
+  let quoteReqCount = 0;
+
+  try {
+    const exec = createExecutionManager({
+      CONFIG: {
+        ...CONFIG,
+        textileApiKey: 'tx_live_phantom_copm_test',
+        flashRouterAddress: simRouterAddr,
+        tradesLogPath: tmpLog,
+      },
+      STATE: { balances: { usdt: 266.93 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface: new ethers.Interface([
+        'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)',
+      ]),
+      erc20Iface: new ethers.Interface(['function approve(address,uint256) returns (bool)']),
+      sendTagged: async () => ({ hash: `0x${'c'.repeat(64)}`, logs: [] }),
+      bestUniQuote: async () => ({ amountOut: 88_751n * 10n ** 18n, fee: 100 }),
+      textileRequestQuote: async () => {
+        quoteReqCount += 1;
+        // Exact COPM overnight response when colombia_fx is market_closed: /levels shows +56.69 bps, /request declines
+        return {
+          status: 'no_quote',
+          reason: 'no_valid_quote',
+          feed: { status: 'market_closed', market: 'colombia_fx' },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: () => 0n,
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const copmOpp = {
+      corridor: 'COPM/USDT',
+      symbol: 'COPM',
+      tokenAddress: copmTok.address,
+      decimals: 18,
+      direction: 'uni->textile',
+      sizeUsdt: 24.995,
+      amountInRaw: '24995000',
+      midTokenRaw: String(88_751n * 10n ** 18n),
+      expectedOutUsdt: 25.1367,
+      uniFee: 100,
+      edgeUsd: 0.1417,
+      edgeBps: 56.69,
+      scannedAtMs: Date.now(),
+    };
+
+    // 1st scan probes once, logs [QUOTE-SKIP], and quarantines COPM/USDT:uni->textile for 45s (0 gas)
+    const r1 = await exec.executeOpportunity(copmOpp);
+    assert.equal(r1, null);
+    assert.equal(quoteReqCount, 1);
+    assert.equal(exec.isOpportunityCoolingDown(copmOpp), true);
+
+    // Subsequent 50 scans at same stale $24.995 / 56.69 bps skip immediately with ZERO /v2/rfq/request quota burned!
+    const r2 = await exec.executeOpportunity(copmOpp);
+    assert.equal(r2, null);
+    assert.equal(quoteReqCount, 1, 'quarantined phantom level must spend 0 Partner Key /request credits');
+
+    // If spread genuinely jumps >= +15 bps (e.g. 56.69 -> 75.0 bps real DEX swap), instant wakeup overrides quarantine!
+    assert.equal(exec.isOpportunityCoolingDown({ ...copmOpp, edgeBps: 75.0 }), false);
+  } finally {
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});

@@ -1722,6 +1722,7 @@ const {
   ensureFlashRouterDeployed,
   settlePendingHoldings,
   executeOpportunity,
+  isOpportunityCoolingDown,
   autoManageTreasuryInventory,
   persistMarkoutRecords,
   loadOnChainHistory,
@@ -2180,20 +2181,30 @@ export async function runSingleScan() {
       });
     }
 
-    const rank = (s) => (s === 'ACTIONABLE' ? 0 : s === 'WATCH' ? 1 : s === 'NO_MAKER' ? 2 : 3);
+    const rank = (r) => {
+      if (r.status === 'ACTIONABLE') return isOpportunityCoolingDown(r) ? 1 : 0;
+      if (r.status === 'WATCH') return 2;
+      if (r.status === 'NO_MAKER') return 3;
+      return 4;
+    };
     const allRows = fullScanUniverse
       .flatMap((t) => STATE.corridorRowCache[t.symbol] || [])
-      .sort((a, b) => rank(a.status) - rank(b.status) || b.edgeUsd - a.edgeUsd);
+      .sort((a, b) => rank(a) - rank(b) || b.edgeUsd - a.edgeUsd);
     STATE.opportunities = allRows;
     STATE.lastScanAt = new Date().toISOString();
     STATE.scanCount += 1;
 
     const actionableRows = allRows
-      .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd)
+      .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && !isOpportunityCoolingDown(r))
       .slice(0, 2);
     const bestRow = allRows[0];
+    const bestStatusLabel = bestRow
+      ? bestRow.status === 'ACTIONABLE' && isOpportunityCoolingDown(bestRow)
+        ? 'QUARANTINED'
+        : bestRow.status
+      : '';
     console.log(
-      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) quota=${PREVIEW_BUDGET.remaining}/${PREVIEW_BUDGET.limit}(lad=${LADDER_BUDGET.remaining}) | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestRow.status}]` : 'none'}`
+      `[SCAN #${STATE.scanCount}] Total=$${totalUsd.toFixed(2)} (USDT=$${usdt.toFixed(2)} cNGN=${cngn.toFixed(0)} wARS=${wars.toFixed(0)} wBRL=${wbrl.toFixed(1)} USDC=$${usdc.toFixed(2)}) quota=${PREVIEW_BUDGET.remaining}/${PREVIEW_BUDGET.limit}(lad=${LADDER_BUDGET.remaining}) | best=${bestRow ? `${bestRow.corridor}(${bestRow.direction}) $${bestRow.sizeUsdt.toFixed(1)} edge=$${bestRow.edgeUsd.toFixed(4)} (${bestRow.edgeBps.toFixed(2)}bps) [${bestStatusLabel}]` : 'none'}`
     );
 
     const sessionStartMs = Date.parse(STATE.startedAt) || 0;
@@ -2252,7 +2263,11 @@ export async function runSingleScan() {
                   chaseRows = await scanCorridor(corridorTok, freshUsdt, null, { priority: true });
                 }
                 const chaseMinBps = isFlashChase ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
-                const chaseCands = selectChaseCandidates(chaseRows, CONFIG.minEdgeUsd, chaseMinBps);
+                const chaseCands = selectChaseCandidates(
+                  (chaseRows || []).filter((r) => !isOpportunityCoolingDown(r)),
+                  CONFIG.minEdgeUsd,
+                  chaseMinBps
+                );
                 let chaseExec = null;
                 for (const chaseOpp of chaseCands) {
                   console.log(
@@ -2434,7 +2449,13 @@ function startCeloSwapStream() {
             const minBps = CONFIG.minFlashEdgeBps ?? 0.05;
             const cands = universeRes
               .flatMap((u) => u.rows)
-              .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= minBps)
+              .filter(
+                (r) =>
+                  r.status === 'ACTIONABLE' &&
+                  r.edgeUsd >= CONFIG.minEdgeUsd &&
+                  r.edgeBps >= minBps &&
+                  !isOpportunityCoolingDown(r)
+              )
               .sort((a, b) => b.edgeUsd - a.edgeUsd)
               .slice(0, 2);
             for (const opp of cands) {
