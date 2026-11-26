@@ -43,6 +43,7 @@ import {
   getMaxFlashSliceUsdt,
   computeNextScanDelayMs,
   fetchLadderAndRpcPipelined,
+  createWsSwapStrikeQueue,
 } from '../skew-desk.mjs';
 import {
   verifyCommittedOnChainLedger,
@@ -904,7 +905,7 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
   assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-85\}"/);
-  assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-650\}"/);
+  assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-500\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-620\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
@@ -1565,12 +1566,13 @@ test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20
   assert.equal(computeDynamicPriorityTipGwei(0.05, 85), 85);
   assert.equal(computeDynamicPriorityTipGwei(0.249, 85), 85);
   assert.equal(computeDynamicPriorityTipGwei(0.25, 85), 165);
-  assert.equal(computeDynamicPriorityTipGwei(1.85, 85), 165);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 300);
-  assert.equal(computeDynamicPriorityTipGwei(9.5, 85), 300);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 520);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 520);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 350), 350);
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 85), 165);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 85), 260);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 525);
+  assert.equal(computeDynamicPriorityTipGwei(9.5, 85), 525);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 560);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 560);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 600), 600);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 12000);
@@ -2133,9 +2135,10 @@ test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self
   assert.equal(computeNextScanDelayMs(680, 620), 80, 'slight overrun waits 80ms floor instead of dropping a full 1050ms tick');
   assert.equal(computeNextScanDelayMs(18_500, 620), 80, 'post-CHASE scan resumes after 80ms');
 
-  // 2. Whale priority tip outbids 700-gwei EOA rivals (~200 base + 520 tip = 720 gwei) while keeping <$10 gas unchanged
-  assert.equal(computeDynamicPriorityTipGwei(9.99, 85), 300);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 520);
+  // 2. Whale & mid-clip priority tips outbid 701-gwei EOA rivals (~202 base + 525/560 tip = 727-762 gwei) on all >=$2 sweeps
+  assert.equal(computeDynamicPriorityTipGwei(1.99, 85), 260);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 525);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 560);
 
   // 3. Parallel pipeline starts QuoterV2 universe scan as soon as /levels resolves (~30ms) while RPC bundle (~95ms) is still in flight
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2190,4 +2193,143 @@ test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self
   });
   assert.equal(redundantCalls, 0);
   assert.equal(unchanged.pipelinedUniverse, null);
+});
+
+test('42. Backstop Maker cliff step-down rescues +$11.55 wARS when $5,322 hits -30bps Maker B, and WS-STRIKE queues swaps during busy scans', async () => {
+  // 1. Verify scanTokenFromLadder attaches exact safeKnotInRaw ($3,041) below synthetic midpoint ($5,322) across a Maker cliff
+  const prevKey = CONFIG.textileApiKey;
+  const prevRouter = CONFIG.flashRouterAddress;
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.cliff.${Date.now()}.jsonl`);
+  const simRouterAddr = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  CONFIG.textileApiKey = 'tx_live_cliff_test';
+  CONFIG.flashRouterAddress = simRouterAddr;
+
+  try {
+    const warsTok = CONFIG.tokens.find((t) => t.symbol === 'wARS');
+    const usdtLower = CONFIG.contracts.usdt.toLowerCase();
+    const warsLower = warsTok.address.toLowerCase();
+
+    // Exact reproduction of blk 83757149 wARS book: Maker A quotes 1,773.77 up to ~$3,041..$4,999, Backstop Maker B quotes 1,756.50 up to $30,417
+    const pairMap = new Map([
+      [
+        `${usdtLower}->${warsLower}`,
+        {
+          sellToken: CONFIG.contracts.usdt,
+          buyToken: warsTok.address,
+          minSellAmount: '1000000',
+          maxSellAmount: '30417000000',
+          levels: [
+            { sellAmount: '1000000', buyAmount: '1773770000000000000000' },
+            { sellAmount: '3041000000', buyAmount: '5394034570000000000000000' }, // $3,041 @ 1,773.77 (+72 bps vs 1,761 Uni!)
+            { sellAmount: '7604000000', buyAmount: '13356426000000000000000000' }, // $7,604 @ 1,756.50 (-25 bps Backstop Maker B!)
+            { sellAmount: '30417000000', buyAmount: '53427460500000000000000000' },
+          ],
+        },
+      ],
+    ]);
+    const mockUni = async (tokIn, _tokOut, amtRaw) => {
+      const a = BigInt(amtRaw);
+      if (tokIn.toLowerCase() === warsLower) {
+        return { amountOut: a / 1_761_000_000_000_000n, fee: 100 }; // 1,761 wARS/USDT exit
+      }
+      return { amountOut: a * 1_761_000_000_000_000n, fee: 100 };
+    };
+    const rows = await scanTokenFromLadder(warsTok, pairMap, 250, mockUni);
+    const t2u = rows.find((r) => r.direction === 'textile->uni');
+    assert.ok(t2u);
+    assert.equal(t2u.status, 'ACTIONABLE');
+
+    // Now simulate synthetic/partially-drained $5,322 request hitting Backstop Maker B (-25 bps -> firmCheck fails!),
+    // verifying executeOpportunity steps down to exact safeKnotInRaw ($3,041) and sweeps +$22.05 in the SAME tick!
+    const requestedSizes = [];
+    const externalCalldata =
+      '0x3f62192e' +
+      '0000000000000000000000000000000000000000000000000000000000000020' +
+      '0000000000000000000000000000000000000000000000000000000000000040' +
+      '0000000000000000000000000000000000000000000000000000000000000240' +
+      '0000000000000000000000001111111111111111111111111111111111111111'.repeat(16);
+
+    const exec = createExecutionManager({
+      CONFIG: { ...CONFIG, tradesLogPath: tmpLog },
+      STATE: { balances: { usdt: 266 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface: new ethers.Interface([
+        'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
+      ]),
+      erc20Iface: new ethers.Interface(['function approve(address,uint256) returns (bool)']),
+      sendTagged: async (tx) => {
+        validateOutboundTx(tx, CONFIG.agentWallet);
+        return { hash: `0x${'e'.repeat(64)}`, logs: [] };
+      },
+      bestUniQuote: mockUni,
+      textileRequestQuote: async (_s, _b, amt) => {
+        const inAmt = BigInt(amt);
+        requestedSizes.push(inAmt);
+        // Above $4,000, Maker A caps out so Backstop Maker B answers at 1,756.50 (-25 bps underwater!)
+        const rateWars = inAmt > 4_000_000000n ? 1_756_500_000_000_000n : 1_773_770_000_000_000n;
+        return {
+          rfqId: 'rfq-cliff',
+          claimToken: 'claim-cliff',
+          quote: {
+            takerPays: inAmt.toString(),
+            buyAmount: (inAmt * rateWars).toString(),
+            spender: CONFIG.contracts.reactor,
+          },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: externalCalldata } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: (_r, tok, f) =>
+        tok === CONFIG.contracts.usdt && f.fromAddr === simRouterAddr ? 22_050000n : 0n,
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const won = await exec.executeOpportunity({
+      ...t2u,
+      sizeUsdt: 5322.5,
+      amountInRaw: '5322500000',
+      midTokenRaw: String(5322n * 1_765_000_000_000_000_000000n),
+      safeKnotInRaw: '3041000000',
+      expectedOutUsdt: 5330,
+      edgeUsd: 7.5,
+      edgeBps: 14.1,
+      scannedAtMs: Date.now(),
+    });
+    assert.ok(won, 'Firm-guard cliff step-down must rescue +$22.05 win instead of aborting on Backstop Maker B');
+    assert.deepEqual(requestedSizes, [5_322_500000n, 3_041_000000n]);
+    assert.equal(won.edgeUsd, 22.05);
+
+    // 2. Verify createWsSwapStrikeQueue coalesces multi-swap blocks & preserves Swap pushes while isBusy===true
+    let busy = true;
+    const batches = [];
+    const q = createWsSwapStrikeQueue({
+      coalesceMs: 15,
+      minSymGapMs: 100,
+      isBusyFn: () => busy,
+      executeBatchFn: async (toks) => {
+        batches.push(toks.map((t) => t.symbol));
+      },
+    });
+    // Two swaps on wARS (idx=1, idx=2) + one swap on CELO arrive while background scan has busy===true
+    q.push({ symbol: 'wARS' });
+    q.push({ symbol: 'wARS' });
+    q.push({ symbol: 'CELO' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(batches.length, 0, 'must not fire while scan isBusy');
+    assert.equal(q.pendingCount(), 2, 'must retain coalesced wARS + CELO instead of dropping on floor');
+
+    // Scan finishes -> busy=false + flush() fires immediately with both tokens in 1 Multicall3 batch!
+    busy = false;
+    await q.flush();
+    assert.deepEqual(batches, [['wARS', 'CELO']]);
+    assert.equal(q.pendingCount(), 0);
+  } finally {
+    CONFIG.textileApiKey = prevKey;
+    CONFIG.flashRouterAddress = prevRouter;
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
 });

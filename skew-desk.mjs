@@ -521,8 +521,9 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
 export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei = CONFIG.priorityTipGwei || 20) {
   const base = Number(baseTipGwei) || 20;
   const edge = Number(expectedProfitUsd) || 0;
-  if (edge >= 10.0) return Math.max(base, 520);
-  if (edge >= 2.0) return Math.max(base, 300);
+  if (edge >= 10.0) return Math.max(base, 560);
+  if (edge >= 2.0) return Math.max(base, 525);
+  if (edge >= 0.5) return Math.max(base, 260);
   if (edge >= 0.25) return Math.max(base, 165);
   return base;
 }
@@ -885,8 +886,9 @@ export const LADDER_BUDGET = { limit: 60, remaining: 60, resetAtMs: 0 };
 let ladderBackoffUntilMs = 0;
 let lastGoodLadder = { data: null, fetchedAtMs: 0 };
 
-export async function fetchTextileLadder(fetchImpl = fetch) {
+export async function fetchTextileLadder(fetchImpl = fetch, opts = {}) {
   const now = Date.now();
+  const forceFresh = Boolean(opts?.forceFresh);
   const cachedFresh = (maxAgeMs = 3_500) =>
     fetchImpl === fetch && lastGoodLadder.data && Date.now() - lastGoodLadder.fetchedAtMs <= maxAgeMs
       ? lastGoodLadder.data
@@ -900,7 +902,7 @@ export async function fetchTextileLadder(fetchImpl = fetch) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
   }
-  if (fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 320) {
+  if (!forceFresh && fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 320) {
     return lastGoodLadder.data;
   }
 
@@ -914,7 +916,7 @@ export async function fetchTextileLadder(fetchImpl = fetch) {
   const totalAvail = pubAvail + authAvail;
   if (totalAvail <= 0) return cachedFresh();
 
-  if (fetchImpl === fetch && lastGoodLadder.data) {
+  if (!forceFresh && fetchImpl === fetch && lastGoodLadder.data) {
     const activeResets = [LADDER_BUDGET.resetAtMs, CONFIG.textileApiKey ? PREVIEW_BUDGET.resetAtMs : 0].filter(
       (t) => t > now
     );
@@ -1102,6 +1104,21 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
     if (best) {
       const edgeBps = best.inU > 0 ? (best.edgeUsd / best.inU) * 10000 : 0;
       const t2uMinBps = isFlashMode ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
+      const knotSet = new Set(knotRaws.map((x) => x.toString()));
+      let bestSafeKnot = null;
+      for (const ev of evals) {
+        if (!ev || ev.inRaw * 100n > best.inRaw * 88n) continue;
+        const evBps = ev.inU > 0 ? (ev.edgeUsd / ev.inU) * 10000 : 0;
+        if (ev.edgeUsd < CONFIG.minEdgeUsd || evBps < t2uMinBps) continue;
+        const isExact = knotSet.has(ev.inRaw.toString());
+        if (
+          !bestSafeKnot ||
+          (isExact && !bestSafeKnot.isExact) ||
+          (isExact === bestSafeKnot.isExact && ev.edgeUsd > bestSafeKnot.ev.edgeUsd)
+        ) {
+          bestSafeKnot = { ev, isExact };
+        }
+      }
       rows.push({
         corridor: `${token.symbol}/USDT`,
         symbol: token.symbol,
@@ -1111,6 +1128,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
         sizeUsdt: best.inU,
         amountInRaw: best.inRaw.toString(),
         midTokenRaw: best.fxOutRaw.toString(),
+        ...(bestSafeKnot ? { safeKnotInRaw: bestSafeKnot.ev.inRaw.toString() } : {}),
         expectedOutUsdt: best.outU,
         uniFee: best.uniBack.fee,
         edgeUsd: best.edgeUsd,
@@ -1200,6 +1218,21 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
           ? CONFIG.minEdgeBps
           : CONFIG.minUniToTextileDexFirstBps;
       const minReqUsd = invCoversClip ? CONFIG.minEdgeUsd : CONFIG.minUniToTextileDexFirstUsd;
+      const knotSet2 = new Set(knotUsdtRaws.map((x) => x.toString()));
+      let bestSafeKnot2 = null;
+      for (const ev of evals2) {
+        if (!ev || ev.inRaw * 100n > best2.inRaw * 88n) continue;
+        const evBps = ev.inU > 0 ? (ev.edgeUsd / ev.inU) * 10000 : 0;
+        if (ev.edgeUsd < minReqUsd || evBps < minReqBps) continue;
+        const isExact = knotSet2.has(ev.inRaw.toString());
+        if (
+          !bestSafeKnot2 ||
+          (isExact && !bestSafeKnot2.isExact) ||
+          (isExact === bestSafeKnot2.isExact && ev.edgeUsd > bestSafeKnot2.ev.edgeUsd)
+        ) {
+          bestSafeKnot2 = { ev, isExact };
+        }
+      }
       rows.push({
         corridor: `${token.symbol}/USDT`,
         symbol: token.symbol,
@@ -1209,6 +1242,7 @@ export async function scanTokenFromLadder(token, pairMap, maxUsdtBudget, quoteFn
         sizeUsdt: best2.inU,
         amountInRaw: best2.inRaw.toString(),
         midTokenRaw: best2.sellFxRaw.toString(),
+        ...(bestSafeKnot2 ? { safeKnotInRaw: bestSafeKnot2.ev.inRaw.toString() } : {}),
         expectedOutUsdt: best2.outU,
         uniFee: best2.fee,
         edgeUsd: best2.edgeUsd,
@@ -1818,9 +1852,13 @@ export async function fetchLadderAndRpcPipelined({
   return { ladderData, rpcBundle, pipelinedUniverse };
 }
 
+let wsSwapSeq = 0;
+let flushPendingWsStrikesHook = null;
+
 export async function runSingleScan() {
   if (isBusy || isShuttingDown) return STATE;
   isBusy = true;
+  const scanStartWsSeq = wsSwapSeq;
   try {
     if (CONFIG.liveTrading && wallet && !STATE.pendingSettledOnce) {
       STATE.pendingSettledOnce = true;
@@ -2076,16 +2114,19 @@ export async function runSingleScan() {
     const copmMoved =
       !STATE.lastSlot0Mids ||
       Math.abs(uniCopmMid - (STATE.lastSlot0Mids.COPM || 0.00025)) / Math.max(1e-12, uniCopmMid) >= 0.00015;
-    STATE.lastSlot0Mids = {
-      cNGN: uniCngnMid,
-      wARS: uniWarsMid,
-      USDC: uniUsdcMid,
-      USAT: uniUsatMid,
-      CELO: uniCeloMid,
-      VGBP: uniVgbpMid,
-      WETH: uniWethMid,
-      COPM: uniCopmMid,
-    };
+    const swapArrivedMidScan = wsSwapSeq !== scanStartWsSeq;
+    STATE.lastSlot0Mids = swapArrivedMidScan
+      ? null
+      : {
+          cNGN: uniCngnMid,
+          wARS: uniWarsMid,
+          USDC: uniUsdcMid,
+          USAT: uniUsatMid,
+          CELO: uniCeloMid,
+          VGBP: uniVgbpMid,
+          WETH: uniWethMid,
+          COPM: uniCopmMid,
+        };
 
     if (ladderData?.pairs?.length) {
       const ladderChanged = !STATE.lastLadderAsOf || ladderData.asOf !== STATE.lastLadderAsOf;
@@ -2093,6 +2134,7 @@ export async function runSingleScan() {
       const hasCachedRows = Object.keys(STATE.corridorRowCache).length > 0;
       if (
         STATE.scanCount === 0 ||
+        swapArrivedMidScan ||
         ladderChanged ||
         cngnMoved ||
         warsMoved ||
@@ -2104,8 +2146,9 @@ export async function runSingleScan() {
         copmMoved ||
         !hasCachedRows
       ) {
+        const usablePipelined = swapArrivedMidScan ? null : pipelinedUniverse;
         const universeRes =
-          pipelinedUniverse || (await scanUniverseFromLadder(fullScanUniverse, ladderData.pairs, liquidUsdtBudget));
+          usablePipelined || (await scanUniverseFromLadder(fullScanUniverse, ladderData.pairs, liquidUsdtBudget));
         for (const { symbol, rows } of universeRes) STATE.corridorRowCache[symbol] = rows;
       }
     } else {
@@ -2174,6 +2217,7 @@ export async function runSingleScan() {
             // ponytail: bidirectional 0.65s hot-corridor chase catches both Maker reloads and reverse pool whip-saws
             const corridorTok = fullScanUniverse.find((t) => t.symbol === candidate.symbol);
             if (corridorTok && execRec.edgeUsd > 0 && !STATE.circuitBreaker.tripped && CONFIG.chaseIntervalMs > 0) {
+              let chaseRetriedFirstMiss = false;
               for (let chaseIdx = 1; chaseIdx <= CONFIG.maxChaseIterations; chaseIdx++) {
                 lastScanDoneMs = Date.now();
                 await new Promise((res) => setTimeout(res, CONFIG.chaseIntervalMs));
@@ -2193,7 +2237,7 @@ export async function runSingleScan() {
                 if ((!isFlashChase && freshUsdt < 10) || freshCelo < 0.15) break;
                 let chaseRows = null;
                 if (isFlashChase) {
-                  const chaseLadder = await fetchTextileLadder();
+                  const chaseLadder = await fetchTextileLadder(fetch, { forceFresh: true });
                   if (chaseLadder?.pairs?.length) {
                     const universeRes = await scanUniverseFromLadder(
                       fullScanUniverse,
@@ -2209,7 +2253,6 @@ export async function runSingleScan() {
                 }
                 const chaseMinBps = isFlashChase ? (CONFIG.minFlashEdgeBps ?? 0.05) : CONFIG.minEdgeBps;
                 const chaseCands = selectChaseCandidates(chaseRows, CONFIG.minEdgeUsd, chaseMinBps);
-                if (chaseCands.length === 0) break;
                 let chaseExec = null;
                 for (const chaseOpp of chaseCands) {
                   console.log(
@@ -2218,7 +2261,14 @@ export async function runSingleScan() {
                   chaseExec = await executeOpportunity(chaseOpp);
                   if (chaseExec) break;
                 }
-                if (!chaseExec) break;
+                if (!chaseExec) {
+                  if (chaseIdx === 1 && !chaseRetriedFirstMiss) {
+                    chaseRetriedFirstMiss = true;
+                    chaseIdx -= 1;
+                    continue;
+                  }
+                  break;
+                }
                 lastScanDoneMs = Date.now();
                 STATE.lastLadderAsOf = '';
                 pushArbExecutionBounded(chaseExec);
@@ -2250,6 +2300,9 @@ export async function runSingleScan() {
   } finally {
     lastScanDoneMs = Date.now();
     isBusy = false;
+    if (!isShuttingDown && flushPendingWsStrikesHook) {
+      queueMicrotask(() => flushPendingWsStrikesHook?.());
+    }
   }
 }
 
@@ -2295,9 +2348,46 @@ export function runDryRunVerification() {
 
 const UNI_SWAP_TOPIC = ethers.id('Swap(address,address,int256,int256,uint160,uint128,int24)');
 let activeSwapWs = null;
-let lastWsStrikeAtBySym = new Map();
 
-// ponytail: real-time Celo WebSocket Swap push (0ms wakeup on DEX whale swaps -> ~500ms Block N+1 flash strike against cached ladder)
+// ponytail: coalesce multi-swap blocks (20ms) and queue Swap strikes while isBusy===true so 87% scan duty cycle never drops a DEX whip-saw (e.g. blk 83757149 +$39.46 wARS)
+export function createWsSwapStrikeQueue({ coalesceMs = 20, minSymGapMs = 280, isBusyFn, executeBatchFn }) {
+  const pendingBySym = new Map();
+  const lastFiredBySym = new Map();
+  let timer = null;
+
+  const flush = async () => {
+    timer = null;
+    if (pendingBySym.size === 0 || isBusyFn()) return;
+    const now = Date.now();
+    const ready = [];
+    for (const [sym, tok] of pendingBySym.entries()) {
+      if (now - (lastFiredBySym.get(sym) || 0) >= minSymGapMs) {
+        ready.push(tok);
+        lastFiredBySym.set(sym, now);
+      }
+      pendingBySym.delete(sym);
+    }
+    if (ready.length > 0) {
+      await executeBatchFn(ready);
+    }
+    if (pendingBySym.size > 0 && !timer && !isBusyFn()) {
+      timer = setTimeout(flush, coalesceMs);
+      timer.unref?.();
+    }
+  };
+
+  const push = (tok) => {
+    if (!tok?.symbol) return;
+    pendingBySym.set(tok.symbol, tok);
+    if (!timer && !isBusyFn()) {
+      timer = setTimeout(flush, coalesceMs);
+      timer.unref?.();
+    }
+  };
+
+  return { push, flush, pendingCount: () => pendingBySym.size };
+}
+
 function startCeloSwapStream() {
   if (typeof WebSocket === 'undefined' || !CONFIG.wsRpcUrl || isShuttingDown) return;
   const poolToToken = new Map();
@@ -2308,6 +2398,78 @@ function startCeloSwapStream() {
   }
   const poolAddrs = [...poolToToken.keys()];
   if (poolAddrs.length === 0) return;
+
+  const strikeQueue = createWsSwapStrikeQueue({
+    coalesceMs: 20,
+    minSymGapMs: 280,
+    isBusyFn: () => isBusy || isShuttingDown,
+    executeBatchFn: async (toks) => {
+      if (isBusy || isShuttingDown) {
+        for (const t of toks) strikeQueue.push(t);
+        return;
+      }
+      const now = Date.now();
+      if (
+        CONFIG.liveTrading &&
+        wallet &&
+        CONFIG.textileApiKey &&
+        CONFIG.flashRouterAddress &&
+        (STATE.balances?.celo ?? 10) >= 0.15 &&
+        !STATE.circuitBreaker?.tripped
+      ) {
+        isBusy = true;
+        let wsWon = false;
+        try {
+          let ladder =
+            lastGoodLadder.data?.pairs?.length && now - lastGoodLadder.fetchedAtMs <= 3_500
+              ? lastGoodLadder.data
+              : await fetchTextileLadder(fetch, { forceFresh: true });
+          if (ladder?.pairs?.length) {
+            const universeRes = await scanUniverseFromLadder(
+              toks,
+              ladder.pairs,
+              Math.max(1, STATE.balances?.usdt || 100)
+            );
+            for (const { symbol, rows } of universeRes) STATE.corridorRowCache[symbol] = rows;
+            const minBps = CONFIG.minFlashEdgeBps ?? 0.05;
+            const cands = universeRes
+              .flatMap((u) => u.rows)
+              .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= minBps)
+              .sort((a, b) => b.edgeUsd - a.edgeUsd)
+              .slice(0, 2);
+            for (const opp of cands) {
+              console.log(
+                `[WS-STRIKE] Instant Swap push on ${opp.corridor}(${opp.direction}) $${opp.sizeUsdt.toFixed(2)} estEdge=+$${opp.edgeUsd.toFixed(4)} (+${opp.edgeBps.toFixed(2)} bps)`
+              );
+              const execRec = await executeOpportunity(opp);
+              if (execRec) {
+                wsWon = true;
+                cachedRpcBalances = { data: null, ts: 0 };
+                STATE.lastLadderAsOf = '';
+                pushArbExecutionBounded(execRec);
+                const sessionStartMs = Date.parse(STATE.startedAt) || 0;
+                STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`[WS-STRIKE-ERR] ${err.message}`);
+        } finally {
+          lastScanDoneMs = Date.now();
+          isBusy = false;
+          if (wsWon && !isShuttingDown) {
+            setImmediate(() => runSingleScan().catch(() => {}));
+          } else if (strikeQueue.pendingCount() > 0 && !isShuttingDown) {
+            queueMicrotask(() => strikeQueue.flush());
+          }
+        }
+      } else {
+        runSingleScan().catch(() => {});
+      }
+    },
+  });
+  flushPendingWsStrikesHook = () => strikeQueue.flush();
 
   const connect = () => {
     if (isShuttingDown) return;
@@ -2339,7 +2501,7 @@ function startCeloSwapStream() {
         );
       } catch {}
     });
-    ws.addEventListener('message', async (ev) => {
+    ws.addEventListener('message', (ev) => {
       lastWsMsgMs = Date.now();
       if (isShuttingDown) return;
       let msg;
@@ -2348,60 +2510,9 @@ function startCeloSwapStream() {
       const poolLower = String(msg?.params?.result?.address || '').toLowerCase();
       const tok = poolToToken.get(poolLower);
       if (!tok) return;
+      wsSwapSeq += 1;
       STATE.lastSlot0Mids = null;
-      const now = Date.now();
-      if (now - (lastWsStrikeAtBySym.get(tok.symbol) || 0) < 450) return;
-      lastWsStrikeAtBySym.set(tok.symbol, now);
-      if (isBusy) return;
-
-      if (
-        CONFIG.liveTrading &&
-        wallet &&
-        CONFIG.textileApiKey &&
-        CONFIG.flashRouterAddress &&
-        (STATE.balances?.celo ?? 10) >= 0.15 &&
-        !STATE.circuitBreaker?.tripped &&
-        lastGoodLadder.data?.pairs?.length &&
-        now - lastGoodLadder.fetchedAtMs <= 3_500
-      ) {
-        isBusy = true;
-        let wsWon = false;
-        try {
-          const pairMap = new Map();
-          for (const pItem of lastGoodLadder.data.pairs) {
-            if (pItem?.sellToken && pItem?.buyToken) {
-              pairMap.set(`${pItem.sellToken.toLowerCase()}->${pItem.buyToken.toLowerCase()}`, pItem);
-            }
-          }
-          const rows = await scanTokenFromLadder(tok, pairMap, Math.max(1, STATE.balances?.usdt || 100));
-          STATE.corridorRowCache[tok.symbol] = rows;
-          const minBps = CONFIG.minFlashEdgeBps ?? 0.05;
-          const opp = rows
-            .filter((r) => r.status === 'ACTIONABLE' && r.edgeUsd >= CONFIG.minEdgeUsd && r.edgeBps >= minBps)
-            .sort((a, b) => b.edgeUsd - a.edgeUsd)[0];
-          if (opp) {
-            console.log(
-              `[WS-STRIKE] Instant Swap push on ${opp.corridor}(${opp.direction}) $${opp.sizeUsdt.toFixed(2)} estEdge=+$${opp.edgeUsd.toFixed(4)} (+${opp.edgeBps.toFixed(2)} bps)`
-            );
-            const execRec = await executeOpportunity(opp);
-            if (execRec) {
-              wsWon = true;
-              cachedRpcBalances = { data: null, ts: 0 };
-              STATE.lastLadderAsOf = '';
-              pushArbExecutionBounded(execRec);
-              const sessionStartMs = Date.parse(STATE.startedAt) || 0;
-              STATE.circuitBreaker = evaluateCircuitBreaker(STATE.arbExecutions, Date.now(), CONFIG, sessionStartMs);
-            }
-          }
-        } catch (err) {
-          console.error(`[WS-STRIKE-ERR] ${err.message}`);
-        } finally {
-          isBusy = false;
-          if (wsWon && !isShuttingDown) setImmediate(() => runSingleScan().catch(() => {}));
-        }
-      } else {
-        runSingleScan().catch(() => {});
-      }
+      strikeQueue.push(tok);
     });
     ws.addEventListener('close', () => {
       clearInterval(wsWatch);

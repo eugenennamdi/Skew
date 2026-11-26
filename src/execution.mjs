@@ -144,114 +144,150 @@ export function createExecutionManager({
     if ((baitCooldownUntil.get(flashCooldownKey) || 0) > Date.now()) return null;
     const isTextileToUni = opp.direction === 'textile->uni';
     const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
-    let q;
-    let inUsdt = Number(BigInt(opp.amountInRaw)) / 1e6;
-    let takerPays;
-    let buyAmount;
-    let firmOutUsdt;
+    const initialAmountRaw = BigInt(opp.amountInRaw);
 
-    if (isTextileToUni) {
-      let reqInRaw = BigInt(opp.amountInRaw);
-      q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
-        taker: CONFIG.flashRouterAddress,
-      }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
-      if (!q?.transactions?.swap?.data) {
-        let retryInRaw = 0n;
-        if (q?.availableSellAmount && BigInt(q.availableSellAmount) >= 10_000000n && BigInt(q.availableSellAmount) < reqInRaw) {
-          retryInRaw = (BigInt(q.availableSellAmount) * 98n) / 100n;
-        } else if (reqInRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
-          // ponytail: step down 45% in the same tick when Maker partially reloaded/drained since /levels snapshot
-          retryInRaw = (reqInRaw * 55n) / 100n;
-        }
-        if (retryInRaw >= 10_000000n) {
-          reqInRaw = retryInRaw;
-          q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
-            taker: CONFIG.flashRouterAddress,
-          }).catch(() => null);
-        } else if (q?.__err) {
-          throw q.__err;
-        }
-      }
-      const toAddr = q?.transactions?.swap?.to;
-      const calldata = q?.transactions?.swap?.data;
-      if (!toAddr || !calldata) return null;
-      if (isSelfMakerOrder(calldata)) return null;
-      const expRaw = q?.quote?.expiresAt;
-      const expMs = typeof expRaw === 'string' ? Date.parse(expRaw) : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
-      if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+    // ponytail: inner quote+verify pass lets [FIRM-GUARD] step down once when a synthetic/large slice falls off a tight Maker's cap onto a wide backstop Maker
+    const requestAndCheckFlashSlice = async (sliceUsdtRaw, isPrimaryAttempt) => {
+      let q;
+      let inUsdt = Number(sliceUsdtRaw) / 1e6;
+      let takerPays;
+      let buyAmount;
+      let firmOutUsdt;
 
-      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
-      buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
-      if (takerPays <= 0n || buyAmount <= 0n) return null;
-      const previewMidRaw = BigInt(opp.midTokenRaw || 0);
-      const canReuseFreshUni =
-        isFreshScan &&
-        Number(opp.expectedOutUsdt) > 0 &&
-        previewMidRaw > 0n &&
-        buyAmount * 100n >= previewMidRaw * 97n &&
-        buyAmount * 100n <= previewMidRaw * 103n;
-      if (canReuseFreshUni) {
-        // ponytail: skip redundant 200ms QuoterV2 RTT when firm buyAmount matches fresh (<1.5s) scan; SkewAtomicRouter enforces InsufficientProfit in estimateGas
-        firmOutUsdt = Number(opp.expectedOutUsdt) * (Number(buyAmount) / Number(previewMidRaw));
+      if (isTextileToUni) {
+        let reqInRaw = sliceUsdtRaw;
+        q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
+          taker: CONFIG.flashRouterAddress,
+        }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
+        if (!q?.transactions?.swap?.data) {
+          let retryInRaw = 0n;
+          if (
+            q?.availableSellAmount &&
+            BigInt(q.availableSellAmount) >= 10_000000n &&
+            BigInt(q.availableSellAmount) < reqInRaw
+          ) {
+            retryInRaw = (BigInt(q.availableSellAmount) * 98n) / 100n;
+          } else if (reqInRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
+            retryInRaw = (reqInRaw * 55n) / 100n;
+          }
+          if (retryInRaw >= 10_000000n) {
+            reqInRaw = retryInRaw;
+            q = await textileRequestQuote(CONFIG.contracts.usdt, opp.tokenAddress, reqInRaw, {
+              taker: CONFIG.flashRouterAddress,
+            }).catch(() => null);
+          } else if (q?.__err) {
+            throw q.__err;
+          }
+        }
+        const toAddr = q?.transactions?.swap?.to;
+        const calldata = q?.transactions?.swap?.data;
+        if (!toAddr || !calldata) return null;
+        if (isSelfMakerOrder(calldata)) return null;
+        const expRaw = q?.quote?.expiresAt;
+        const expMs =
+          typeof expRaw === 'string'
+            ? Date.parse(expRaw)
+            : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
+        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+
+        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
+        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
+        if (takerPays <= 0n || buyAmount <= 0n) return null;
+        const previewMidRaw = BigInt(opp.midTokenRaw || 0);
+        const canReuseFreshUni =
+          isPrimaryAttempt &&
+          reqInRaw === initialAmountRaw &&
+          isFreshScan &&
+          Number(opp.expectedOutUsdt) > 0 &&
+          previewMidRaw > 0n &&
+          buyAmount * 100n >= previewMidRaw * 97n &&
+          buyAmount * 100n <= previewMidRaw * 103n;
+        if (canReuseFreshUni) {
+          firmOutUsdt = Number(opp.expectedOutUsdt) * (Number(buyAmount) / Number(previewMidRaw));
+        } else {
+          const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
+          if (firmUni.amountOut <= 0n) return null;
+          firmOutUsdt = Number(firmUni.amountOut) / 1e6;
+        }
+        inUsdt = Number(takerPays) / 1e6;
       } else {
-        const firmUni = await bestUniQuote(opp.tokenAddress, CONFIG.contracts.usdt, buyAmount);
-        if (firmUni.amountOut <= 0n) return null;
-        firmOutUsdt = Number(firmUni.amountOut) / 1e6;
-      }
-      inUsdt = Number(takerPays) / 1e6;
-    } else {
-      let expectedFxRaw = BigInt(opp.midTokenRaw);
-      let amountUsdtRaw = BigInt(opp.amountInRaw);
-      if (!isFreshScan) {
-        const freshUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, amountUsdtRaw);
-        if (freshUni.amountOut <= 0n) return null;
-        expectedFxRaw = freshUni.amountOut;
-      }
-      q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
-        taker: CONFIG.flashRouterAddress,
-      }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
-      if (!q?.transactions?.swap?.data) {
-        if (q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
-          const availFx = (BigInt(q.availableSellAmount) * 98n) / 100n;
-          if (availFx > 0n && availFx < expectedFxRaw) {
-            amountUsdtRaw = (amountUsdtRaw * availFx) / expectedFxRaw;
-            expectedFxRaw = availFx;
-            q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
-              taker: CONFIG.flashRouterAddress,
-            }).catch(() => null);
-          }
-        } else if (amountUsdtRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
-          const steppedUsdtRaw = (amountUsdtRaw * 55n) / 100n;
-          const steppedUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, steppedUsdtRaw);
-          if (steppedUni.amountOut > 0n) {
-            amountUsdtRaw = steppedUsdtRaw;
-            expectedFxRaw = steppedUni.amountOut;
-            q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
-              taker: CONFIG.flashRouterAddress,
-            }).catch(() => null);
+        let amountUsdtRaw = sliceUsdtRaw;
+        let expectedFxRaw;
+        if (isPrimaryAttempt && amountUsdtRaw === initialAmountRaw && isFreshScan) {
+          expectedFxRaw = BigInt(opp.midTokenRaw);
+        } else {
+          const freshUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, amountUsdtRaw);
+          if (freshUni.amountOut <= 0n) return null;
+          expectedFxRaw = freshUni.amountOut;
+        }
+        q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+          taker: CONFIG.flashRouterAddress,
+        }).catch((err) => ({ __err: err, availableSellAmount: err?.availableSellAmount }));
+        if (!q?.transactions?.swap?.data) {
+          if (q?.availableSellAmount && BigInt(q.availableSellAmount) > 0n) {
+            const availFx = (BigInt(q.availableSellAmount) * 98n) / 100n;
+            if (availFx > 0n && availFx < expectedFxRaw) {
+              amountUsdtRaw = (amountUsdtRaw * availFx) / expectedFxRaw;
+              expectedFxRaw = availFx;
+              q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+                taker: CONFIG.flashRouterAddress,
+              }).catch(() => null);
+            }
+          } else if (amountUsdtRaw > 1000_000000n && /liquidity|exceed|max|amount/i.test(q?.__err?.message || '')) {
+            const steppedUsdtRaw = (amountUsdtRaw * 55n) / 100n;
+            const steppedUni = await bestUniQuote(CONFIG.contracts.usdt, opp.tokenAddress, steppedUsdtRaw);
+            if (steppedUni.amountOut > 0n) {
+              amountUsdtRaw = steppedUsdtRaw;
+              expectedFxRaw = steppedUni.amountOut;
+              q = await textileRequestQuote(opp.tokenAddress, CONFIG.contracts.usdt, expectedFxRaw, {
+                taker: CONFIG.flashRouterAddress,
+              }).catch(() => null);
+            }
           }
         }
+        const toAddr = q?.transactions?.swap?.to;
+        const calldata = q?.transactions?.swap?.data;
+        if (!toAddr || !calldata) return null;
+        if (isSelfMakerOrder(calldata)) return null;
+        const expRaw = q?.quote?.expiresAt;
+        const expMs =
+          typeof expRaw === 'string'
+            ? Date.parse(expRaw)
+            : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
+        if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
+
+        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
+        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
+        if (takerPays <= 0n || buyAmount <= 0n) return null;
+        inUsdt = (Number(amountUsdtRaw) / 1e6) * (Number(takerPays) / Math.max(1, Number(expectedFxRaw)));
+        firmOutUsdt = Number(buyAmount) / 1e6;
       }
-      const toAddr = q?.transactions?.swap?.to;
-      const calldata = q?.transactions?.swap?.data;
-      if (!toAddr || !calldata) return null;
-      if (isSelfMakerOrder(calldata)) return null;
-      const expRaw = q?.quote?.expiresAt;
-      const expMs = typeof expRaw === 'string' ? Date.parse(expRaw) : Number(expRaw || 0) * (Number(expRaw || 0) < 1e12 ? 1000 : 1);
-      if (Number.isFinite(expMs) && expMs > 0 && expMs <= Date.now() + 1500) return null;
 
-      takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
-      buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
-      if (takerPays <= 0n || buyAmount <= 0n) return null;
-      inUsdt = (Number(amountUsdtRaw) / 1e6) * (Number(takerPays) / Math.max(1, Number(expectedFxRaw)));
-      firmOutUsdt = Number(buyAmount) / 1e6;
+      const firmCheck = verifyFirmArbQuote({
+        inUsdt,
+        firmOutUsdt,
+        minNetEdgeBps: CONFIG.minFlashEdgeBps ?? 0.05,
+      });
+      return { q, inUsdt, takerPays, buyAmount, firmOutUsdt, firmCheck };
+    };
+
+    let attempt = await requestAndCheckFlashSlice(initialAmountRaw, true);
+    if (!attempt) return null;
+    if (!attempt.firmCheck.ok && attempt.inUsdt >= 250) {
+      const safeKnotRaw = opp.safeKnotInRaw ? BigInt(opp.safeKnotInRaw) : 0n;
+      const stepDownRaw =
+        safeKnotRaw >= 25_000000n && safeKnotRaw * 100n <= initialAmountRaw * 88n
+          ? safeKnotRaw
+          : (initialAmountRaw * 50n) / 100n;
+      if (stepDownRaw >= 25_000000n) {
+        console.log(
+          `[FIRM-STEPDOWN] Cliff/drain on ${opp.corridor} (${opp.direction}) $${attempt.inUsdt.toFixed(0)} -> firmNet=${attempt.firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${attempt.firmCheck.netEdgeUsd.toFixed(3)}; retrying $${(Number(stepDownRaw) / 1e6).toFixed(0)}...`
+        );
+        const retryAttempt = await requestAndCheckFlashSlice(stepDownRaw, false);
+        if (retryAttempt) attempt = retryAttempt;
+      }
     }
-
-    const firmCheck = verifyFirmArbQuote({
-      inUsdt,
-      firmOutUsdt,
-      minNetEdgeBps: CONFIG.minFlashEdgeBps ?? 0.05,
-    });
+    const { q, inUsdt, takerPays, buyAmount, firmCheck } = attempt;
     if (!firmCheck.ok) {
       console.log(
         `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason})`
