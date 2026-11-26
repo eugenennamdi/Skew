@@ -523,8 +523,8 @@ export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei
   const edge = Number(expectedProfitUsd) || 0;
   if (edge >= 10.0) return Math.max(base, 560);
   if (edge >= 2.0) return Math.max(base, 525);
-  if (edge >= 0.5) return Math.max(base, 260);
-  if (edge >= 0.25) return Math.max(base, 165);
+  if (edge >= 0.5) return Math.max(base, 520);
+  if (edge >= 0.25) return Math.max(base, 220);
   return base;
 }
 

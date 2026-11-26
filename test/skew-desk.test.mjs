@@ -904,7 +904,7 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
-  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-85\}"/);
+  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-138\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-500\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-620\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
@@ -1563,15 +1563,15 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
 });
 
 test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20k+ USAT whale waves', async () => {
-  assert.equal(computeDynamicPriorityTipGwei(0.05, 85), 85);
-  assert.equal(computeDynamicPriorityTipGwei(0.249, 85), 85);
-  assert.equal(computeDynamicPriorityTipGwei(0.25, 85), 165);
-  assert.equal(computeDynamicPriorityTipGwei(0.49, 85), 165);
-  assert.equal(computeDynamicPriorityTipGwei(1.85, 85), 260);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 525);
-  assert.equal(computeDynamicPriorityTipGwei(9.5, 85), 525);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 560);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 85), 560);
+  assert.equal(computeDynamicPriorityTipGwei(0.05, 138), 138);
+  assert.equal(computeDynamicPriorityTipGwei(0.249, 138), 138);
+  assert.equal(computeDynamicPriorityTipGwei(0.25, 138), 220);
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 138), 220);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 138), 520);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 138), 525);
+  assert.equal(computeDynamicPriorityTipGwei(9.5, 138), 525);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 138), 560);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 138), 560);
   assert.equal(computeDynamicPriorityTipGwei(2.0, 600), 600);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
@@ -2135,10 +2135,11 @@ test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self
   assert.equal(computeNextScanDelayMs(680, 620), 80, 'slight overrun waits 80ms floor instead of dropping a full 1050ms tick');
   assert.equal(computeNextScanDelayMs(18_500, 620), 80, 'post-CHASE scan resumes after 80ms');
 
-  // 2. Whale & mid-clip priority tips outbid 701-gwei EOA rivals (~202 base + 525/560 tip = 727-762 gwei) on all >=$2 sweeps
-  assert.equal(computeDynamicPriorityTipGwei(1.99, 85), 260);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 85), 525);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 85), 560);
+  // 2. Whale & mid-clip priority tips outbid 701-gwei EOA rivals (~202 base + 520/525/560 tip = 722-762 gwei) on all >=$0.50 sweeps
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 138), 220);
+  assert.equal(computeDynamicPriorityTipGwei(0.5, 138), 520);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 138), 525);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 138), 560);
 
   // 3. Parallel pipeline starts QuoterV2 universe scan as soon as /levels resolves (~30ms) while RPC bundle (~95ms) is still in flight
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2405,5 +2406,45 @@ test('43. Closed-market phantom quote quarantine stops COPM $25 no_quote quota d
     assert.equal(exec.isOpportunityCoolingDown({ ...copmOpp, edgeBps: 75.0 }), false);
   } finally {
     if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
+});
+
+test('44. Base 138-gwei priority tip outbids 320/325-gwei rivals & wARS 12bps Maker lean floor blocks passive pickoffs', () => {
+  // 1. At 202.5 gwei Celo baseFee, 138 gwei base tip = 340.5 gwei (> 320 gwei 0x7e68 & 325.3 gwei 0x077328), and $0.50+ = 722.5 gwei (> 701 gwei 0xdc7d)
+  const celoBaseGwei = 202.5;
+  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.08, 138) > 325.3);
+  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.55, 138) > 701.1);
+
+  // 2. wARS/USDT passive Maker lean_floor_bps is enforced at 12.0 in both skew-policy.json and stitch.runtime.toml
+  const tmpPolicy = path.join(os.tmpdir(), `skew-policy.warsfloor.${Date.now()}.json`);
+  const tmpRuntimeToml = path.join(os.tmpdir(), `stitch.runtime.warsfloor.${Date.now()}.toml`);
+  try {
+    const skewMetrics = computeSkewAndQuotes({ usdtUsd: 293.8, cngnBalance: 7275, textileMid: 0.000695, uniMid: 0.000696 });
+    const risk = computeRiskOfficerDecisions({
+      usdt: 293.8,
+      cngn: 7275,
+      wars: 8796,
+      wbrl: 29.1,
+      usdc: 6.5,
+      uniCngnMid: 0.000696,
+      uniWarsMid: 0.000568,
+      skewMetrics,
+    });
+    syncStitchRuntimePolicy(risk, tmpPolicy);
+    syncStitchRuntimeConfig(risk, path.join(repoRoot, 'stitch.toml'), tmpRuntimeToml);
+    const policyJson = JSON.parse(fs.readFileSync(tmpPolicy, 'utf8'));
+    const warsAddr = CONFIG.tokens.find((t) => t.symbol === 'wARS').address;
+    const usdcAddr = CONFIG.tokens.find((t) => t.symbol === 'USDC').address;
+    assert.equal(policyJson.corridors[warsAddr].lean_floor_bps, 12.0);
+    assert.equal(policyJson.corridors[usdcAddr].lean_floor_bps, 8.0);
+    assert.equal(policyJson.corridors[CONFIG.tokens[0].address].lean_floor_bps, 1.0);
+
+    const runtimeToml = fs.readFileSync(tmpRuntimeToml, 'utf8');
+    const warsSection = runtimeToml.split('[[pools]]').find((b) => b.includes('"wars-usdt-celo"'));
+    assert.match(warsSection, /lean_floor_bps\s*=\s*12\.0/);
+  } finally {
+    for (const p of [tmpPolicy, tmpRuntimeToml]) {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
   }
 });

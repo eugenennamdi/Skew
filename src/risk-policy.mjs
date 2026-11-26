@@ -720,7 +720,7 @@ export function syncStitchRuntimePolicy(
       ewma_vol_bps: Number((d.ewmaVolBps ?? 0).toFixed(2)),
       markout_toxicity_bps: markoutToxicityBps,
       session_horizon_hours: d.sessionHorizonHours ?? 4.0,
-      lean_floor_bps: d.corridor === 'USDC/USDT' ? 8.0 : 1.0,
+      lean_floor_bps: d.corridor === 'wARS/USDT' ? 12.0 : d.corridor === 'USDC/USDT' ? 8.0 : 1.0,
       dex_mid: d.dexMidUsd ?? null,
       fail_closed_without_dex: false,
     };
@@ -758,8 +758,9 @@ export function syncStitchRuntimeConfig(
     const rewritten = block
       .replace(/buy_offset_bps\s*=\s*\d+/, `buy_offset_bps                  = ${dec.stitchBuyOffsetBps}`)
       .replace(/sell_offset_bps\s*=\s*\d+/, `sell_offset_bps                 = ${dec.stitchSellOffsetBps}`);
-    return dec.corridor === 'USDC/USDT'
-      ? rewritten.replace(/lean_floor_bps\s*=\s*[\d.]+/, 'lean_floor_bps                  = 8.0')
+    const targetLeanFloor = dec.corridor === 'wARS/USDT' ? '12.0' : dec.corridor === 'USDC/USDT' ? '8.0' : null;
+    return targetLeanFloor
+      ? rewritten.replace(/lean_floor_bps\s*=\s*[\d.]+/, `lean_floor_bps                  = ${targetLeanFloor}`)
       : rewritten;
   });
   const nextToml = rewrittenBlocks.join('[[pools]]');
