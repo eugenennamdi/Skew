@@ -559,9 +559,10 @@ export function computeRiskOfficerDecisions({
   // which would subtract ~3.4 bps and slam a 3 bps baseBuy down to 1 bps — causing Maker self-matches on $350 uni->textile sweeps.
   // Boosting baseBuy by +5 bps (+3 on USDC) keeps Maker Bids at high-margin ~5-6 bps net while leaving top-of-book clear for Taker arbs.
   const emBaseBuy = compactFloatMode ? 8 : 3;
+  const warsBaseBuy = compactFloatMode ? 16 : 3;
   const usdcBaseBuy = compactFloatMode ? 5 : 2;
   const cngnAdj = resolveAdjustments('cNGN', 'cNGN/USDT', emBaseBuy, 3, cngnSession, 8.5);
-  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', emBaseBuy, 3, warsSession, 13.3);
+  const warsAdj = resolveAdjustments('wARS', 'wARS/USDT', warsBaseBuy, 3, warsSession, 13.3);
   const wbrlAdj = resolveAdjustments('wBRL', 'wBRL/USDT', emBaseBuy, 3, wbrlSession, 4.2);
   const usdcAdj = resolveAdjustments('USDC', 'USDC/USDT', usdcBaseBuy, 1, usdcSession, 0.0);
 

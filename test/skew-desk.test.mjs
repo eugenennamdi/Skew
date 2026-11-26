@@ -2429,18 +2429,21 @@ test('44. Base 138-gwei priority tip outbids 320/325-gwei rivals & wARS 12bps Ma
       uniCngnMid: 0.000696,
       uniWarsMid: 0.000568,
       skewMetrics,
+      targetCorridorUsd: 5,
     });
     syncStitchRuntimePolicy(risk, tmpPolicy);
     syncStitchRuntimeConfig(risk, path.join(repoRoot, 'stitch.toml'), tmpRuntimeToml);
     const policyJson = JSON.parse(fs.readFileSync(tmpPolicy, 'utf8'));
     const warsAddr = CONFIG.tokens.find((t) => t.symbol === 'wARS').address;
     const usdcAddr = CONFIG.tokens.find((t) => t.symbol === 'USDC').address;
+    assert.equal(policyJson.corridors[warsAddr].buy_offset_bps, 16);
     assert.equal(policyJson.corridors[warsAddr].lean_floor_bps, 12.0);
     assert.equal(policyJson.corridors[usdcAddr].lean_floor_bps, 8.0);
     assert.equal(policyJson.corridors[CONFIG.tokens[0].address].lean_floor_bps, 1.0);
 
     const runtimeToml = fs.readFileSync(tmpRuntimeToml, 'utf8');
     const warsSection = runtimeToml.split('[[pools]]').find((b) => b.includes('"wars-usdt-celo"'));
+    assert.match(warsSection, /buy_offset_bps\s*=\s*16/);
     assert.match(warsSection, /lean_floor_bps\s*=\s*12\.0/);
   } finally {
     for (const p of [tmpPolicy, tmpRuntimeToml]) {
