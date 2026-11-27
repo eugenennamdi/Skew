@@ -904,7 +904,7 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
-  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-138\}"/);
+  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-170\}"/);
   assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-500\}"/);
   assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-620\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
@@ -1563,16 +1563,16 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
 });
 
 test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20k+ USAT whale waves', async () => {
-  assert.equal(computeDynamicPriorityTipGwei(0.05, 138), 138);
-  assert.equal(computeDynamicPriorityTipGwei(0.249, 138), 138);
-  assert.equal(computeDynamicPriorityTipGwei(0.25, 138), 220);
-  assert.equal(computeDynamicPriorityTipGwei(0.49, 138), 220);
-  assert.equal(computeDynamicPriorityTipGwei(1.85, 138), 520);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 138), 525);
-  assert.equal(computeDynamicPriorityTipGwei(9.5, 138), 525);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 138), 560);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 138), 560);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 600), 600);
+  assert.equal(computeDynamicPriorityTipGwei(0.05, 170), 170);
+  assert.equal(computeDynamicPriorityTipGwei(0.249, 170), 170);
+  assert.equal(computeDynamicPriorityTipGwei(0.25, 170), 260);
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 170), 260);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 170), 640);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 170), 960);
+  assert.equal(computeDynamicPriorityTipGwei(9.5, 170), 960);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 170), 1500);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 170), 1500);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 1200), 1200);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 12000);
@@ -2135,11 +2135,11 @@ test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self
   assert.equal(computeNextScanDelayMs(680, 620), 80, 'slight overrun waits 80ms floor instead of dropping a full 1050ms tick');
   assert.equal(computeNextScanDelayMs(18_500, 620), 80, 'post-CHASE scan resumes after 80ms');
 
-  // 2. Whale & mid-clip priority tips outbid 701-gwei EOA rivals (~202 base + 520/525/560 tip = 722-762 gwei) on all >=$0.50 sweeps
-  assert.equal(computeDynamicPriorityTipGwei(0.49, 138), 220);
-  assert.equal(computeDynamicPriorityTipGwei(0.5, 138), 520);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 138), 525);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 138), 560);
+  // 2. Whale & mid-clip priority tips outbid 701-765 gwei rivals (~202 base + 640/960/1500 tip = 842-1702 gwei) on all >=$0.50 sweeps
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 170), 260);
+  assert.equal(computeDynamicPriorityTipGwei(0.5, 170), 640);
+  assert.equal(computeDynamicPriorityTipGwei(2.0, 170), 960);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 170), 1500);
 
   // 3. Parallel pipeline starts QuoterV2 universe scan as soon as /levels resolves (~30ms) while RPC bundle (~95ms) is still in flight
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2412,8 +2412,8 @@ test('43. Closed-market phantom quote quarantine stops COPM $25 no_quote quota d
 test('44. Base 138-gwei priority tip outbids 320/325-gwei rivals & wARS 12bps Maker lean floor blocks passive pickoffs', () => {
   // 1. At 202.5 gwei Celo baseFee, 138 gwei base tip = 340.5 gwei (> 320 gwei 0x7e68 & 325.3 gwei 0x077328), and $0.50+ = 722.5 gwei (> 701 gwei 0xdc7d)
   const celoBaseGwei = 202.5;
-  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.08, 138) > 325.3);
-  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.55, 138) > 701.1);
+  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.08, 170) > 345.0);
+  assert.ok(celoBaseGwei + computeDynamicPriorityTipGwei(0.55, 170) > 765.0);
 
   // 2. wARS/USDT passive Maker lean_floor_bps is enforced at 12.0 in both skew-policy.json and stitch.runtime.toml
   const tmpPolicy = path.join(os.tmpdir(), `skew-policy.warsfloor.${Date.now()}.json`);
@@ -2450,4 +2450,21 @@ test('44. Base 138-gwei priority tip outbids 320/325-gwei rivals & wARS 12bps Ma
       if (fs.existsSync(p)) fs.unlinkSync(p);
     }
   }
+});
+
+test('45. Anti-penny-jump sub-gwei jittered priority gas outbids 345/765-gwei copycat sniper while keeping whale gas <0.3%', () => {
+  const celoBase = 202.5;
+  const baseJit = computeDynamicPriorityTipGwei(0.04, 170, 0.537);
+  assert.ok(baseJit > 184 && baseJit < 185, `expected sub-gwei non-integer tip ~184.499, got ${baseJit}`);
+  assert.notEqual(baseJit % 1, 0, 'sub-gwei jitter prevents static integer fingerprinting on Blockscout');
+  assert.ok(celoBase + baseJit > 345.0, 'base + jitter must outbid 0x077328 345 gwei');
+
+  const midJit = computeDynamicPriorityTipGwei(0.75, 170, 0.412);
+  assert.ok(celoBase + midJit > 765.0, '$0.50+ tier must outbid 0x077328 765 gwei');
+
+  const whaleJit = computeDynamicPriorityTipGwei(12.0, 170, 0.889);
+  assert.ok(whaleJit > 1550 && whaleJit <= 1565);
+  // 280k gas * (202.5 + 1565) gwei * $0.056/CELO = ~$0.0277 (< 0.28% of a $10+ whale win!)
+  const estWhaleGasUsd = ((280_000 * (celoBase + whaleJit)) / 1e9) * 0.056;
+  assert.ok(estWhaleGasUsd < 0.03, `expected <$0.03 gas on $10+ whale, got $${estWhaleGasUsd.toFixed(4)}`);
 });

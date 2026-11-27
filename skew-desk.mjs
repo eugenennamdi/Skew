@@ -518,14 +518,20 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
   return { tripped: false, reason: 'ok', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
 }
 
-export function computeDynamicPriorityTipGwei(expectedProfitUsd = 0, baseTipGwei = CONFIG.priorityTipGwei || 20) {
+// ponytail: profit-proportional priority gas + optional sub-gwei jitter defeats static Blockscout penny-jumping (e.g. 0x077328 +5gwei) for <2c on whales
+export function computeDynamicPriorityTipGwei(
+  expectedProfitUsd = 0,
+  baseTipGwei = CONFIG.priorityTipGwei || 20,
+  jitterUnit = 0
+) {
   const base = Number(baseTipGwei) || 20;
   const edge = Number(expectedProfitUsd) || 0;
-  if (edge >= 10.0) return Math.max(base, 560);
-  if (edge >= 2.0) return Math.max(base, 525);
-  if (edge >= 0.5) return Math.max(base, 520);
-  if (edge >= 0.25) return Math.max(base, 220);
-  return base;
+  const j = Math.max(0, Math.min(1, Number(jitterUnit) || 0));
+  if (edge >= 10.0) return Number((Math.max(base, 1500) + j * 65).toFixed(3));
+  if (edge >= 2.0) return Number((Math.max(base, 960) + j * 45).toFixed(3));
+  if (edge >= 0.5) return Number((Math.max(base, 640) + j * 35).toFixed(3));
+  if (edge >= 0.25) return Number((Math.max(base, 260) + j * 27).toFixed(3));
+  return Number((base + j * 27).toFixed(3));
 }
 
 export async function sendTagged(txReq, opts = {}) {
@@ -549,8 +555,11 @@ export async function sendTagged(txReq, opts = {}) {
     }
     if (baseGasPrice) {
       if (opts.priorityTip) {
-        // ponytail: profit-tiered EIP-1559 priority tip (65 gwei base -> 140 gwei mid -> 260 gwei on >=$2 whale clips) wins idx 1 without overpaying on micro-arbs
-        const tipGwei = computeDynamicPriorityTipGwei(opts.expectedProfitUsd, CONFIG.priorityTipGwei || 20);
+        const tipGwei = computeDynamicPriorityTipGwei(
+          opts.expectedProfitUsd,
+          CONFIG.priorityTipGwei || 20,
+          Math.random()
+        );
         const tipWei = BigInt(Math.round(tipGwei * 1e9));
         const baseMult = Number(opts.expectedProfitUsd || 0) >= 2.0 ? 200n : 140n;
         tagged.type = 2;
