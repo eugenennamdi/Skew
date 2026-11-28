@@ -12,6 +12,89 @@ const FLASH_ROUTER_ARTIFACT = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, 'contracts', 'SkewAtomicRouter.artifact.json'), 'utf8')
 );
 const flashRouterIface = new ethers.Interface(FLASH_ROUTER_ARTIFACT.abi);
+const REACTOR_BATCH_IFACE = new ethers.Interface(['function executeBatch((bytes order, bytes sig)[] orders)']);
+const LIMIT_ORDER_ABI_TYPE =
+  'tuple(tuple(address reactor, address swapper, uint256 nonce, uint256 deadline, address additionalValidationContract, bytes additionalValidationData) info, tuple(address token, uint256 amount, uint256 maxAmount) input, tuple(address token, uint256 amount, address recipient)[] outputs)';
+
+// ponytail: strip our own skew-stitch LimitOrder out of multi-maker Reactor.executeBatch (0x0d7a16c3) so $100-$2,000 external whales aren't aborted by $5-$10 self-quotes
+export function stripSelfMakerFromBatch(
+  calldata,
+  origTakerPaysRaw,
+  origBuyAmountRaw,
+  { reactorAddr, selfWallet, erc8021SuffixHex = '' } = {}
+) {
+  if (!calldata || typeof calldata !== 'string' || !reactorAddr || !selfWallet) return null;
+  let rawHex = calldata.startsWith('0x') ? calldata.slice(2) : calldata;
+  const sfx = String(erc8021SuffixHex || '').toLowerCase();
+  if (sfx && rawHex.toLowerCase().endsWith(sfx) && (rawHex.length - 8) % 64 !== 0) {
+    rawHex = rawHex.slice(0, -sfx.length);
+  }
+  if (!rawHex.toLowerCase().startsWith('0d7a16c3')) return null;
+
+  let orders;
+  try {
+    [orders] = REACTOR_BATCH_IFACE.decodeFunctionData('executeBatch', '0x' + rawHex);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(orders) || orders.length <= 1) return null;
+
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const reactorLower = reactorAddr.toLowerCase();
+  const selfLower = selfWallet.toLowerCase();
+  const keptOrders = [];
+  let totalInAmt = 0n;
+  let totalOutAmt = 0n;
+  let keptInAmt = 0n;
+  let keptOutAmt = 0n;
+  let keptOutWith2Bps = 0n;
+
+  for (const item of orders) {
+    let lo;
+    try {
+      [lo] = coder.decode([LIMIT_ORDER_ABI_TYPE], item.order);
+    } catch {
+      return null;
+    }
+    if (String(lo?.info?.reactor || '').toLowerCase() !== reactorLower) return null;
+    const inAmt = BigInt(lo.input?.amount || 0);
+    const outAmt = (lo.outputs || []).reduce((acc, o) => acc + BigInt(o.amount || 0), 0n);
+    if (inAmt <= 0n || outAmt <= 0n) return null;
+    totalInAmt += inAmt;
+    totalOutAmt += outAmt;
+    if (String(lo.info?.swapper || '').toLowerCase() !== selfLower) {
+      keptOrders.push({ order: item.order, sig: item.sig });
+      keptInAmt += inAmt;
+      keptOutAmt += outAmt;
+      keptOutWith2Bps += outAmt + (outAmt * 2n) / 10000n;
+    }
+  }
+
+  if (
+    keptOrders.length === 0 ||
+    keptOrders.length === orders.length ||
+    keptInAmt <= 0n ||
+    keptOutAmt <= 0n ||
+    totalInAmt <= 0n ||
+    totalOutAmt <= 0n
+  ) {
+    return null;
+  }
+
+  const newCalldata = REACTOR_BATCH_IFACE.encodeFunctionData('executeBatch', [keptOrders]);
+  const origBuy = BigInt(origBuyAmountRaw || 0);
+  const origPays = BigInt(origTakerPaysRaw || 0);
+  const newBuyAmount = origBuy > 0n ? (origBuy * keptInAmt) / totalInAmt : keptInAmt;
+  const propPays = origPays > 0n ? (origPays * keptOutAmt + totalOutAmt - 1n) / totalOutAmt : keptOutWith2Bps;
+  const newTakerPays = (propPays > keptOutWith2Bps ? propPays : keptOutWith2Bps) + BigInt(keptOrders.length * 2);
+  return {
+    calldata: newCalldata,
+    takerPays: newTakerPays,
+    buyAmount: newBuyAmount,
+    keptCount: keptOrders.length,
+    removedCount: orders.length - keptOrders.length,
+  };
+}
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -47,7 +130,7 @@ export function createExecutionManager({
   function isOpportunityCoolingDown(opp, now = Date.now()) {
     if (!opp?.corridor || !opp?.direction) return false;
     const flashKey = `flash:${opp.corridor}:${opp.direction}`;
-    if ((baitCooldownUntil.get(flashKey) || 0) > now) return true;
+    if ((baitCooldownUntil.get(flashKey) || 0) > now && Number(opp.edgeUsd || 0) < 1.0) return true;
     const pKey = `phantom:${opp.corridor}:${opp.direction}`;
     const entry = phantomQuoteCooldown.get(pKey);
     if (!entry) return false;
@@ -55,18 +138,30 @@ export function createExecutionManager({
     // Instant wakeup if spread jumps >= +15 bps or clip size shifts >= 30% (real Maker reload or DEX move)
     if (Number(opp.edgeBps || 0) >= entry.edgeBps + 15) return false;
     if (Math.abs(Number(opp.sizeUsdt || 0) - entry.sizeUsdt) / Math.max(1, entry.sizeUsdt) >= 0.3) return false;
+    // Live-market whale wakeup: never blindfold open FX corridors when a >=$0.35 whale or +8bps reload arrives
+    if (
+      !entry.isMarketClosed &&
+      (Number(opp.edgeUsd || 0) >= Math.max(0.35, (entry.edgeUsd || 0) + 0.2) ||
+        Number(opp.edgeBps || 0) >= entry.edgeBps + 8)
+    ) {
+      return false;
+    }
     return true;
   }
 
-  function recordPhantomQuoteStrike(opp, baseMs = 45_000) {
+  function recordPhantomQuoteStrike(opp, baseMs = 45_000, { isMarketClosed = false, escalate = true } = {}) {
     const pKey = `phantom:${opp.corridor}:${opp.direction}`;
     const prev = phantomQuoteCooldown.get(pKey);
-    const strikes = (prev?.strikes || 0) + 1;
-    const ttlMs = Math.min(180_000, baseMs * (strikes === 1 ? 1 : strikes === 2 ? 2 : 4));
+    const strikes = escalate ? (prev?.strikes || 0) + 1 : 0;
+    const ttlMs = escalate
+      ? Math.min(180_000, baseMs * (strikes === 1 ? 1 : strikes === 2 ? 2 : 4))
+      : baseMs;
     phantomQuoteCooldown.set(pKey, {
       untilMs: Date.now() + ttlMs,
       edgeBps: Number(opp.edgeBps || 0),
+      edgeUsd: Number(opp.edgeUsd || 0),
       sizeUsdt: Number(opp.sizeUsdt || 0),
+      isMarketClosed: Boolean(isMarketClosed),
       strikes,
     });
     return ttlMs;
@@ -175,6 +270,8 @@ export function createExecutionManager({
     const isFreshScan = Boolean(opp.scannedAtMs && Date.now() - opp.scannedAtMs <= 1500);
     const initialAmountRaw = BigInt(opp.amountInRaw);
     let lastDeclineReason = 'no_firm_quote';
+    let lastIsMarketClosed = false;
+    let lastIsPhantomNoQuote = false;
 
     // ponytail: inner quote+verify pass lets [FIRM-GUARD] step down once when a synthetic/large slice falls off a tight Maker's cap onto a wide backstop Maker
     const requestAndCheckFlashSlice = async (sliceUsdtRaw, isPrimaryAttempt) => {
@@ -183,6 +280,7 @@ export function createExecutionManager({
       let takerPays;
       let buyAmount;
       let firmOutUsdt;
+      let strippedSelfBatch = false;
 
       if (isTextileToUni) {
         let reqInRaw = sliceUsdtRaw;
@@ -210,14 +308,33 @@ export function createExecutionManager({
           }
         }
         const toAddr = q?.transactions?.swap?.to;
-        const calldata = q?.transactions?.swap?.data;
+        let calldata = q?.transactions?.swap?.data;
         if (!toAddr || !calldata) {
-          lastDeclineReason = q?.feed?.status === 'market_closed' ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
+          lastIsMarketClosed = q?.feed?.status === 'market_closed';
+          lastIsPhantomNoQuote = lastIsMarketClosed || q?.status === 'no_quote';
+          lastDeclineReason = lastIsMarketClosed ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
           return null;
         }
+        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
+        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
         if (isSelfMakerOrder(calldata)) {
-          lastDeclineReason = 'self_maker_order';
-          return null;
+          const stripped = stripSelfMakerFromBatch(calldata, takerPays, buyAmount, {
+            reactorAddr: CONFIG.contracts.reactor,
+            selfWallet: CONFIG.agentWallet,
+            erc8021SuffixHex: CONFIG.erc8021SuffixHex,
+          });
+          if (!stripped || isSelfMakerOrder(stripped.calldata)) {
+            lastDeclineReason = 'self_maker_order';
+            return null;
+          }
+          calldata = stripped.calldata;
+          q.transactions.swap.data = calldata;
+          takerPays = stripped.takerPays;
+          buyAmount = stripped.buyAmount;
+          strippedSelfBatch = true;
+          console.log(
+            `[BATCH-STRIP] Stripped ${stripped.removedCount} self-maker order(s) from ${opp.corridor} (textile->uni); keeping ${stripped.keptCount} external maker(s) ($${(Number(takerPays) / 1e6).toFixed(2)})`
+          );
         }
         const expRaw = q?.quote?.expiresAt;
         const expMs =
@@ -229,11 +346,10 @@ export function createExecutionManager({
           return null;
         }
 
-        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || reqInRaw);
-        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
         if (takerPays <= 0n || buyAmount <= 0n) return null;
         const previewMidRaw = BigInt(opp.midTokenRaw || 0);
         const canReuseFreshUni =
+          !strippedSelfBatch &&
           isPrimaryAttempt &&
           reqInRaw === initialAmountRaw &&
           isFreshScan &&
@@ -285,14 +401,33 @@ export function createExecutionManager({
           }
         }
         const toAddr = q?.transactions?.swap?.to;
-        const calldata = q?.transactions?.swap?.data;
+        let calldata = q?.transactions?.swap?.data;
         if (!toAddr || !calldata) {
-          lastDeclineReason = q?.feed?.status === 'market_closed' ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
+          lastIsMarketClosed = q?.feed?.status === 'market_closed';
+          lastIsPhantomNoQuote = lastIsMarketClosed || q?.status === 'no_quote';
+          lastDeclineReason = lastIsMarketClosed ? `market_closed(${q.feed.market || 'fx'})` : q?.reason || q?.status || 'no_firm_quote';
           return null;
         }
+        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
+        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
         if (isSelfMakerOrder(calldata)) {
-          lastDeclineReason = 'self_maker_order';
-          return null;
+          const stripped = stripSelfMakerFromBatch(calldata, takerPays, buyAmount, {
+            reactorAddr: CONFIG.contracts.reactor,
+            selfWallet: CONFIG.agentWallet,
+            erc8021SuffixHex: CONFIG.erc8021SuffixHex,
+          });
+          if (!stripped || isSelfMakerOrder(stripped.calldata)) {
+            lastDeclineReason = 'self_maker_order';
+            return null;
+          }
+          calldata = stripped.calldata;
+          q.transactions.swap.data = calldata;
+          takerPays = stripped.takerPays;
+          buyAmount = stripped.buyAmount;
+          strippedSelfBatch = true;
+          console.log(
+            `[BATCH-STRIP] Stripped ${stripped.removedCount} self-maker order(s) from ${opp.corridor} (uni->textile); keeping ${stripped.keptCount} external maker(s) ($${(Number(buyAmount) / 1e6).toFixed(2)})`
+          );
         }
         const expRaw = q?.quote?.expiresAt;
         const expMs =
@@ -304,8 +439,6 @@ export function createExecutionManager({
           return null;
         }
 
-        takerPays = BigInt(q?.quote?.takerPays || q?.quote?.sellAmount || expectedFxRaw);
-        buyAmount = BigInt(q?.quote?.buyAmount || q?.buyAmount || 0);
         if (takerPays <= 0n || buyAmount <= 0n) return null;
         inUsdt = (Number(amountUsdtRaw) / 1e6) * (Number(takerPays) / Math.max(1, Number(expectedFxRaw)));
         firmOutUsdt = Number(buyAmount) / 1e6;
@@ -321,9 +454,12 @@ export function createExecutionManager({
 
     let attempt = await requestAndCheckFlashSlice(initialAmountRaw, true);
     if (!attempt) {
-      const ttlMs = recordPhantomQuoteStrike(opp, 45_000);
+      // ponytail: only apply 45s-180s phantom quarantine on genuine closed/no_quote feeds; live self-maker / expiry misses use 2.5s single-snapshot cooldown so $1-$10 wARS whales are never blindfolded
+      const ttlMs = lastIsPhantomNoQuote
+        ? recordPhantomQuoteStrike(opp, 45_000, { isMarketClosed: lastIsMarketClosed, escalate: true })
+        : recordPhantomQuoteStrike(opp, 2_500, { isMarketClosed: false, escalate: false });
       console.log(
-        `[QUOTE-SKIP] ${opp.corridor} (${opp.direction}) $${(Number(initialAmountRaw) / 1e6).toFixed(2)}: Maker declined firm quote (${lastDeclineReason}); quarantining ${Math.round(ttlMs / 1000)}s (0 gas)`
+        `[QUOTE-SKIP] ${opp.corridor} (${opp.direction}) $${(Number(initialAmountRaw) / 1e6).toFixed(2)}: Maker declined firm quote (${lastDeclineReason}); quarantining ${(ttlMs / 1000).toFixed(1)}s (0 gas)`
       );
       return null;
     }
@@ -343,9 +479,9 @@ export function createExecutionManager({
     }
     const { q, inUsdt, takerPays, buyAmount, firmCheck } = attempt;
     if (!firmCheck.ok) {
-      const ttlMs = recordPhantomQuoteStrike(opp, 25_000);
+      const ttlMs = recordPhantomQuoteStrike(opp, 2_500, { isMarketClosed: false, escalate: false });
       console.log(
-        `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason}; cooldown ${Math.round(ttlMs / 1000)}s)`
+        `[FIRM-GUARD] Aborted flash ${opp.corridor} (${opp.direction}) before tx (0 gas): preview=+$${opp.edgeUsd.toFixed(4)} -> firmNet=${firmCheck.netEdgeUsd >= 0 ? '+' : ''}$${firmCheck.netEdgeUsd.toFixed(4)} (${firmCheck.reason}; cooldown ${(ttlMs / 1000).toFixed(1)}s)`
       );
       return null;
     }

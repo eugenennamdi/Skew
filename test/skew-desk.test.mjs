@@ -904,9 +904,9 @@ test('29. Security & Capital-Protection Hardening: Outbound Transaction Firewall
   assert.match(runVmSh, /MIN_UNI_TO_TEXTILE_DEX_FIRST_USD="\$\{MIN_UNI_TO_TEXTILE_DEX_FIRST_USD:-0\.08\}"/);
   assert.match(runVmSh, /MAX_FLASH_SLICE_USDT="\$\{MAX_FLASH_SLICE_USDT:-12000\}"/);
   assert.match(runVmSh, /MAX_USD_FLASH_SLICE_USDT="\$\{MAX_USD_FLASH_SLICE_USDT:-35000\}"/);
-  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-170\}"/);
-  assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-500\}"/);
-  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-620\}"/);
+  assert.match(runVmSh, /PRIORITY_TIP_GWEI="\$\{PRIORITY_TIP_GWEI:-245\}"/);
+  assert.match(runVmSh, /CHASE_INTERVAL_MS="\$\{CHASE_INTERVAL_MS:-380\}"/);
+  assert.match(runVmSh, /SCAN_INTERVAL_MS="\$\{SCAN_INTERVAL_MS:-480\}"/);
   assert.match(runVmSh, /skew-desk\.log.*-mmin -4/);
   assert.match(runVmSh, /skew-auto-watchdog/);
   assert.match(runVmSh, /sha256sum -c/);
@@ -1563,16 +1563,16 @@ test('34. Aggregator /v2/rfq/levels piecewise Maker ladder isolates profitable m
 });
 
 test('35. Profit-tiered priority gas & $35k USD / $12k FX flash caps capture $20k+ USAT whale waves', async () => {
-  assert.equal(computeDynamicPriorityTipGwei(0.05, 170), 170);
-  assert.equal(computeDynamicPriorityTipGwei(0.249, 170), 170);
-  assert.equal(computeDynamicPriorityTipGwei(0.25, 170), 260);
-  assert.equal(computeDynamicPriorityTipGwei(0.49, 170), 260);
-  assert.equal(computeDynamicPriorityTipGwei(1.85, 170), 640);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 170), 960);
-  assert.equal(computeDynamicPriorityTipGwei(9.5, 170), 960);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 170), 1500);
-  assert.equal(computeDynamicPriorityTipGwei(58.85, 170), 1500);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 1200), 1200);
+  assert.equal(computeDynamicPriorityTipGwei(0.05, 245), 245);
+  assert.equal(computeDynamicPriorityTipGwei(0.08, 245), 830);
+  assert.equal(computeDynamicPriorityTipGwei(0.25, 245), 1160);
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 245), 1160);
+  assert.equal(computeDynamicPriorityTipGwei(1.85, 245), 1680);
+  assert.equal(computeDynamicPriorityTipGwei(2.5, 245), 2500);
+  assert.equal(computeDynamicPriorityTipGwei(9.5, 245), 2500);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 245), 4200);
+  assert.equal(computeDynamicPriorityTipGwei(58.85, 245), 4200);
+  assert.equal(computeDynamicPriorityTipGwei(2.5, 3000), 3000);
 
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'cNGN', fxCode: 'NGN' }), 12000);
   assert.equal(getMaxFlashSliceUsdt({ symbol: 'wARS', fxCode: 'ARS' }), 12000);
@@ -2039,15 +2039,15 @@ test('39. Full-universe CHASE preempts $0.28 CELO crumb with +$14.36 wARS whale 
     assert.deepEqual(seenAuthHeaders, ['', 'Bearer tx_live_chase_universe_key']);
     assert.equal(PREVIEW_BUDGET.remaining, 44);
 
-    // When both public (0) and Partner Key (<=14 reserve) are at floor, never spend the 14-credit /request reserve!
+    // When both public (0) and Partner Key (<=8 reserve) are at floor, never spend the 8-credit /request reserve!
     LADDER_BUDGET.remaining = 0;
     LADDER_BUDGET.resetAtMs = Date.now() + 20_000;
-    PREVIEW_BUDGET.remaining = 14;
+    PREVIEW_BUDGET.remaining = 8;
     PREVIEW_BUDGET.resetAtMs = Date.now() + 20_000;
     let calledReserve = false;
     const blockedRes = await fetchTextileLadder(async () => {
       calledReserve = true;
-      throw new Error('must not touch 14-credit firm-quote reserve');
+      throw new Error('must not touch 8-credit firm-quote reserve');
     });
     assert.equal(calledReserve, false);
     assert.equal(blockedRes, null);
@@ -2136,10 +2136,10 @@ test('41. Off-chain RFQ race hardening: parallel ladder+RPC pipeline, 620ms self
   assert.equal(computeNextScanDelayMs(18_500, 620), 80, 'post-CHASE scan resumes after 80ms');
 
   // 2. Whale & mid-clip priority tips outbid 701-765 gwei rivals (~202 base + 640/960/1500 tip = 842-1702 gwei) on all >=$0.50 sweeps
-  assert.equal(computeDynamicPriorityTipGwei(0.49, 170), 260);
-  assert.equal(computeDynamicPriorityTipGwei(0.5, 170), 640);
-  assert.equal(computeDynamicPriorityTipGwei(2.0, 170), 960);
-  assert.equal(computeDynamicPriorityTipGwei(10.0, 170), 1500);
+  assert.equal(computeDynamicPriorityTipGwei(0.49, 245), 1160);
+  assert.equal(computeDynamicPriorityTipGwei(0.75, 245), 1680);
+  assert.equal(computeDynamicPriorityTipGwei(2.5, 245), 2500);
+  assert.equal(computeDynamicPriorityTipGwei(10.0, 245), 4200);
 
   // 3. Parallel pipeline starts QuoterV2 universe scan as soon as /levels resolves (~30ms) while RPC bundle (~95ms) is still in flight
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2452,19 +2452,172 @@ test('44. Base 138-gwei priority tip outbids 320/325-gwei rivals & wARS 12bps Ma
   }
 });
 
-test('45. Anti-penny-jump sub-gwei jittered priority gas outbids 345/765-gwei copycat sniper while keeping whale gas <0.3%', () => {
+test('45. Dominant sub-gwei jittered priority gas clears 430/800/1120/1200-gwei rivals while keeping whale gas <0.8%', () => {
   const celoBase = 202.5;
-  const baseJit = computeDynamicPriorityTipGwei(0.04, 170, 0.537);
-  assert.ok(baseJit > 184 && baseJit < 185, `expected sub-gwei non-integer tip ~184.499, got ${baseJit}`);
+  const baseJit = computeDynamicPriorityTipGwei(0.04, 245, 0.537);
+  assert.ok(baseJit > 267 && baseJit < 268, `expected sub-gwei non-integer tip ~267.554, got ${baseJit}`);
   assert.notEqual(baseJit % 1, 0, 'sub-gwei jitter prevents static integer fingerprinting on Blockscout');
-  assert.ok(celoBase + baseJit > 345.0, 'base + jitter must outbid 0x077328 345 gwei');
+  assert.ok(celoBase + baseJit > 430.0, 'micro-tier must outbid 0x077328 430 gwei');
 
-  const midJit = computeDynamicPriorityTipGwei(0.75, 170, 0.412);
-  assert.ok(celoBase + midJit > 765.0, '$0.50+ tier must outbid 0x077328 765 gwei');
+  const smallJit = computeDynamicPriorityTipGwei(0.12, 245, 0.319);
+  assert.ok(celoBase + smallJit > 1030.0, '$0.08+ tier must outbid 800-836 gwei bots');
 
-  const whaleJit = computeDynamicPriorityTipGwei(12.0, 170, 0.889);
-  assert.ok(whaleJit > 1550 && whaleJit <= 1565);
-  // 280k gas * (202.5 + 1565) gwei * $0.056/CELO = ~$0.0277 (< 0.28% of a $10+ whale win!)
-  const estWhaleGasUsd = ((280_000 * (celoBase + whaleJit)) / 1e9) * 0.056;
-  assert.ok(estWhaleGasUsd < 0.03, `expected <$0.03 gas on $10+ whale, got $${estWhaleGasUsd.toFixed(4)}`);
+  const midJit = computeDynamicPriorityTipGwei(0.35, 245, 0.412);
+  assert.ok(celoBase + midJit > 1200.0, '$0.25+ tier must clear 1100/1101/1120/1200 gwei snipers');
+
+  const whaleJit = computeDynamicPriorityTipGwei(12.0, 245, 0.889);
+  assert.ok(whaleJit > 4500 && whaleJit <= 4550);
+  // 250k gas * (202.5 + 4550) gwei * $0.058/CELO = ~$0.0689 (< 0.7% of a $10+ whale win!)
+  const estWhaleGasUsd = ((250_000 * (celoBase + whaleJit)) / 1e9) * 0.058;
+  assert.ok(estWhaleGasUsd < 0.075, `expected <$0.075 gas on $10+ whale, got $${estWhaleGasUsd.toFixed(4)}`);
+});
+
+test('46. Batch self-maker strip rescues multi-maker whales & live 2.5s cooldown never blindfolds $1+ reloads', async () => {
+  const { stripSelfMakerFromBatch } = await import('../skew-desk.mjs');
+  const tmpLog = path.join(os.tmpdir(), `skew-trades.batchstrip.${Date.now()}.jsonl`);
+  const simRouterAddr = '0x6EA01bB2C883F2D7967da6bB85660B8AaA37f194';
+  const warsTok = CONFIG.tokens.find((t) => t.symbol === 'wARS');
+  const extMaker = '0x25A5c1Ae633eB3e1988CfdEed07CdbD2E998AB52';
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const batchIface = new ethers.Interface(['function executeBatch((bytes order, bytes sig)[] orders)']);
+  const limitOrderType =
+    'tuple(tuple(address reactor, address swapper, uint256 nonce, uint256 deadline, address additionalValidationContract, bytes additionalValidationData) info, tuple(address token, uint256 amount, uint256 maxAmount) input, tuple(address token, uint256 amount, address recipient)[] outputs)';
+
+  const encodeSignedLimitOrder = (swapper, inTok, inAmt, outTok, outAmt) => ({
+    order: coder.encode(
+      [limitOrderType],
+      [
+        {
+          info: {
+            reactor: CONFIG.contracts.reactor,
+            swapper,
+            nonce: 1n,
+            deadline: BigInt(Math.floor(Date.now() / 1000) + 120),
+            additionalValidationContract: '0x10b9eba3a175df418a35cb8329a527691ee258c5',
+            additionalValidationData: '0x',
+          },
+          input: { token: inTok, amount: inAmt, maxAmount: inAmt },
+          outputs: [{ token: outTok, amount: outAmt, recipient: swapper }],
+        },
+      ]
+    ),
+    sig: '0x' + '11'.repeat(65),
+  });
+
+  // 1. Direct unit check on exact blk #83,916,389 pattern: $113.09 external Maker + $9.98 skew-stitch self-order
+  const extUsdtRaw = 113_092100n;
+  const selfUsdtRaw = 9_980900n;
+  const extWarsRaw = 196_708_306900000000000000n;
+  const selfWarsRaw = 17_465_220900000000000000n;
+  const mixedBatchCd = batchIface.encodeFunctionData('executeBatch', [
+    [
+      encodeSignedLimitOrder(extMaker, CONFIG.contracts.usdt, extUsdtRaw, warsTok.address, extWarsRaw),
+      encodeSignedLimitOrder(CONFIG.agentWallet, CONFIG.contracts.usdt, selfUsdtRaw, warsTok.address, selfWarsRaw),
+    ],
+  ]);
+  assert.equal(isSelfMakerOrder(mixedBatchCd), true);
+
+  const origBuyRaw = extUsdtRaw + selfUsdtRaw;
+  const origPaysRaw = extWarsRaw + (extWarsRaw * 2n) / 10000n + selfWarsRaw + (selfWarsRaw * 2n) / 10000n;
+  const stripped = stripSelfMakerFromBatch(mixedBatchCd, origPaysRaw, origBuyRaw, {
+    reactorAddr: CONFIG.contracts.reactor,
+    selfWallet: CONFIG.agentWallet,
+  });
+  assert.ok(stripped, 'must strip self LimitOrder and preserve external Maker order');
+  assert.equal(stripped.keptCount, 1);
+  assert.equal(stripped.removedCount, 1);
+  assert.equal(isSelfMakerOrder(stripped.calldata), false, 'stripped calldata must have zero self-maker reference');
+  assert.equal(stripped.buyAmount, extUsdtRaw);
+
+  // 2. End-to-end execution check:
+  //    a) Call #1 fails [FIRM-GUARD] on a tiny $20 flicker -> cools down ONLY 2.5s (not 45-180s!), AND
+  //    b) Immediate $123 whale (+$1.85) wakes up in 0ms AND strips self-maker order from executeBatch to win!
+  let sentCount = 0;
+  let mode = 'flicker';
+  try {
+    const exec = createExecutionManager({
+      CONFIG: {
+        ...CONFIG,
+        textileApiKey: 'tx_live_batchstrip_test',
+        flashRouterAddress: simRouterAddr,
+        tradesLogPath: tmpLog,
+      },
+      STATE: { balances: { usdt: 250.91 } },
+      wallet: { address: CONFIG.agentWallet },
+      provider: {},
+      routerIface: new ethers.Interface([
+        'function exactInputSingle((address,address,uint24,address,uint256,uint256,uint160)) payable returns (uint256)',
+      ]),
+      erc20Iface: new ethers.Interface(['function approve(address,uint256) returns (bool)']),
+      sendTagged: async () => {
+        sentCount += 1;
+        return { hash: `0x${'d'.repeat(64)}`, logs: [] };
+      },
+      bestUniQuote: async () => ({ amountOut: origPaysRaw, fee: 100 }),
+      textileRequestQuote: async () => {
+        if (mode === 'flicker') {
+          return {
+            quote: { takerPays: '35000000000000000000000', buyAmount: '19990000' },
+            transactions: {
+              swap: {
+                to: CONFIG.contracts.reactor,
+                data: batchIface.encodeFunctionData('executeBatch', [
+                  [encodeSignedLimitOrder(extMaker, CONFIG.contracts.usdt, 19_990000n, warsTok.address, 35_000n * 10n ** 18n)],
+                ]),
+              },
+            },
+          };
+        }
+        return {
+          quote: { takerPays: origPaysRaw.toString(), buyAmount: origBuyRaw.toString() },
+          transactions: { swap: { to: CONFIG.contracts.reactor, data: mixedBatchCd } },
+        };
+      },
+      textileSubmitTx: async () => ({}),
+      fetchJson: async () => ({}),
+      isSelfMakerOrder,
+      verifyFirmArbQuote,
+      sumReceiptTokenTransfers: () => 1_750000n,
+      getCachedOffChainFx: () => ({}),
+    });
+
+    const smallFlickerOpp = {
+      corridor: 'wARS/USDT',
+      symbol: 'wARS',
+      tokenAddress: warsTok.address,
+      decimals: 18,
+      direction: 'uni->textile',
+      sizeUsdt: 20,
+      amountInRaw: '20000000',
+      midTokenRaw: String(35_000n * 10n ** 18n),
+      expectedOutUsdt: 20.03,
+      uniFee: 100,
+      edgeUsd: 0.03,
+      edgeBps: 15.0,
+      scannedAtMs: Date.now(),
+    };
+    const rFlicker = await exec.executeOpportunity(smallFlickerOpp);
+    assert.equal(rFlicker, null);
+    assert.equal(exec.isOpportunityCoolingDown(smallFlickerOpp), true, 'identical $0.03 snapshot skips for 2.5s');
+
+    // A $121.20 whale (+$1.87, +15.4 bps — <15 bps jump!) arrives 100ms later -> must WAKE IMMEDIATELY and execute stripped batch!
+    mode = 'whale_batch';
+    const whaleOpp = {
+      ...smallFlickerOpp,
+      sizeUsdt: 121.2,
+      amountInRaw: '121200000',
+      midTokenRaw: origPaysRaw.toString(),
+      expectedOutUsdt: 123.07,
+      edgeUsd: 1.87,
+      edgeBps: 15.4,
+      scannedAtMs: Date.now(),
+    };
+    assert.equal(exec.isOpportunityCoolingDown(whaleOpp), false, 'whale >=$0.35 must bypass transient cooldown in 0ms');
+    const won = await exec.executeOpportunity(whaleOpp);
+    assert.ok(won, 'stripped executeBatch must execute external Maker order and realize profit');
+    assert.equal(sentCount, 1);
+    assert.equal(won.edgeUsd, 1.75);
+  } finally {
+    if (fs.existsSync(tmpLog)) fs.unlinkSync(tmpLog);
+  }
 });

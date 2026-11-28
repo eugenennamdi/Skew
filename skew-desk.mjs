@@ -25,7 +25,7 @@ import {
   syncStitchRuntimePolicy,
   syncStitchRuntimeConfig,
 } from './src/risk-policy.mjs';
-import { createExecutionManager } from './src/execution.mjs';
+import { createExecutionManager, stripSelfMakerFromBatch } from './src/execution.mjs';
 
 export {
   OFFCHAIN_FX_DEFAULTS,
@@ -41,6 +41,7 @@ export {
   buildRiskOfficerReport,
   syncStitchRuntimePolicy,
   syncStitchRuntimeConfig,
+  stripSelfMakerFromBatch,
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -518,20 +519,21 @@ export function evaluateCircuitBreaker(arbExecutions = [], nowMs = Date.now(), c
   return { tripped: false, reason: 'ok', rolling24hNetUsd, sessionNetUsd, consecutiveLosses };
 }
 
-// ponytail: profit-proportional priority gas + optional sub-gwei jitter defeats static Blockscout penny-jumping (e.g. 0x077328 +5gwei) for <2c on whales
+// ponytail: dominant sub-gwei jittered priority gas curve clears 430/765/800/1100/1120/1200-gwei rivals across every tier while keeping whale gas <2%
 export function computeDynamicPriorityTipGwei(
   expectedProfitUsd = 0,
-  baseTipGwei = CONFIG.priorityTipGwei || 20,
+  baseTipGwei = CONFIG.priorityTipGwei || 245,
   jitterUnit = 0
 ) {
-  const base = Number(baseTipGwei) || 20;
+  const base = Number(baseTipGwei) || 245;
   const edge = Number(expectedProfitUsd) || 0;
   const j = Math.max(0, Math.min(1, Number(jitterUnit) || 0));
-  if (edge >= 10.0) return Number((Math.max(base, 1500) + j * 65).toFixed(3));
-  if (edge >= 2.0) return Number((Math.max(base, 960) + j * 45).toFixed(3));
-  if (edge >= 0.5) return Number((Math.max(base, 640) + j * 35).toFixed(3));
-  if (edge >= 0.25) return Number((Math.max(base, 260) + j * 27).toFixed(3));
-  return Number((base + j * 27).toFixed(3));
+  if (edge >= 10.0) return Number((Math.max(base, 4200) + j * 350).toFixed(3));
+  if (edge >= 2.5) return Number((Math.max(base, 2500) + j * 220).toFixed(3));
+  if (edge >= 0.75) return Number((Math.max(base, 1680) + j * 140).toFixed(3));
+  if (edge >= 0.25) return Number((Math.max(base, 1160) + j * 110).toFixed(3));
+  if (edge >= 0.08) return Number((Math.max(base, 830) + j * 85).toFixed(3));
+  return Number((base + j * 42).toFixed(3));
 }
 
 export async function sendTagged(txReq, opts = {}) {
@@ -557,11 +559,11 @@ export async function sendTagged(txReq, opts = {}) {
       if (opts.priorityTip) {
         const tipGwei = computeDynamicPriorityTipGwei(
           opts.expectedProfitUsd,
-          CONFIG.priorityTipGwei || 20,
+          CONFIG.priorityTipGwei || 245,
           Math.random()
         );
         const tipWei = BigInt(Math.round(tipGwei * 1e9));
-        const baseMult = Number(opts.expectedProfitUsd || 0) >= 2.0 ? 200n : 140n;
+        const baseMult = Number(opts.expectedProfitUsd || 0) >= 0.25 ? 200n : 150n;
         tagged.type = 2;
         tagged.maxPriorityFeePerGas = tipWei;
         tagged.maxFeePerGas = (baseGasPrice * baseMult) / 100n + tipWei;
@@ -911,16 +913,16 @@ export async function fetchTextileLadder(fetchImpl = fetch, opts = {}) {
     PREVIEW_BUDGET.remaining = PREVIEW_BUDGET.limit;
     PREVIEW_BUDGET.resetAtMs = 0;
   }
-  if (!forceFresh && fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 320) {
+  if (!forceFresh && fetchImpl === fetch && lastGoodLadder.data && now - lastGoodLadder.fetchedAtMs < 260) {
     return lastGoodLadder.data;
   }
 
-  // ponytail: /v2/rfq/levels draws from 60/min public IP quota first, then overflows into idle Partner Key quota (reserving 14 credits for /request) with smooth pacing so quota never hits a 20s blackout
+  // ponytail: /v2/rfq/levels draws from 60/min public IP quota first, then overflows into idle Partner Key quota (reserving 8 credits for /request) for ~480ms sustained cadence
   const pubAvail = LADDER_BUDGET.resetAtMs > now ? Math.max(0, LADDER_BUDGET.remaining - 1) : LADDER_BUDGET.limit - 1;
   const authAvail = CONFIG.textileApiKey
     ? PREVIEW_BUDGET.resetAtMs > now
-      ? Math.max(0, PREVIEW_BUDGET.remaining - 14)
-      : PREVIEW_BUDGET.limit - 14
+      ? Math.max(0, PREVIEW_BUDGET.remaining - 8)
+      : PREVIEW_BUDGET.limit - 8
     : 0;
   const totalAvail = pubAvail + authAvail;
   if (totalAvail <= 0) return cachedFresh();
@@ -1831,7 +1833,7 @@ async function fetchRpcBundleMulticall(needFreshBalances, usatTok) {
 
 export function computeNextScanDelayMs(elapsedMs, targetIntervalMs = CONFIG.scanIntervalMs, minDelayMs = 80) {
   const elapsed = Math.max(0, Number(elapsedMs) || 0);
-  const target = Math.max(minDelayMs, Number(targetIntervalMs) || 620);
+  const target = Math.max(minDelayMs, Number(targetIntervalMs) || 480);
   return Math.max(minDelayMs, target - elapsed);
 }
 
